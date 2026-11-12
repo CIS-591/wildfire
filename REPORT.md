@@ -36,7 +36,7 @@ This hits exactly the squares players care about most: agents paint water **righ
 
 File: `referee/src/referee.ts`.
 
-Just before writing, the referee now **takes a second, quick look** at the squares it is about to repaint (new function `keepNewerPaints`, lines 495-523, called at line 487).
+Just before writing, the referee now **takes a second, quick look** at the squares it is about to repaint (new function `keepNewerPaints`, lines 495-521, called at line 487).
 
 - If a square still looks the way it did in the first photo, nothing changed, and the referee writes as before.
 - If a player repainted the square in the meantime, the referee **does not overwrite it**. It leaves the player's paint on the board and judges it on the next tick, like any other paint. Water on a burning square is a legal move, so the water is accepted, puts the fire out and uses one unit from the shared pool, exactly as the rules say.
