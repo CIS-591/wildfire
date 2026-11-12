@@ -31,7 +31,7 @@ player's Claude paints water to save it (or, with a human YES, sets fire to a ne
   bucket of water
 - ⬛ **black** = burnt, gone
 
-Teams (Team 1 to Team 4) are drawn at random when the game starts; your card then shows your team
+Teams (Team 1 to Team 4) are given at random the moment you /join; your card shows your team
 and role. Your Claude may ask you one YES/NO question: answer it. Most green left in your team's
 area after 10 minutes wins. Watch the board, not the terminal.
 
@@ -70,7 +70,7 @@ area?", it asks you, and your YES or NO is the answer (in bigger teams a teammat
 | "rate limit" or "daily limit" from Miro | Tell your instructor |
 | Your Claude stopped | Type `/play` again |
 | Nothing on your card after a minute | Tell your instructor, then `/join` again |
-| No team on your card | Normal before the start: teams are drawn when the game starts |
+| No team on your card | Wait a few seconds after /join: the referee writes it on your card |
 | Your Claude wants to move or delete something | Say no |
 
 Fair play: let your Claude paint, don't edit squares by hand. The rules your Claude follows (and the
