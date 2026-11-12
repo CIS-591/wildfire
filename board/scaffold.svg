@@ -1,0 +1,216 @@
+<svg xmlns="http://www.w3.org/2000/svg">
+<rect id="rimT" x="-74" y="-74" width="2448" height="72" fill="#262a33" stroke="none"/>
+<rect id="rimB" x="-74" y="2174" width="2448" height="72" fill="#262a33" stroke="none"/>
+<rect id="rimL" x="-74" y="-2" width="72" height="2176" fill="#262a33" stroke="none"/>
+<rect id="rimR" x="2302" y="-2" width="72" height="2176" fill="#262a33" stroke="none"/>
+<text x="30" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">A</text>
+<text x="30" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">A</text>
+<text x="94" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">B</text>
+<text x="94" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">B</text>
+<text x="158" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">C</text>
+<text x="158" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">C</text>
+<text x="222" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">D</text>
+<text x="222" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">D</text>
+<text x="286" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">E</text>
+<text x="286" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">E</text>
+<text x="350" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">F</text>
+<text x="350" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">F</text>
+<text x="414" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">G</text>
+<text x="414" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">G</text>
+<text x="478" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">H</text>
+<text x="478" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">H</text>
+<text x="542" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">I</text>
+<text x="542" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">I</text>
+<text x="606" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">J</text>
+<text x="606" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">J</text>
+<text x="670" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">K</text>
+<text x="670" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">K</text>
+<text x="734" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">L</text>
+<text x="734" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">L</text>
+<text x="798" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">M</text>
+<text x="798" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">M</text>
+<text x="862" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">N</text>
+<text x="862" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">N</text>
+<text x="926" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">O</text>
+<text x="926" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">O</text>
+<text x="990" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">P</text>
+<text x="990" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">P</text>
+<text x="1054" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">Q</text>
+<text x="1054" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">Q</text>
+<text x="1118" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">R</text>
+<text x="1118" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">R</text>
+<text x="1182" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">S</text>
+<text x="1182" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">S</text>
+<text x="1246" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">T</text>
+<text x="1246" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">T</text>
+<text x="1310" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">U</text>
+<text x="1310" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">U</text>
+<text x="1374" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">V</text>
+<text x="1374" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">V</text>
+<text x="1438" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">W</text>
+<text x="1438" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">W</text>
+<text x="1502" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">X</text>
+<text x="1502" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">X</text>
+<text x="1566" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">Y</text>
+<text x="1566" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">Y</text>
+<text x="1630" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">Z</text>
+<text x="1630" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">Z</text>
+<text x="1694" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">AA</text>
+<text x="1694" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">AA</text>
+<text x="1758" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">AB</text>
+<text x="1758" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">AB</text>
+<text x="1822" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">AC</text>
+<text x="1822" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">AC</text>
+<text x="1886" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">AD</text>
+<text x="1886" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">AD</text>
+<text x="1950" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">AE</text>
+<text x="1950" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">AE</text>
+<text x="2014" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">AF</text>
+<text x="2014" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">AF</text>
+<text x="2078" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">AG</text>
+<text x="2078" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">AG</text>
+<text x="2142" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">AH</text>
+<text x="2142" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">AH</text>
+<text x="2206" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">AI</text>
+<text x="2206" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">AI</text>
+<text x="2270" y="-28" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">AJ</text>
+<text x="2270" y="2220" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">AJ</text>
+<text x="-38" y="39" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">1</text>
+<text x="2338" y="39" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">1</text>
+<text x="-38" y="103" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">2</text>
+<text x="2338" y="103" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">2</text>
+<text x="-38" y="167" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">3</text>
+<text x="2338" y="167" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">3</text>
+<text x="-38" y="231" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">4</text>
+<text x="2338" y="231" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">4</text>
+<text x="-38" y="295" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">5</text>
+<text x="2338" y="295" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">5</text>
+<text x="-38" y="359" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">6</text>
+<text x="2338" y="359" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">6</text>
+<text x="-38" y="423" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">7</text>
+<text x="2338" y="423" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">7</text>
+<text x="-38" y="487" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">8</text>
+<text x="2338" y="487" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">8</text>
+<text x="-38" y="551" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">9</text>
+<text x="2338" y="551" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">9</text>
+<text x="-38" y="615" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">10</text>
+<text x="2338" y="615" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">10</text>
+<text x="-38" y="679" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">11</text>
+<text x="2338" y="679" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">11</text>
+<text x="-38" y="743" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">12</text>
+<text x="2338" y="743" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">12</text>
+<text x="-38" y="807" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">13</text>
+<text x="2338" y="807" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">13</text>
+<text x="-38" y="871" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">14</text>
+<text x="2338" y="871" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">14</text>
+<text x="-38" y="935" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">15</text>
+<text x="2338" y="935" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">15</text>
+<text x="-38" y="999" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">16</text>
+<text x="2338" y="999" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">16</text>
+<text x="-38" y="1063" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#b384bb">17</text>
+<text x="2338" y="1063" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ea94bb">17</text>
+<text x="-38" y="1127" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">18</text>
+<text x="2338" y="1127" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">18</text>
+<text x="-38" y="1191" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">19</text>
+<text x="2338" y="1191" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">19</text>
+<text x="-38" y="1255" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">20</text>
+<text x="2338" y="1255" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">20</text>
+<text x="-38" y="1319" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">21</text>
+<text x="2338" y="1319" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">21</text>
+<text x="-38" y="1383" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">22</text>
+<text x="2338" y="1383" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">22</text>
+<text x="-38" y="1447" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">23</text>
+<text x="2338" y="1447" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">23</text>
+<text x="-38" y="1511" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">24</text>
+<text x="2338" y="1511" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">24</text>
+<text x="-38" y="1575" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">25</text>
+<text x="2338" y="1575" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">25</text>
+<text x="-38" y="1639" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">26</text>
+<text x="2338" y="1639" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">26</text>
+<text x="-38" y="1703" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">27</text>
+<text x="2338" y="1703" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">27</text>
+<text x="-38" y="1767" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">28</text>
+<text x="2338" y="1767" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">28</text>
+<text x="-38" y="1831" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">29</text>
+<text x="2338" y="1831" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">29</text>
+<text x="-38" y="1895" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">30</text>
+<text x="2338" y="1895" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">30</text>
+<text x="-38" y="1959" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">31</text>
+<text x="2338" y="1959" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">31</text>
+<text x="-38" y="2023" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">32</text>
+<text x="2338" y="2023" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">32</text>
+<text x="-38" y="2087" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">33</text>
+<text x="2338" y="2087" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">33</text>
+<text x="-38" y="2151" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#7b92ff">34</text>
+<text x="2338" y="2151" font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle" fill="#ffffff">34</text>
+<g id="band0" transform="translate(-2,-2)" data-frame=""><rect data-type="frame" x="0" y="0" width="2304" height="256" fill="#3d4250"/></g>
+<g id="band1" transform="translate(-2,254)" data-frame=""><rect data-type="frame" x="0" y="0" width="2304" height="256" fill="#3d4250"/></g>
+<g id="band2" transform="translate(-2,510)" data-frame=""><rect data-type="frame" x="0" y="0" width="2304" height="256" fill="#3d4250"/></g>
+<g id="band3" transform="translate(-2,766)" data-frame=""><rect data-type="frame" x="0" y="0" width="2304" height="256" fill="#3d4250"/></g>
+<g id="band4" transform="translate(-2,1022)" data-frame=""><rect data-type="frame" x="0" y="0" width="2304" height="256" fill="#3d4250"/></g>
+<g id="band5" transform="translate(-2,1278)" data-frame=""><rect data-type="frame" x="0" y="0" width="2304" height="256" fill="#3d4250"/></g>
+<g id="band6" transform="translate(-2,1534)" data-frame=""><rect data-type="frame" x="0" y="0" width="2304" height="256" fill="#3d4250"/></g>
+<g id="band7" transform="translate(-2,1790)" data-frame=""><rect data-type="frame" x="0" y="0" width="2304" height="256" fill="#3d4250"/></g>
+<g id="band8" transform="translate(-2,2046)" data-frame=""><rect data-type="frame" x="0" y="0" width="2304" height="128" fill="#3d4250"/></g>
+<textArea id="title" x="0" y="-330" width="460" font-family="titan_one" font-size="60" fill="#ff9d48">WILDFIRE</textArea>
+<text id="subtitle" x="480" y="-276" font-family="roboto_condensed" font-size="28" fill="#595959">CIS 591 · four teams, one forest, one fire. Hold the line.</text>
+<circle id="rose" cx="-90" cy="-165" r="85" fill="#262a33" stroke="#ff9d48" stroke-width="3"/>
+<rect id="roseV" data-shape="rhombus" x="-100" y="-212" width="20" height="94" fill="#ff9d48" stroke="none"/>
+<rect id="roseH" data-shape="rhombus" x="-137" y="-175" width="94" height="20" fill="#ffdc4a" stroke="none"/>
+<text x="-90" y="-226" font-family="roboto_condensed" font-size="18" font-weight="bold" text-anchor="middle" fill="#ff9d48">N</text>
+<text x="-90" y="-92" font-family="roboto_condensed" font-size="18" font-weight="bold" text-anchor="middle" fill="#e7e7e7">S</text>
+<text x="-157" y="-159" font-family="roboto_condensed" font-size="18" font-weight="bold" text-anchor="middle" fill="#e7e7e7">W</text>
+<text x="-23" y="-159" font-family="roboto_condensed" font-size="18" font-weight="bold" text-anchor="middle" fill="#e7e7e7">E</text>
+<rect id="banner" x="0" y="-220" width="1100" height="110" rx="12" fill="#1a1a1a" stroke="#ff9d48" stroke-width="4" data-content="WILDFIRE · waiting for the referee" data-font-family="roboto_condensed" data-font-size="36" data-font-weight="bold" data-text-color="#ffdc4a"/>
+<rect id="scoreboard" x="1160" y="-220" width="1140" height="110" rx="12" fill="#1a1a1a" stroke="#ff9d48" stroke-width="4" data-content="RIDGE 100% · PINE VALLEY 100% · CEDAR CREEK 100% · BIRCH HOLLOW 100%" data-font-family="roboto_condensed" data-font-size="30" data-font-weight="bold" data-text-color="#ffffff"/>
+<rect id="rulesPanel" x="2440" y="-330" width="760" height="610" rx="16" fill="#262a33" stroke="none"/>
+<text id="rulesHead" x="2472" y="-278" font-family="roboto_condensed" font-size="33" font-weight="bold" fill="#ff9d48">RULES</text>
+<textArea id="rulesText" x="2472" y="-262" width="440" font-family="roboto_condensed" font-size="21" fill="#e7e7e7"><b>Fire</b> spreads every 20 s, faster downwind. Embers can jump a 1-wide firebreak. Wind turns every 5 min. Lightning strikes a few times: watch the banner.<br/><b>Paint</b> only your sector, after a teammate approves your PLAN. One paint per player every 5 s.<br/><b>Water</b> on fire, forest or cabin. Dries in 90 s. One shared pool for the whole class (count on the banner).<br/><b>Firebreak</b> on forest. Permanent.<br/><b>Backburn</b>: an approved run of up to 20 forest squares, painted burnt.<br/><b>HELP</b>: 2 players of another team may paint your sector for 3 min.<br/><b>Approve</b> a teammate's sticky: add a line YES or NO.<br/><b>Score</b>: forest + water + 10 per cabin, as % of the start. 30 min. Highest % wins.</textArea>
+<text id="legendHead" x="2940" y="-278" font-family="roboto_condensed" font-size="33" font-weight="bold" fill="#ff9d48">LEGEND</text>
+<rect x="2940" y="-246" width="32" height="32" rx="4" fill="#93d275" stroke="none"/>
+<text x="2984" y="-222" font-family="roboto_condensed" font-size="22" fill="#ffffff">Forest</text>
+<rect x="2940" y="-206" width="32" height="32" rx="4" fill="#f5d128" stroke="none"/>
+<text x="2984" y="-182" font-family="roboto_condensed" font-size="22" fill="#ffffff">Cabin (10 pts)</text>
+<rect x="2940" y="-166" width="32" height="32" rx="4" fill="#414bb2" stroke="none"/>
+<text x="2984" y="-142" font-family="roboto_condensed" font-size="22" fill="#ffffff">River</text>
+<rect x="2940" y="-126" width="32" height="32" rx="4" fill="#ff9d48" stroke="none"/>
+<text x="2984" y="-102" font-family="roboto_condensed" font-size="22" fill="#ffffff">Fire</text>
+<rect x="2940" y="-86" width="32" height="32" rx="4" fill="#23bfe7" stroke="none"/>
+<text x="2984" y="-62" font-family="roboto_condensed" font-size="22" fill="#ffffff">Water (90 s)</text>
+<rect x="2940" y="-46" width="32" height="32" rx="4" fill="#8b5a2b" stroke="none"/>
+<text x="2984" y="-22" font-family="roboto_condensed" font-size="22" fill="#ffffff">Firebreak</text>
+<rect x="2940" y="-6" width="32" height="32" rx="4" fill="#1a1a1a" stroke="#595959" stroke-width="2"/>
+<text x="2984" y="18" font-family="roboto_condensed" font-size="22" fill="#ffffff">Burnt</text>
+<text x="2940" y="62" font-family="roboto_condensed" font-size="18" font-weight="bold" fill="#ff9d48">SECTORS</text>
+<rect x="2940" y="74" width="110" height="60" rx="6" fill="#b384bb" stroke="none" data-content="RIDGE" data-font-family="roboto_condensed" data-font-size="14" data-font-weight="bold" data-text-color="#1a1a1a"/>
+<rect x="3056" y="74" width="110" height="60" rx="6" fill="#ea94bb" stroke="none" data-content="PINE VALLEY" data-font-family="roboto_condensed" data-font-size="14" data-font-weight="bold" data-text-color="#1a1a1a"/>
+<rect x="2940" y="140" width="110" height="60" rx="6" fill="#7b92ff" stroke="none" data-content="CEDAR CREEK" data-font-family="roboto_condensed" data-font-size="14" data-font-weight="bold" data-text-color="#1a1a1a"/>
+<rect x="3056" y="140" width="110" height="60" rx="6" fill="#ffffff" stroke="none" data-content="BIRCH HOLLOW" data-font-family="roboto_condensed" data-font-size="14" data-font-weight="bold" data-text-color="#1a1a1a"/>
+<textArea x="2940" y="210" width="250" font-family="roboto_condensed" font-size="16" fill="#b0b0b0">Square borders show the sector. Fire starts at R17 S17 R18 S18.</textArea>
+<rect id="lbPanel" x="3240" y="-330" width="760" height="610" rx="16" fill="#262a33" stroke="none"/>
+<text id="lbHead" x="3272" y="-278" font-family="roboto_condensed" font-size="33" font-weight="bold" fill="#ff9d48">LEADERBOARD · live</text>
+<rect id="leaderboard" x="3272" y="-254" width="696" height="502" rx="8" fill="#1a1a1a" stroke="none" data-content="No players yet. /join to enter the fight." data-font-family="roboto_condensed" data-font-size="22" data-text-color="#e7e7e7" data-text-align="left" data-text-align-vertical="top"/>
+<g id="orders_ridge" transform="translate(2440,340)" data-frame="ORDERS · RIDGE"><rect data-type="frame" x="0" y="0" width="760" height="900" fill="#262a33"/>
+<rect id="ordersHead_ridge" x="0" y="0" width="760" height="72" fill="#b384bb" stroke="none" data-content="ORDERS · RIDGE" data-font-family="roboto_condensed" data-font-size="33" data-font-weight="bold" data-text-color="#1a1a1a"/>
+<textArea id="ordersHint_ridge" x="24" y="88" width="712" font-family="roboto_condensed" font-size="22" fill="#e7e7e7">Boss posts PLAN, ORDER · name, BACKBURN P6-P15 and STATUS here. HELP goes in a neighbour's frame. A teammate approves by adding a line YES or NO.</textArea>
+<rect id="example_ridge" data-type="sticky" x="24" y="176" width="199" height="228" data-color="light_yellow" data-content="EXAMPLE · a PLAN sticky looks like: PLAN hold the east edge with water, firebreak column P"/>
+</g>
+<g id="orders_pine" transform="translate(3240,340)" data-frame="ORDERS · PINE VALLEY"><rect data-type="frame" x="0" y="0" width="760" height="900" fill="#262a33"/>
+<rect id="ordersHead_pine" x="0" y="0" width="760" height="72" fill="#ea94bb" stroke="none" data-content="ORDERS · PINE VALLEY" data-font-family="roboto_condensed" data-font-size="33" data-font-weight="bold" data-text-color="#1a1a1a"/>
+<textArea id="ordersHint_pine" x="24" y="88" width="712" font-family="roboto_condensed" font-size="22" fill="#e7e7e7">Boss posts PLAN, ORDER · name, BACKBURN P6-P15 and STATUS here. HELP goes in a neighbour's frame. A teammate approves by adding a line YES or NO.</textArea>
+<rect id="example_pine" data-type="sticky" x="24" y="176" width="199" height="228" data-color="light_yellow" data-content="EXAMPLE · a PLAN sticky looks like: PLAN hold the west edge with water, firebreak column U"/>
+</g>
+<g id="orders_cedar" transform="translate(2440,1300)" data-frame="ORDERS · CEDAR CREEK"><rect data-type="frame" x="0" y="0" width="760" height="900" fill="#262a33"/>
+<rect id="ordersHead_cedar" x="0" y="0" width="760" height="72" fill="#7b92ff" stroke="none" data-content="ORDERS · CEDAR CREEK" data-font-family="roboto_condensed" data-font-size="33" data-font-weight="bold" data-text-color="#1a1a1a"/>
+<textArea id="ordersHint_cedar" x="24" y="88" width="712" font-family="roboto_condensed" font-size="22" fill="#e7e7e7">Boss posts PLAN, ORDER · name, BACKBURN P6-P15 and STATUS here. HELP goes in a neighbour's frame. A teammate approves by adding a line YES or NO.</textArea>
+<rect id="example_cedar" data-type="sticky" x="24" y="176" width="199" height="228" data-color="light_yellow" data-content="EXAMPLE · a PLAN sticky looks like: PLAN hold the east edge with water, firebreak column P"/>
+</g>
+<g id="orders_birch" transform="translate(3240,1300)" data-frame="ORDERS · BIRCH HOLLOW"><rect data-type="frame" x="0" y="0" width="760" height="900" fill="#262a33"/>
+<rect id="ordersHead_birch" x="0" y="0" width="760" height="72" fill="#ffffff" stroke="none" data-content="ORDERS · BIRCH HOLLOW" data-font-family="roboto_condensed" data-font-size="33" data-font-weight="bold" data-text-color="#1a1a1a"/>
+<textArea id="ordersHint_birch" x="24" y="88" width="712" font-family="roboto_condensed" font-size="22" fill="#e7e7e7">Boss posts PLAN, ORDER · name, BACKBURN P6-P15 and STATUS here. HELP goes in a neighbour's frame. A teammate approves by adding a line YES or NO.</textArea>
+<rect id="example_birch" data-type="sticky" x="24" y="176" width="199" height="228" data-color="light_yellow" data-content="EXAMPLE · a PLAN sticky looks like: PLAN hold the west edge with water, firebreak column U"/>
+</g>
+<rect id="inboxPanel" x="0" y="2300" width="4000" height="1500" rx="16" fill="#262a33" stroke="none"/>
+<text id="inboxHead" x="32" y="2362" font-family="roboto_condensed" font-size="33" font-weight="bold" fill="#ff9d48">INBOX · one card per player · read only your own</text>
+<text id="inboxHint" x="900" y="2360" font-family="roboto_condensed" font-size="18" fill="#b0b0b0">/join Your Name creates your card here. The referee writes your team, role and every refusal on it.</text>
+</svg>

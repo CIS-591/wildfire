@@ -1,0 +1,645 @@
+<title>Wildfire</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800&family=JetBrains+Mono:wght@400;600&family=Public+Sans:wght@400;600;700&display=swap">
+<style>
+:root{
+  /* Layout: night dispatch console. The forest map dominates; the approvals inbox, scoreboard and agent radio run down the right. */
+  --bg:#0e1411; --panel:#151d19; --panel2:#1c2621; --line:#2a372f; --fg:#e7eadf; --muted:#8f9c90;
+  --ember:#ff7a1a; --water:#4a90ff; --break:#8b5a2b; --forest:#3c8a4a; --ash:#3a3733;
+  --display:"Big Shoulders Display","Arial Narrow",sans-serif;
+  --body:"Public Sans",system-ui,-apple-system,sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  color-scheme:dark;
+}
+html,body{background:var(--bg);color:var(--fg)}
+body{font-family:var(--body);font-size:14px;line-height:1.45}
+.app{max-width:1380px;margin:0 auto;padding-block:14px 28px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:14px}
+
+.bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 28px;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+h1{margin:0;font-family:var(--display);font-weight:800;font-size:42px;line-height:.9;letter-spacing:.03em;text-transform:uppercase}
+h1 span{color:var(--ember)}
+.sub{font-family:var(--mono);font-size:11.5px;color:var(--muted);letter-spacing:.04em}
+.stats{display:flex;flex-wrap:wrap;gap:12px 22px;align-items:flex-end}
+.stat{display:grid;gap:4px}
+.stat label{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+.stat b{font-family:var(--mono);font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1}
+.row{display:flex;align-items:center;gap:8px}
+.gauge,.tickbar{background:var(--line);border-radius:2px;overflow:hidden}
+.gauge{width:120px;height:8px}
+.gauge i{display:block;height:100%;background:var(--water);width:100%}
+.tickbar{width:90px;height:8px}
+.tickbar i{display:block;height:100%;background:var(--ember);width:0}
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{font:600 13px/1 var(--body);padding:9px 14px;border:1px solid var(--line);background:var(--panel2);color:var(--fg);border-radius:6px;cursor:pointer}
+.btn:hover{border-color:var(--muted)}
+.btn:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+.btn.primary{background:var(--ember);color:#1d0e02;border-color:transparent}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.speed{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.speed button{font:600 12px/1 var(--mono);padding:9px 10px;background:var(--panel2);color:var(--muted);border:0;cursor:pointer}
+.speed button[aria-pressed="true"]{background:var(--fg);color:var(--bg)}
+.speed button:focus-visible{outline:2px solid var(--ember);outline-offset:-2px}
+
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:16px;align-items:start}
+@media (max-width:960px){.layout{grid-template-columns:minmax(0,1fr)}}
+.mapwrap{min-width:0;display:grid;gap:10px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12.5px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:11px;height:11px;border-radius:2px;display:inline-block}
+.canvasbox{position:relative;border:1px solid var(--line);border-radius:4px;overflow:hidden;background:#0a0f0c}
+canvas{display:block;cursor:crosshair;touch-action:manipulation}
+.hint{margin:0;color:var(--muted);font-size:12.5px;max-width:75ch}
+.hint b{color:var(--fg);font-weight:600}
+
+.side{display:grid;gap:14px;min-width:0}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;display:grid;gap:10px;min-width:0}
+h2{margin:0;font-family:var(--display);font-weight:800;font-size:21px;letter-spacing:.04em;text-transform:uppercase;display:flex;align-items:center;gap:8px}
+.count{font:600 11px/1 var(--mono);background:var(--ember);color:#1d0e02;border-radius:10px;padding:4px 7px}
+.count[data-n="0"]{background:var(--line);color:var(--muted)}
+#cards{display:grid;gap:10px}
+.empty{color:var(--muted);font-size:13px;margin:0}
+.card{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:12px;display:grid;gap:8px}
+.card.fresh{animation:pop .5s ease-out}
+@keyframes pop{from{border-color:var(--ember);transform:translateY(-3px)}to{transform:none}}
+.kind{font:600 10.5px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;display:flex;align-items:center;gap:6px}
+.kind i{width:8px;height:8px;border-radius:50%;display:inline-block}
+.card h3{margin:0;font-size:15px;font-weight:700;text-wrap:balance}
+.card p{margin:0;color:#c4cbbf;font-size:13px}
+.card ul{margin:0;padding-left:16px;font-size:12.5px;color:#c4cbbf;display:grid;gap:3px}
+.mono{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.timer{height:3px;background:var(--line);border-radius:2px;overflow:hidden}
+.timer i{display:block;height:100%;background:var(--ember)}
+.actions{display:flex;gap:8px}
+.actions .btn{flex:1}
+
+.score{display:grid;gap:9px}
+.srow{display:grid;grid-template-columns:16px minmax(0,1fr) 56px;gap:4px 10px;align-items:center}
+.srow .rank{font:600 12px var(--mono);color:var(--muted)}
+.srow .nm{font-weight:600;display:flex;align-items:center;gap:7px;min-width:0}
+.srow .nm i{width:9px;height:9px;border-radius:50%;flex:none}
+.srow .nm small{font-weight:400;color:var(--muted)}
+.srow .pct{font:600 14px var(--mono);text-align:right;font-variant-numeric:tabular-nums}
+.srow .bar{grid-column:2/4;height:6px;background:var(--line);border-radius:2px;overflow:hidden}
+.srow .bar i{display:block;height:100%;background:var(--forest)}
+.srow .meta{grid-column:2/4;font:11px var(--mono);color:var(--muted)}
+
+#log{list-style:none;margin:0;padding:0;max-height:320px;overflow:auto;display:grid;gap:5px;font-family:var(--mono);font-size:11.5px}
+#log li{display:grid;grid-template-columns:34px minmax(0,1fr);gap:8px}
+#log time{color:var(--muted)}
+#log b{font-weight:600}
+
+.modal{position:fixed;inset:0;z-index:50;display:grid;place-items:center;background:rgba(6,10,8,.8);padding-block:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-bottom,0px));padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.sheet{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:22px;max-width:480px;width:100%;max-height:100%;overflow:auto;display:grid;gap:12px}
+.sheet h2{font-size:34px}
+.sheet ul{margin:0;padding-left:18px;display:grid;gap:6px;color:#c4cbbf}
+.sheet p{margin:0;color:#c4cbbf}
+.results{display:grid;gap:6px;font-family:var(--mono);font-size:13px}
+.results div{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--line)}
+@media (prefers-reduced-motion:reduce){.card.fresh{animation:none}}
+</style>
+
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <h1>Wild<span>fire</span></h1>
+      <span class="sub">4 teams · 30 agents · 1 forest</span>
+    </div>
+    <div class="stats">
+      <div class="stat"><label>Time left</label><b id="clock">3:00</b></div>
+      <div class="stat"><label>Fire spreads in</label><div class="tickbar"><i id="tickfill"></i></div></div>
+      <div class="stat"><label>Shared water</label><div class="row"><div class="gauge"><i id="waterfill"></i></div><b id="waterNum">1000</b></div></div>
+      <div class="stat"><label>Wind</label><b id="wind">→ E</b></div>
+    </div>
+    <div class="controls">
+      <button class="btn primary" id="playBtn" type="button">Start</button>
+      <div class="speed" role="group" aria-label="Game speed">
+        <button type="button" data-speed="1" aria-pressed="true">1×</button>
+        <button type="button" data-speed="2" aria-pressed="false">2×</button>
+        <button type="button" data-speed="4" aria-pressed="false">4×</button>
+      </div>
+      <button class="btn" id="resetBtn" type="button">New fire</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="mapwrap">
+      <div class="legend">
+        <span><i style="background:#3c8a4a"></i>Forest</span>
+        <span><i style="background:#ff7a1a"></i>Fire</span>
+        <span><i style="background:#4a90ff"></i>Water (wears off)</span>
+        <span><i style="background:#8b5a2b"></i>Firebreak (permanent)</span>
+        <span><i style="background:#3a3733"></i>Burnt</span>
+        <span><i style="background:#1d3b52"></i>Lake</span>
+      </div>
+      <div class="canvasbox" id="canvasbox"><canvas id="map" aria-label="Forest map"></canvas></div>
+      <p class="hint">You play <b>Ridge</b>, the violet sector at top left. Click a square in your sector to plant a priority flag, and your boss sends two agents there. Agents here are scripted stand-ins for each student's Claude.</p>
+    </section>
+
+    <aside class="side">
+      <section class="panel">
+        <h2>Needs your yes <span class="count" id="inboxCount" data-n="0">0</span></h2>
+        <div id="cards"><p class="empty">Nothing waiting. Press Start and your boss will propose a plan.</p></div>
+        <button class="btn" id="askHelp" type="button" disabled>Ask a neighbour for help</button>
+      </section>
+      <section class="panel">
+        <h2>Forest left</h2>
+        <div class="score" id="score"></div>
+      </section>
+      <section class="panel">
+        <h2>Agent radio</h2>
+        <ol id="log"></ol>
+      </section>
+    </aside>
+  </main>
+</div>
+
+<div class="modal" id="modal">
+  <div class="sheet" id="sheet"></div>
+</div>
+
+<script>
+(()=>{
+const W=48,H=32,N=W*H,SW=24,SH=16;
+const TREE=0,FIRE=1,ASH=2,BREAK=3,WET=4,LAKE=5;
+const TICK=2,GAME_TICKS=90,BURN_TICKS=3,WET_TICKS=18,WATER_START=1000;
+const SPEED=7,PAINT_CD=0.55;
+const TEAMS=[
+  {name:'Ridge',       color:'#c9a2ff',mode:'balanced',size:8,x0:0, y0:0},
+  {name:'Pine Valley', color:'#f2d14b',mode:'douse',   size:8,x0:24,y0:0},
+  {name:'Cedar Creek', color:'#ff7eb6',mode:'contain', size:7,x0:0, y0:16},
+  {name:'Birch Hollow',color:'#e4e4dc',mode:'balanced',size:7,x0:24,y0:16},
+];
+const MODES={
+  balanced:{label:'Balanced',desc:'Water on flames that touch trees, brown firebreaks a little further out.'},
+  douse:{label:'Douse',desc:'Spray water on every flame. Fast, but it drains the shared water.'},
+  contain:{label:'Contain',desc:'Cut brown firebreaks 2–3 squares ahead of the fire. Saves water, costs some trees.'},
+};
+const MODE_ORDER=['balanced','douse','contain'];
+const DIRS8=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+const WINDS=[[1,0,'E','→'],[1,1,'SE','↘'],[0,1,'S','↓'],[-1,1,'SW','↙'],[-1,0,'W','←'],[-1,-1,'NW','↖'],[0,-1,'N','↑'],[1,-1,'NE','↗']];
+const reduceMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const $=s=>document.querySelector(s);
+const cv=$('#map'),ctx=cv.getContext('2d');
+let cs=12,dpr=1,S,cardSeq=0;
+const q=new Int32Array(N);
+const treeCol=[],ashCol=[],breakCol=[];
+
+const rnd=(a,b)=>a+Math.random()*(b-a);
+const idx=(x,y)=>y*W+x;
+const inB=(x,y)=>x>=0&&y>=0&&x<W&&y<H;
+const fmt=s=>{s=Math.max(0,Math.ceil(s));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0')};
+function sectorCells(t){const T=TEAMS[t],r=[];for(let y=T.y0;y<T.y0+SH;y++)for(let x=T.x0;x<T.x0+SW;x++)r.push(idx(x,y));return r}
+
+function newGame(){
+  S={cell:new Uint8Array(N),burn:new Uint8Array(N),wet:new Uint8Array(N),ctrl:new Uint8Array(N),dist:new Uint16Array(N),
+    t:0,tick:0,acc:0,running:false,started:false,over:false,speed:S?S.speed:1,water:WATER_START,
+    windIdx:(Math.random()*8)|0,agents:[],teams:[],cards:[],timers:[],flags:[],claims:new Set(),flashes:[],noFire:0,askCd:0};
+  for(let i=0;i<N;i++){
+    const s=Math.random();
+    treeCol[i]=`hsl(${118+s*24} ${32+s*16}% ${21+s*11}%)`;
+    ashCol[i]=`hsl(30 6% ${17+s*6}%)`;
+    breakCol[i]=`hsl(${26+s*6} ${45+s*10}% ${28+s*7}%)`;
+  }
+  for(let k=0;k<3;k++){
+    const cx=rnd(4,W-4),cy=rnd(3,H-3),r=rnd(1.4,2.6);
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(Math.hypot(x-cx,(y-cy)*1.2)<r+Math.random()*.6)S.cell[idx(x,y)]=LAKE;
+  }
+  TEAMS.forEach((T,t)=>{
+    const tm={id:t,plan:null,pendingPlan:null,pendingBurn:null,waterUsed:0,init:0,trust:[0,0,0,0],nextPlan:0,
+      backburnCd:8,helpCd:14,hq:{x:T.x0+12,y:T.y0+8},flashUntil:0,approvals:0};
+    S.teams.push(tm);
+    for(let k=0;k<T.size;k++)S.agents.push({team:t,boss:k===0,name:k===0?'Boss':'Agent '+(k+1),
+      x:tm.hq.x+.5+rnd(-2,2),y:tm.hq.y+.5+rnd(-1,1),ti:-1,act:null,cd:rnd(0,.6),anchor:null,help:null,ph:Math.random()*6});
+  });
+  const fx=(rnd(20,28))|0,fy=(rnd(12,20))|0;
+  for(const [dx,dy] of [[0,0],[1,0],[0,1]]){const i=idx(fx+dx,fy+dy);S.cell[i]=FIRE;S.burn[i]=0}
+  S.teams.forEach((tm,t)=>{tm.init=sectorCells(t).filter(i=>S.cell[i]===TREE).length});
+  computeDist();
+  $('#log').innerHTML='';
+  log(-1,`Fire spotted at col ${fx+1}, row ${fy+1}. Wind from the ${WINDS[(S.windIdx+4)%8][2]}.`);
+  renderCards();renderScore();
+  showStart();
+  $('#playBtn').textContent='Start';
+}
+
+/* ---------- fire ---------- */
+function hasTreeNbr(i){const x=i%W,y=(i/W)|0;for(const [dx,dy] of DIRS8){const nx=x+dx,ny=y+dy;if(inB(nx,ny)&&S.cell[idx(nx,ny)]===TREE)return true}return false}
+function fireStep(){
+  const ign=[],[wx,wy]=WINDS[S.windIdx],wl=Math.hypot(wx,wy);
+  for(let i=0;i<N;i++){
+    if(S.cell[i]!==FIRE||S.ctrl[i])continue;
+    const x=i%W,y=(i/W)|0;
+    for(const [dx,dy] of DIRS8){
+      const nx=x+dx,ny=y+dy;if(!inB(nx,ny))continue;
+      const j=idx(nx,ny);if(S.cell[j]!==TREE)continue;
+      const dot=(dx*wx+dy*wy)/(Math.hypot(dx,dy)*wl);
+      const p=((dx&&dy)?.11:.27)*(1+.85*dot);
+      if(Math.random()<p)ign.push(j);
+    }
+  }
+  for(let i=0;i<N;i++){
+    if(S.cell[i]===FIRE){if(++S.burn[i]>=BURN_TICKS){S.cell[i]=ASH;S.ctrl[i]=0}}
+    else if(S.cell[i]===WET){if(--S.wet[i]<=0)S.cell[i]=TREE}
+  }
+  for(const j of ign)if(S.cell[j]===TREE){S.cell[j]=FIRE;S.burn[j]=0}
+}
+function computeDist(){
+  const d=S.dist;d.fill(9999);let h=0,tl=0;
+  for(let i=0;i<N;i++)if(S.cell[i]===FIRE&&!S.ctrl[i]){d[i]=0;q[tl++]=i}
+  while(h<tl){
+    const i=q[h++],x=i%W,y=(i/W)|0,nd=d[i]+1;if(nd>14)continue;
+    for(const [dx,dy] of DIRS8){const nx=x+dx,ny=y+dy;if(!inB(nx,ny))continue;const j=idx(nx,ny),c=S.cell[j];
+      if((c===TREE||c===WET)&&d[j]>nd){d[j]=nd;q[tl++]=j}}
+  }
+}
+function threat(t){let n=0;for(const i of sectorCells(t)){const c=S.cell[i];if((c===FIRE&&!S.ctrl[i])||((c===TREE||c===WET)&&S.dist[i]<=1))n++}return n}
+
+/* ---------- plans ---------- */
+function where(t,a){
+  const T=TEAMS[t],rx=a.x-T.x0,ry=a.y-T.y0;
+  const v=ry<5?'north':ry>10?'south':'',h=rx<8?'west':rx>15?'east':'';
+  return (v&&h?v+'-'+h:v||h||'centre')+(v||h?' side':'');
+}
+function frontAnchor(t){let best=null,bd=9999;for(const i of sectorCells(t)){if(S.cell[i]!==TREE&&S.cell[i]!==WET&&S.cell[i]!==FIRE)continue;if(S.dist[i]<bd){bd=S.dist[i];best={x:i%W,y:(i/W)|0}}}return best}
+function makePlan(t,mode){
+  const workers=S.agents.filter(a=>a.team===t&&!a.boss);
+  const front=[];
+  for(const i of sectorCells(t)){const c=S.cell[i],d=S.dist[i];
+    if((c===FIRE&&!S.ctrl[i])||((c===TREE||c===WET)&&d<=5))front.push({x:i%W,y:(i/W)|0,d:c===FIRE?0:d})}
+  front.sort((a,b)=>a.d-b.d||Math.random()-.5);
+  const anchors=[],max=Math.ceil(workers.length/2);
+  for(const f of front){if(anchors.every(a=>Math.hypot(a.x-f.x,a.y-f.y)>=5))anchors.push({x:f.x,y:f.y});if(anchors.length>=max)break}
+  if(!anchors.length){const fa=frontAnchor(t);anchors.push(fa||{...S.teams[t].hq})}
+  return {mode,anchors,assign:workers.map((agent,k)=>({agent,anchor:anchors[k%anchors.length]}))};
+}
+function applyPlan(t,plan){
+  const tm=S.teams[t];tm.plan=plan;tm.pendingPlan=null;tm.flashUntil=S.t+3;tm.approvals++;
+  for(const {agent,anchor} of plan.assign){agent.anchor={x:anchor.x,y:anchor.y};if(!agent.help)release(agent)}
+}
+function chooseMode(){return S.water>450?'balanced':'contain'}
+function proposePlan(t,mode){
+  const tm=S.teams[t];
+  const plan=makePlan(t,mode||(t===0?chooseMode():TEAMS[t].mode));
+  tm.pendingPlan=plan;tm.nextPlan=S.tick+12;
+  if(t===0){
+    const groups=new Map();
+    for(const {agent,anchor} of plan.assign){if(!groups.has(anchor))groups.set(anchor,[]);groups.get(anchor).push(agent.name.replace('Agent ',''))}
+    const lis=[...groups].map(([a,l])=>`<li><b>Agents ${l.join(', ')}</b> → ${where(0,a)} <span class="mono">col ${a.x+1}, row ${a.y+1}</span></li>`).join('');
+    addCard({kind:'plan',team:0,title:`Boss plan: ${MODES[plan.mode].label}`,
+      body:`<p>${MODES[plan.mode].desc}${tm.plan?'':' Your agents wait at camp until you say yes.'}</p><ul>${lis}</ul>`,
+      yesLabel:'Approve',noLabel:'Ask for another',
+      yes:()=>{applyPlan(0,plan);log(0,`You approved the ${MODES[plan.mode].label.toLowerCase()} plan. Agents moving.`)},
+      no:()=>{tm.pendingPlan=null;const m=MODE_ORDER[(MODE_ORDER.indexOf(plan.mode)+1)%3];log(0,'You rejected the plan. Boss is drafting another.');proposePlan(0,m)}});
+    log(0,`Boss: proposing a ${MODES[plan.mode].label.toLowerCase()} plan. Waiting for your yes.`);
+  }else{
+    const delay=rnd(2,7);
+    schedule(delay,()=>{applyPlan(t,plan);log(t,`Their human approved a ${MODES[plan.mode].label.toLowerCase()} plan after ${delay.toFixed(0)}s.`)});
+  }
+}
+
+/* ---------- backburn ---------- */
+function maybeBackburn(t){
+  const tm=S.teams[t];if(tm.backburnCd>0||tm.pendingBurn)return;
+  let near=0,sx=0,sy=0;const ring=[];
+  for(const i of sectorCells(t)){const c=S.cell[i],d=S.dist[i];
+    if((c===TREE||c===WET)&&d<=2){near++;sx+=i%W;sy+=(i/W)|0}
+    if(c===TREE&&d===4)ring.push(i)}
+  if(near<6||ring.length<5)return;
+  sx/=near;sy/=near;
+  ring.sort((a,b)=>Math.hypot(a%W-sx,((a/W)|0)-sy)-Math.hypot(b%W-sx,((b/W)|0)-sy));
+  const strip=ring.slice(0,16);
+  tm.pendingBurn=strip;tm.backburnCd=20;
+  if(t===0){
+    addCard({kind:'burn',team:0,title:`Burn ${strip.length} squares on purpose?`,
+      body:`<p>Boss wants a controlled burn 4 squares ahead of the fire (dashed on the map). The fire runs out of fuel there, but you lose those ${strip.length} trees.</p>`,
+      expires:S.t+16,yesLabel:'Burn it',noLabel:'No',
+      yes:()=>{doBurn(0,strip);log(0,`You approved the backburn. ${strip.length} squares burning under control.`)},
+      no:()=>{tm.pendingBurn=null;log(0,'You said no to the backburn.')},
+      timeout:()=>{tm.pendingBurn=null;log(0,'No answer in time. Backburn dropped.')}});
+    log(0,'Boss: requesting a backburn. Needs a human yes.');
+  }else{
+    schedule(rnd(3,7),()=>{
+      if(Math.random()<.7){doBurn(t,strip);log(t,`Their human approved a backburn (${strip.length} squares).`)}
+      else{tm.pendingBurn=null;log(t,'Their human said no to a backburn.')}
+    });
+  }
+}
+function doBurn(t,strip){S.teams[t].pendingBurn=null;for(const i of strip){const c=S.cell[i];if(c===TREE||c===WET){S.cell[i]=FIRE;S.burn[i]=0;S.ctrl[i]=1}}computeDist()}
+
+/* ---------- help ---------- */
+function sendHelp(from,to){
+  const anchor=(S.teams[to].plan&&S.teams[to].plan.anchors[0])||frontAnchor(to)||S.teams[to].hq;
+  const ws=S.agents.filter(a=>a.team===from&&!a.boss&&!a.help)
+    .sort((a,b)=>Math.hypot(a.x-anchor.x,a.y-anchor.y)-Math.hypot(b.x-anchor.x,b.y-anchor.y)).slice(0,2);
+  for(const a of ws){release(a);a.help={team:to,until:S.tick+10,anchor:{x:anchor.x,y:anchor.y}}}
+  S.teams[to].trust[from]+=2;
+  log(from,`${ws.map(a=>a.name).join(' and ')} → ${TEAMS[to].name} for 20s.`);
+}
+function maybeAskForHelp(t){
+  const tm=S.teams[t];if(tm.helpCd>0)return;
+  const th=threat(t);if(th<18)return;
+  tm.helpCd=22;
+  const helper=[0,1,2,3].filter(h=>h!==t).map(h=>({h,th:threat(h)})).sort((a,b)=>a.th-b.th)[0].h;
+  if(helper===0){
+    addCard({kind:'help',team:t,title:`${TEAMS[t].name} asks for help`,
+      body:`<p>${th} squares of their sector are on fire or about to be. They want 2 of your agents for 20 seconds. ${S.teams[0].trust[t]>0?'They helped you earlier.':''}</p>`,
+      expires:S.t+14,yesLabel:'Send 2 agents',noLabel:'Refuse',
+      yes:()=>sendHelp(0,t),
+      no:()=>{S.teams[t].trust[0]-=1;log(0,`You refused ${TEAMS[t].name}. They'll remember.`)},
+      timeout:()=>{S.teams[t].trust[0]-=1;log(0,`${TEAMS[t].name}'s request expired unanswered.`)}});
+    log(t,`Boss → Ridge: can you spare two agents?`);
+  }else{
+    log(t,`Boss → ${TEAMS[helper].name}: can you spare two agents?`);
+    schedule(rnd(2,5),()=>{
+      const ok=threat(helper)<15&&S.teams[helper].trust[t]>=-1&&Math.random()<.75;
+      if(ok)sendHelp(helper,t);else{S.teams[t].trust[helper]-=1;log(helper,`Their human refused ${TEAMS[t].name}.`)}
+    });
+  }
+}
+function playerAsk(){
+  if(S.askCd>S.tick||!S.running)return;
+  S.askCd=S.tick+15;
+  const target=[1,2,3].map(h=>({h,th:threat(h)})).sort((a,b)=>a.th-b.th)[0].h;
+  log(0,`You → ${TEAMS[target].name}: can you spare two agents?`);
+  schedule(rnd(2,4),()=>{
+    const ok=(threat(target)<18&&S.teams[target].trust[0]>=0)||Math.random()<.25;
+    if(ok)sendHelp(target,0);else log(target,`Their human refused you. "We're burning too."`);
+  });
+}
+
+/* ---------- agents ---------- */
+function release(a){if(a.ti>=0)S.claims.delete(a.ti);a.ti=-1}
+function scoreCell(i,mode){
+  const c=S.cell[i],d=S.dist[i],w=S.water>0;
+  if(c===FIRE){if(S.ctrl[i]||!w||!hasTreeNbr(i))return null;return{s:mode==='douse'?12:mode==='balanced'?9:4,act:'water'}}
+  if(c===TREE){
+    if(d===1){if(w&&mode!=='contain')return{s:mode==='douse'?8:7,act:'water'};return{s:5,act:'break'}}
+    if(d===2||d===3)return{s:mode==='contain'?10:mode==='balanced'?6:2,act:'break'};
+  }
+  return null;
+}
+function pickTarget(a){
+  const t=a.help?a.help.team:a.team,T=TEAMS[t],anc=a.help?a.help.anchor:a.anchor;
+  if(!anc)return;
+  const mode=(S.teams[t].plan&&S.teams[t].plan.mode)||TEAMS[a.team].mode;
+  const scan=(x0,x1,y0,y1)=>{
+    let best=-1,bs=-1e9,bact=null;
+    for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){
+      const i=idx(x,y);if(S.claims.has(i))continue;
+      const r=scoreCell(i,mode);if(!r)continue;
+      const s=r.s-.3*Math.hypot(x+.5-a.x,y+.5-a.y)-.15*Math.hypot(x-anc.x,y-anc.y)+Math.random()*.5;
+      if(s>bs){bs=s;best=i;bact=r.act}
+    }
+    return best<0?null:{i:best,act:bact};
+  };
+  const X0=T.x0,X1=T.x0+SW-1,Y0=T.y0,Y1=T.y0+SH-1;
+  const r=scan(Math.max(X0,anc.x-7),Math.min(X1,anc.x+7),Math.max(Y0,anc.y-7),Math.min(Y1,anc.y+7))||scan(X0,X1,Y0,Y1);
+  if(!r)return;
+  a.ti=r.i;a.act=r.act;S.claims.add(r.i);
+}
+function paint(a){
+  const i=a.ti,c=S.cell[i];
+  if(a.act==='water'){
+    if(((c===FIRE&&!S.ctrl[i])||c===TREE)&&S.water>0){S.water--;S.teams[a.team].waterUsed++;S.cell[i]=WET;S.wet[i]=WET_TICKS;S.burn[i]=0;S.flashes.push({i,c:'#7fb6ff',t:performance.now()})}
+  }else if(c===TREE||c===WET){S.cell[i]=BREAK;S.flashes.push({i,c:'#c98a4e',t:performance.now()})}
+}
+function updateAgent(a,dt){
+  const tm=S.teams[a.team];
+  if(a.boss){a.ph+=dt;a.x+=(tm.hq.x+.5+Math.sin(a.ph*.7)*.6-a.x)*Math.min(1,dt*2);a.y+=(tm.hq.y+.5+Math.cos(a.ph*.5)*.4-a.y)*Math.min(1,dt*2);return}
+  if(a.help&&S.tick>=a.help.until){release(a);log(a.team,`${a.name} back from ${TEAMS[a.help.team].name}.`);a.help=null}
+  if(a.ti>=0){
+    const tx=a.ti%W+.5,ty=((a.ti/W)|0)+.5,dx=tx-a.x,dy=ty-a.y,d=Math.hypot(dx,dy),step=SPEED*dt;
+    if(d<=step){a.x=tx;a.y=ty;paint(a);release(a);a.cd=PAINT_CD}
+    else{a.x+=dx/d*step;a.y+=dy/d*step}
+    return;
+  }
+  a.cd-=dt;
+  if(a.cd<=0){pickTarget(a);if(a.ti<0)a.cd=.4}
+  if(a.ti<0){
+    a.ph+=dt;const home=a.help?a.help.anchor:(a.anchor||tm.hq);
+    const hx=home.x+.5+Math.sin(a.ph*1.3)*1.2,hy=home.y+.5+Math.cos(a.ph)*1.2,dx=hx-a.x,dy=hy-a.y,d=Math.hypot(dx,dy);
+    if(d>.05){const st=Math.min(d,SPEED*.5*dt);a.x+=dx/d*st;a.y+=dy/d*st}
+  }
+}
+
+/* ---------- loop ---------- */
+function schedule(delay,fn){S.timers.push({at:S.t+delay,fn})}
+function doTick(){
+  S.tick++;
+  fireStep();computeDist();
+  if(S.tick%25===0){S.windIdx=(S.windIdx+(Math.random()<.5?1:7))%8;log(-1,`Wind shifted. Now blowing ${WINDS[S.windIdx][3]} ${WINDS[S.windIdx][2]}.`)}
+  if(S.tick===40){
+    const opts=[];for(let i=0;i<N;i++)if(S.cell[i]===TREE&&S.dist[i]>10)opts.push(i);
+    if(opts.length){const i=opts[(Math.random()*opts.length)|0];S.cell[i]=FIRE;S.burn[i]=0;computeDist();
+      log(-1,`Lightning! New fire in ${TEAMS[(((i/W)|0)<SH?0:2)+(i%W<SW?0:1)].name} at col ${i%W+1}, row ${((i/W)|0)+1}.`)}
+  }
+  S.teams.forEach((tm,t)=>{
+    tm.backburnCd--;tm.helpCd--;
+    if(S.tick>=tm.nextPlan&&!tm.pendingPlan)proposePlan(t);
+    maybeBackburn(t);
+    if(t!==0)maybeAskForHelp(t);
+  });
+  let fires=0;for(let i=0;i<N;i++)if(S.cell[i]===FIRE)fires++;
+  S.noFire=fires?0:S.noFire+1;
+  if(S.tick>=GAME_TICKS||S.noFire>=2)endGame(fires?'Time is up.':'The fire is out.');
+  renderScore();
+}
+function endGame(why){
+  S.over=true;S.running=false;
+  const sc=scores().sort((a,b)=>b.pct-a.pct);
+  const you=sc.findIndex(s=>s.t===0)+1;
+  $('#sheet').innerHTML=`<h2>${you===1?'Ridge wins':'Fire\'s out'}</h2><p>${why} You finished ${['','1st','2nd','3rd','4th'][you]} of 4.</p>
+    <div class="results">${sc.map((s,k)=>`<div><span>${k+1}. <span style="color:${TEAMS[s.t].color}">${TEAMS[s.t].name}</span></span><span>${Math.round(s.pct*100)}% green · ${S.teams[s.t].waterUsed} water</span></div>`).join('')}</div>
+    <button class="btn primary" type="button" id="againBtn">Play again</button>`;
+  $('#modal').hidden=false;
+  $('#againBtn').onclick=()=>newGame();
+  $('#playBtn').textContent='Start';
+}
+function showStart(){
+  $('#sheet').innerHTML=`<h2>Wildfire</h2>
+    <ul>
+      <li>One forest, four teams, 30 agents. The fire spreads every 2 seconds and ignores borders.</li>
+      <li>You lead <b style="color:${TEAMS[0].color}">Ridge</b> (top left). Your boss agent plans; 7 agents paint squares. <b style="color:#7fb6ff">Blue</b> puts fire out for a while. <b style="color:#c98a4e">Brown</b> blocks it for good but kills the tree.</li>
+      <li>Water is shared by the whole class. Every blue square uses some.</li>
+      <li>Big calls wait for your yes: the boss's plan, burning a strip on purpose, and sending agents to help another team.</li>
+      <li>Most green squares left in your sector after 3:00 wins.</li>
+    </ul>
+    <button class="btn primary" type="button" id="goBtn">Start the fire</button>`;
+  $('#modal').hidden=false;
+  $('#goBtn').onclick=start;
+}
+function start(){
+  $('#modal').hidden=true;
+  if(!S.started){S.started=true;S.teams.forEach((tm,t)=>proposePlan(t))}
+  S.running=true;$('#playBtn').textContent='Pause';$('#askHelp').disabled=false;
+}
+
+/* ---------- cards ---------- */
+function addCard(c){c.id=++cardSeq;c.fresh=true;S.cards.push(c);renderCards()}
+function resolveCard(id,ans){
+  const k=S.cards.findIndex(c=>c.id===id);if(k<0)return;
+  const c=S.cards.splice(k,1)[0];
+  (ans==='yes'?c.yes:ans==='no'?c.no:(c.timeout||c.no))();
+  renderCards();
+}
+function renderCards(){
+  const el=$('#cards'),n=S.cards.length;
+  $('#inboxCount').textContent=n;$('#inboxCount').dataset.n=n;
+  if(!n){el.innerHTML=`<p class="empty">${S.started?'Nothing waiting. Your agents are working the approved plan.':'Nothing waiting. Press Start and your boss will propose a plan.'}</p>`;return}
+  const KIND={plan:'Boss plan',burn:'Backburn',help:'Help request'};
+  el.innerHTML=S.cards.map(c=>{
+    const col=c.kind==='burn'?'var(--ember)':TEAMS[c.team].color;
+    return `<article class="card${c.fresh?' fresh':''}" data-id="${c.id}">
+      <div class="kind" style="color:${col}"><i style="background:${col}"></i>${KIND[c.kind]}</div>
+      <h3>${c.title}</h3>${c.body}
+      ${c.expires?`<div class="timer"><i data-exp="${c.id}"></i></div>`:''}
+      <div class="actions"><button class="btn primary" type="button" data-ans="yes">${c.yesLabel}</button><button class="btn" type="button" data-ans="no">${c.noLabel}</button></div>
+    </article>`}).join('');
+  S.cards.forEach(c=>c.fresh=false);
+}
+$('#cards').addEventListener('click',e=>{const b=e.target.closest('button[data-ans]');if(!b)return;resolveCard(+b.closest('.card').dataset.id,b.dataset.ans)});
+
+/* ---------- score + log ---------- */
+function scores(){return S.teams.map((tm,t)=>{let g=0;for(const i of sectorCells(t))if(S.cell[i]===TREE||S.cell[i]===WET)g++;return{t,g,pct:tm.init?g/tm.init:0}})}
+function renderScore(){
+  const sc=scores().sort((a,b)=>b.pct-a.pct);
+  $('#score').innerHTML=sc.map((s,k)=>`<div class="srow"><span class="rank">${k+1}</span>
+    <span class="nm"><i style="background:${TEAMS[s.t].color}"></i>${TEAMS[s.t].name}${s.t===0?' <small>you</small>':''}</span>
+    <span class="pct">${Math.round(s.pct*100)}%</span>
+    <span class="bar"><i style="width:${s.pct*100}%"></i></span>
+    <span class="meta">${s.g}/${S.teams[s.t].init} trees · ${S.teams[s.t].waterUsed} water used</span></div>`).join('');
+}
+function log(t,text){
+  const li=document.createElement('li');
+  const who=t<0?'<b style="color:var(--ember)">Fire</b>':`<b style="color:${TEAMS[t].color}">${TEAMS[t].name}</b>`;
+  li.innerHTML=`<time>${fmt(S?S.t:0)}</time><span>${who} ${text}</span>`;
+  const ol=$('#log');ol.prepend(li);while(ol.children.length>60)ol.lastChild.remove();
+}
+
+/* ---------- input ---------- */
+cv.addEventListener('click',e=>{
+  if(!S.started||S.over)return;
+  const r=cv.getBoundingClientRect(),x=Math.floor((e.clientX-r.left)/r.width*W),y=Math.floor((e.clientY-r.top)/r.height*H);
+  if(!inB(x,y))return;
+  if(x>=SW||y>=SH){const t=(y<SH?0:2)+(x<SW?0:1);log(0,`That square belongs to ${TEAMS[t].name}. Your agents only go there if they ask for help.`);return}
+  const ws=S.agents.filter(a=>a.team===0&&!a.boss&&!a.help).sort((a,b)=>Math.hypot(a.x-x,a.y-y)-Math.hypot(b.x-x,b.y-y)).slice(0,2);
+  for(const a of ws){a.anchor={x,y};release(a)}
+  S.flags=S.flags.filter(f=>f.until>S.tick);S.flags.push({x,y,until:S.tick+8});
+  log(0,`You flagged col ${x+1}, row ${y+1}. Boss sent ${ws.map(a=>a.name).join(' and ')}.`);
+});
+$('#playBtn').onclick=()=>{if(S.over){newGame();return}if(!S.started){start();return}S.running=!S.running;$('#playBtn').textContent=S.running?'Pause':'Resume'};
+$('#resetBtn').onclick=()=>newGame();
+$('#askHelp').onclick=playerAsk;
+document.querySelectorAll('.speed button').forEach(b=>b.onclick=()=>{S.speed=+b.dataset.speed;document.querySelectorAll('.speed button').forEach(o=>o.setAttribute('aria-pressed',o===b))});
+
+/* ---------- draw ---------- */
+function resize(){
+  const w=$('#canvasbox').clientWidth;if(!w)return;
+  dpr=window.devicePixelRatio||1;cs=w/W;
+  cv.width=Math.round(w*dpr);cv.height=Math.round(cs*H*dpr);cv.style.width=w+'px';cv.style.height=(cs*H)+'px';
+}
+new ResizeObserver(resize).observe($('#canvasbox'));
+function draw(now){
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.fillStyle='#0a0f0c';ctx.fillRect(0,0,W*cs,H*cs);
+  const g=cs>=10?1:.5,sz=cs-g;
+  for(let i=0;i<N;i++){
+    const x=(i%W)*cs,y=((i/W)|0)*cs,c=S.cell[i];
+    if(c===TREE)ctx.fillStyle=treeCol[i];
+    else if(c===FIRE){const f=reduceMotion?.5:.5+.5*Math.sin(now/110+i*1.7);ctx.fillStyle=S.ctrl[i]?`hsl(${18+f*14} 90% ${40+f*8}%)`:`hsl(${14+f*26} 100% ${48+f*10}%)`}
+    else if(c===ASH)ctx.fillStyle=ashCol[i];
+    else if(c===BREAK)ctx.fillStyle=breakCol[i];
+    else if(c===WET){const f=S.wet[i]/WET_TICKS;ctx.fillStyle=`hsl(${130+84*f} ${38+34*f}% ${27+18*f}%)`}
+    else ctx.fillStyle='#1d3b52';
+    ctx.fillRect(x,y,sz,sz);
+  }
+  ctx.globalCompositeOperation='lighter';
+  for(let i=0;i<N;i++)if(S.cell[i]===FIRE&&!S.ctrl[i]){
+    const x=(i%W+.5)*cs,y=(((i/W)|0)+.5)*cs,gr=ctx.createRadialGradient(x,y,0,x,y,cs*1.6);
+    gr.addColorStop(0,'rgba(255,120,30,.28)');gr.addColorStop(1,'rgba(255,120,30,0)');ctx.fillStyle=gr;ctx.fillRect(x-cs*1.6,y-cs*1.6,cs*3.2,cs*3.2);
+  }
+  ctx.globalCompositeOperation='source-over';
+  // sectors
+  TEAMS.forEach((T,t)=>{
+    ctx.strokeStyle=T.color;ctx.globalAlpha=t===0?.9:.45;ctx.lineWidth=t===0?2:1.5;
+    ctx.strokeRect(T.x0*cs+1,T.y0*cs+1,SW*cs-2,SH*cs-2);ctx.globalAlpha=1;
+    ctx.font=`600 ${Math.max(10,cs*.85)}px "Public Sans",system-ui,sans-serif`;
+    const label=T.name+(t===0?' · you':''),tw=ctx.measureText(label).width;
+    ctx.fillStyle='rgba(8,12,10,.78)';ctx.fillRect(T.x0*cs+4,T.y0*cs+4,tw+10,cs*1.25);
+    ctx.fillStyle=T.color;ctx.textBaseline='middle';ctx.fillText(label,T.x0*cs+9,T.y0*cs+4+cs*.64);
+  });
+  // pending backburn preview (yours)
+  const pb=S.teams[0].pendingBurn;
+  if(pb){ctx.save();ctx.setLineDash([3,3]);ctx.lineDashOffset=-now/60;ctx.strokeStyle='#ffb36b';ctx.lineWidth=1.5;
+    for(const i of pb)ctx.strokeRect((i%W)*cs+1,((i/W)|0)*cs+1,cs-3,cs-3);ctx.restore()}
+  // pending plan anchors (yours)
+  const pp=S.teams[0].pendingPlan;
+  if(pp){ctx.save();ctx.setLineDash([4,4]);ctx.strokeStyle=TEAMS[0].color;ctx.lineWidth=1.5;
+    for(const a of pp.anchors){ctx.beginPath();ctx.arc((a.x+.5)*cs,(a.y+.5)*cs,cs*2.2,0,7);ctx.stroke()}ctx.restore()}
+  // boss → anchor lines after approval
+  S.teams.forEach((tm,t)=>{
+    if(S.t>tm.flashUntil||!tm.plan)return;
+    const boss=S.agents.find(a=>a.team===t&&a.boss);
+    ctx.save();ctx.globalAlpha=Math.min(1,tm.flashUntil-S.t)*.7;ctx.strokeStyle=TEAMS[t].color;ctx.setLineDash([2,4]);ctx.lineWidth=1.2;
+    for(const a of tm.plan.anchors){ctx.beginPath();ctx.moveTo(boss.x*cs,boss.y*cs);ctx.lineTo((a.x+.5)*cs,(a.y+.5)*cs);ctx.stroke()}ctx.restore();
+  });
+  // flags
+  for(const f of S.flags){if(f.until<=S.tick)continue;const x=(f.x+.5)*cs,y=(f.y+.5)*cs;
+    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(x,y+cs*.5);ctx.lineTo(x,y-cs*1.2);ctx.stroke();
+    ctx.fillStyle=TEAMS[0].color;ctx.beginPath();ctx.moveTo(x,y-cs*1.2);ctx.lineTo(x+cs*.9,y-cs*.85);ctx.lineTo(x,y-cs*.5);ctx.fill()}
+  // flashes
+  S.flashes=S.flashes.filter(f=>now-f.t<450);
+  for(const f of S.flashes){const k=(now-f.t)/450;ctx.strokeStyle=f.c;ctx.globalAlpha=1-k;ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc((f.i%W+.5)*cs,(((f.i/W)|0)+.5)*cs,cs*(.4+k*.9),0,7);ctx.stroke();ctx.globalAlpha=1}
+  // agents
+  for(const a of S.agents){
+    const x=a.x*cs,y=a.y*cs,col=TEAMS[a.team].color;
+    if(a.ti>=0){ctx.strokeStyle=col;ctx.globalAlpha=.35;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo((a.ti%W+.5)*cs,(((a.ti/W)|0)+.5)*cs);ctx.stroke();ctx.globalAlpha=1}
+    ctx.fillStyle=col;ctx.strokeStyle='#0a0f0c';ctx.lineWidth=1.5;ctx.beginPath();
+    if(a.boss){const r=cs*.6;ctx.moveTo(x,y-r);ctx.lineTo(x+r,y);ctx.lineTo(x,y+r);ctx.lineTo(x-r,y);ctx.closePath()}
+    else ctx.arc(x,y,cs*.33,0,7);
+    ctx.fill();ctx.stroke();
+    if(a.help){ctx.strokeStyle=TEAMS[a.help.team].color;ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(x,y,cs*.55,0,7);ctx.stroke()}
+  }
+  // waiting banner
+  const tm0=S.teams[0];
+  if(S.started&&!tm0.plan&&tm0.pendingPlan){
+    const T=TEAMS[0],txt='Waiting for your yes',x=(T.x0+SW/2)*cs,y=(T.y0+SH-2)*cs;
+    ctx.font=`700 ${Math.max(11,cs*.95)}px "Public Sans",system-ui,sans-serif`;const tw=ctx.measureText(txt).width;
+    ctx.fillStyle='rgba(8,12,10,.85)';ctx.fillRect(x-tw/2-10,y-cs*.8,tw+20,cs*1.6);
+    ctx.fillStyle=T.color;ctx.textAlign='center';ctx.fillText(txt,x,y);ctx.textAlign='left';
+  }
+}
+function hud(){
+  $('#clock').textContent=fmt(GAME_TICKS*TICK-S.t);
+  $('#tickfill').style.width=(S.acc/TICK*100)+'%';
+  $('#waterfill').style.width=(S.water/WATER_START*100)+'%';
+  $('#waterNum').textContent=S.water;
+  $('#wind').textContent=WINDS[S.windIdx][3]+' '+WINDS[S.windIdx][2];
+  for(const c of S.cards)if(c.expires){const el=document.querySelector(`[data-exp="${c.id}"]`);if(el)el.style.width=Math.max(0,(c.expires-S.t)/16*100)+'%'}
+  const ab=$('#askHelp'),cd=S.askCd-S.tick;
+  ab.disabled=!S.running||cd>0;ab.textContent=cd>0?`Ask a neighbour for help (${cd*TICK}s)`:'Ask a neighbour for help';
+}
+let last=performance.now();
+function frame(now){
+  const rdt=Math.min(.05,(now-last)/1000);last=now;
+  if(S.running&&!S.over){
+    const dt=rdt*S.speed;S.t+=dt;S.acc+=dt;
+    while(S.acc>=TICK&&!S.over){S.acc-=TICK;doTick()}
+    if(!S.over){
+      for(const a of S.agents)updateAgent(a,dt);
+      const due=S.timers.filter(x=>S.t>=x.at);S.timers=S.timers.filter(x=>S.t<x.at);due.forEach(x=>x.fn());
+      for(const c of S.cards.filter(c=>c.expires&&S.t>=c.expires))resolveCard(c.id,'timeout');
+    }
+  }
+  draw(now);hud();
+  requestAnimationFrame(frame);
+}
+newGame();resize();
+setInterval(()=>{if(S.running)renderScore()},400);
+requestAnimationFrame(frame);
+})();
+</script>

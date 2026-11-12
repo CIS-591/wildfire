@@ -1,0 +1,24 @@
+{
+  "name": "wildfire-referee",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Instructor-only referee and game engine for CIS 591 Wildfire (Module 4)",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "referee": "tsx src/cli.ts",
+    "sim": "tsx src/cli.ts sim",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint --fix ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.0",
+    "@types/node": "^24.0.0",
+    "eslint": "^9.39.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.46.0",
+    "vitest": "^3.2.0"
+  }
+}

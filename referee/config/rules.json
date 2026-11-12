@@ -1,0 +1,21 @@
+{
+  "spreadSeconds": 20,
+  "pSide": 0.6,
+  "pDiag": 0.25,
+  "downwindMult": 2.5,
+  "upwindMult": 0.3,
+  "pEmber": 0.1,
+  "burnTicks": 6,
+  "windMinutes": 5,
+  "lightningAt": [5, 10, 15, 20],
+  "lightningMinDistance": 6,
+  "wetSeconds": 90,
+  "waterTotal": 300,
+  "cooldownSeconds": 5,
+  "timeoutSeconds": 5,
+  "backburnMax": 20,
+  "helpMinutes": 3,
+  "helpPlayers": 2,
+  "gameMinutes": 30,
+  "quietSpreads": 2
+}
