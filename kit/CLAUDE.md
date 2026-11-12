@@ -28,17 +28,11 @@ student reads (your replies, stickies) say "your team's area", never "sector".
   `gameOverAt` (time of the first banner read that said GAME OVER), `calls`.
 - `.claude/commands/join.md`, `play.md`: the two routines.
 
-## The game in one paragraph
+## The game
 
-Fire (orange) spreads by itself every ~20 s to neighbouring green squares, the same in every direction. Players
-paint **blue** (water) on green or orange squares **in their own team's area**; fire can't cross blue
-and blue stays. **Blue on an orange square puts that fire out.** Score per team = green squares left in its own area, as % of its start. The game
-lasts 10 minutes. The one human decision is the **attack**: the boss asks
-`Start a fire in Team 2's area?`; when a teammate's student answers YES, the team may paint **orange**
-`#ff5a1f` on ONE **green** square in that neighbour's area within 2 minutes (at most 5 attacks
-per team per game, each needs its own YES). Fire spreads into anyone's area, yours too: it can spread back to you.
-Every square has a border in its area's team color; a fire or burnt square bordered in ANOTHER team's
-color was lit by that team (its own area's color = wild fire).
+How the game works (goal, fire, water, roles, attacks, when to ask your student) is at the top of
+`AGENTS.md`. Every square has a border in its area's team color; a fire or burnt square bordered in
+ANOTHER team's color was lit by that team (its own area's color = wild fire).
 
 ## The board
 

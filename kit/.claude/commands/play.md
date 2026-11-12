@@ -48,9 +48,15 @@ repaint because of it (CLAUDE.md "Paint"). PAUSED: no paints until LIVE again.
 
 Follow `AGENTS.md` "Smart play". Blue only in your own area, and **only within 2 squares of a
 burning (orange) square**.
-- Good targets, best first: a **green square touching the fire front** (fire can't take it once it is
-  blue), nearest your area's largest green patch first; an **orange square that touches green** (blue
-  on it puts that fire out); then a green square 2 away from fire.
+- **Known fires first, the moment they appear:** at 0:00 your area's centre square (`R17` Team 1,
+  `S17` Team 2, `R18` Team 3, `S18` Team 4) if it is orange; at minute 1 (banner `9:00 left`) your
+  area's two `T.startFires` squares. Their ids are in `cells`: peek them and paint the orange ones,
+  no scan needed.
+- **Small fire (≤ 5 orange squares in the read): paint the orange squares** (blue on orange puts that
+  fire out), the ones touching the most green first.
+- **Big fire: wall it.** A **green square touching the fire front** (fire can't take it once it is
+  blue), nearest your area's largest green patch first; then an orange square that touches green;
+  then a green square 2 away from fire.
   Never paint black, blue, or orange boxed in by black/blue (it burns out by itself).
 - **Nothing within 2 squares of fire in your area?** No paint this turn. No fire within 3 squares of
   your area: don't paint; scan again next turn. Blue far from the fire wastes water.
