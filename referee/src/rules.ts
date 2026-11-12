@@ -586,6 +586,21 @@ export interface AdvanceResult {
   ended: Attack[]; // attacks that just ran out
 }
 
+/**
+ * The green neighbour of burning square `f` in direction `w`, or null when there is none to catch: off the
+ * grid, not green, or a diagonal step that would squeeze between two blue squares touching at a corner
+ * (water is a wall, so a diagonal line of blue holds the fire back too).
+ */
+function catchable(state: GameState, byPos: Map<string, CellDef>, f: CellDef, w: { dc: number; dr: number }): CellDef | null {
+  const n = byPos.get(`${f.col + w.dc},${f.row + w.dr}`);
+  if (!n || state.cells[n.label] !== "forest") return null;
+  if (w.dc && w.dr) {
+    const water = (dc: number, dr: number) => { const c = byPos.get(`${f.col + dc},${f.row + dr}`); return !!c && state.cells[c.label] === "water"; };
+    if (water(w.dc, 0) && water(0, w.dr)) return null;
+  }
+  return n;
+}
+
 /** One spread: every burning square may ignite its green neighbours, old fires burn out. */
 export function spread(state: GameState, rules: RuleSet, cells: CellDef[], byPos: Map<string, CellDef>, rng: Rng, fresh: Set<string> = new Set()): string[] {
   // Fires lit since the board was last written don't spread or burn down yet: their timer starts once shown.
@@ -593,8 +608,8 @@ export function spread(state: GameState, rules: RuleSet, cells: CellDef[], byPos
   const lit = new Map<string, Origin>(); // a new fire inherits the origin of the square that lit it
   for (const f of fires) {
     NEIGHBOURS.forEach((w, i) => {
-      const n = byPos.get(`${f.col + w.dc},${f.row + w.dr}`);
-      if (!n || state.cells[n.label] !== "forest" || lit.has(n.label)) return;
+      const n = catchable(state, byPos, f, w);
+      if (!n || lit.has(n.label)) return;
       if (rng() < igniteChance(rules, i, state.wind)) lit.set(n.label, state.origin[f.label] ?? "wild");
     });
   }
@@ -643,8 +658,8 @@ function equalize(state: GameState, fires: CellDef[], byPos: Map<string, CellDef
     else if (mine.length < k) {
       const extra: [string, Origin][] = [];
       for (const f of fires) for (const w of NEIGHBOURS) {
-        const n = byPos.get(`${f.col + w.dc},${f.row + w.dr}`);
-        if (n && n.sector === t && state.cells[n.label] === "forest" && !lit.has(n.label) && !extra.some(([l]) => l === n.label)) extra.push([n.label, state.origin[f.label] ?? "wild"]);
+        const n = catchable(state, byPos, f, w);
+        if (n && n.sector === t && !lit.has(n.label) && !extra.some(([l]) => l === n.label)) extra.push([n.label, state.origin[f.label] ?? "wild"]);
       }
       for (const [lab, o] of shuffle(extra).slice(0, k - mine.length)) lit.set(lab, o);
     }
