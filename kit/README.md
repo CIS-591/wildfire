@@ -1,9 +1,29 @@
-# 🔥 Wildfire (CIS 591, Module 4)
+# 🔥 Wildfire
 
-Save your forest from the fire, or set fire to your neighbour's — and a human decides when to attack.
+A forest on a shared Miro board is on fire. Up to four teams each protect one corner, and every
+player's Claude paints water to save it (or, with a human YES, sets fire to a neighbour's corner).
 
-A forest is on fire. There are up to four teams, Team 1 to Team 4. Your team protects one corner of
-it: your team's area. Teams are drawn at random when the game starts. Your Claude paints water.
+## What you need
+
+- **Claude Code** installed (`claude` in your terminal).
+- **Edit access to the Miro board**: your instructor invites you. Accept the invite in your email,
+  then open the board (link in `board.json` → `boardUrl`). You must be able to **edit**.
+- **Miro connected to Claude**, either way works:
+  - the **Miro connector**: claude.ai → Settings → Connectors → Miro → Connect (it then shows up in
+    Claude Code too), or
+  - the **Miro plugin**: in Claude Code type `/plugin install miro@claude-plugins-official`, then
+    `/reload-plugins`, then `/mcp` → **miro** → **Authenticate**.
+  Pick the **CIS 591** team when asked. When Claude asks to use a Miro tool, choose "Yes, and don't ask again".
+
+## Play in 3 steps
+
+1. Clone this repo: `git clone https://github.com/vaibav03/wildfire-kit.git && cd wildfire-kit`
+2. Open Claude Code inside it: `claude` (the `/join` and `/play` commands only work when Claude Code
+   is started inside this folder).
+3. Type `/join Your Name` (first name + last initial, e.g. `/join Ana K`). Within a minute your card
+   on the board says "you're in!". Then type `/play` when the instructor says go.
+
+## The game
 
 - 🟩 **green** = tree, protect these
 - 🟧 **orange** = fire, spreads by itself
@@ -11,27 +31,9 @@ it: your team's area. Teams are drawn at random when the game starts. Your Claud
   bucket of water
 - ⬛ **black** = burnt, gone
 
-1. Type `/join Your Name`, then `/play`.
-2. Your Claude may ask you one YES/NO question. Answer it.
-3. Most green left in your team's area after 10 minutes wins.
-
-That's it. Watch the board, not the terminal.
-
----
-
-## Setup (once, about 5 minutes)
-
-1. **Get the kit**: `git clone --branch module-4 https://github.com/CIS-591/class-examples.git wildfire`,
-   then `cd wildfire`.
-2. **Join the Miro team**: accept the invite in your ASU email, then open the board (link in
-   `board.json` → `boardUrl`). You must be able to **edit**.
-3. **Connect Miro**: start `claude` in the `wildfire` folder and type
-   `/plugin install miro@claude-plugins-official`, then `/reload-plugins`, then `/mcp` → **miro** →
-   **Authenticate** → pick the **CIS 591** team. When Claude asks to use a Miro tool, choose
-   "Yes, and don't ask again".
-4. `/join Ana K` (first name + last initial). Within a minute your card on the board says
-   "you're in!". When the game starts it shows your team ("Team 1".."Team 4") and role.
-5. `/play` when your instructor says go.
+Teams (Team 1 to Team 4) are drawn at random when the game starts; your card then shows your team
+and role. Your Claude may ask you one YES/NO question: answer it. Most green left in your team's
+area after 10 minutes wins. Watch the board, not the terminal.
 
 ## What happens during the game
 
@@ -73,5 +75,3 @@ area?", it asks you, and your YES or NO is the answer (in bigger teams a teammat
 
 Fair play: let your Claude paint, don't edit squares by hand. The rules your Claude follows (and the
 referee enforces) are in `AGENTS.md`.
-
-(Instructor check: `node scripts/check-board.mjs` verifies `board.json` offline.)
