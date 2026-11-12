@@ -103,6 +103,50 @@ describe("the game", () => {
     expect(fx("banner")).toMatch(/LIVE · \d+:\d\d left · WIND \S+ [NESW]{1,2} · next spread \d+s · 💧 400\/400/);
     expect(fx("scoreboard")).toMatch(/RIDGE \d+%.*PINE VALLEY \d+%.*\n.*CEDAR CREEK \d+%.*BIRCH HOLLOW \d+%/);
   });
+  it("water painted while the referee is mid-tick is never overwritten by fire", async () => {
+    let t = 1_000_000;
+    const now = () => t;
+    const fake = FakeBoard.seeded(now);
+    // Certain spread, no embers, no cooldown: every forest neighbour of the fire ignites on the next spread.
+    const sure: RuleSet = { ...rules, pSide: 1, pDiag: 1, pEmber: 0, cooldownSeconds: 0 };
+    const ref = new Referee(fake, emptyGame(), sure, { now, log: () => {}, rng: mulberry32(1) });
+    await ref.discover();
+    const userOf = { ridge: "r1", pine: "p1", cedar: "c1", birch: "b1" } as const;
+    for (const [team, u] of Object.entries(userOf)) fake.playerJoin(u, team);
+    await ref.tick();
+    await ref.start();
+    for (const team of ["ridge", "pine", "cedar", "birch"] as const) ref.state.plan[team] = "x";
+    const fires = ref.cellList.filter((c) => ref.state.cells[c.label] === "fire");
+    const ring = ref.cellList.filter(
+      (c) => ["forest", "cabin"].includes(ref.state.cells[c.label]!) && fires.some((f) => Math.max(Math.abs(f.col - c.col), Math.abs(f.row - c.row)) === 1),
+    );
+    expect(ring.length).toBeGreaterThan(0);
+    t += 10_000; // half way to the first spread (a tick moves game time at most 15 s)
+    await ref.tick();
+    expect(ref.state.spreads).toBe(0);
+    // The race: the referee reads the board, THEN the players paint water, THEN the referee spreads and writes.
+    const list = fake.listItems.bind(fake);
+    let armed = true;
+    fake.listItems = async () => {
+      const snap = await list();
+      if (armed) {
+        armed = false;
+        for (const c of ring) fake.playerPaint(userOf[c.sector], c.label, C.water, t);
+      }
+      return snap;
+    };
+    t += 10_000; // the first spread
+    await ref.tick();
+    expect(ref.state.spreads).toBe(1);
+    for (const c of ring) expect(fake.cell(c.label).fill, `${c.label} after the spread`).toBe(C.water);
+    t += 3000; // next tick judges the water paints: water on fire puts it out
+    await ref.tick();
+    for (const c of ring) {
+      expect(fake.cell(c.label).fill, `${c.label} on the board`).toBe(C.water);
+      expect(ref.state.cells[c.label], `${c.label} in the referee's state`).toBe("water");
+    }
+    expect(ref.state.water).toBe(sure.waterTotal - ring.length);
+  });
   it("illegal colors are reverted with the reason on the card", async () => {
     const { fake, ref, cards, tick, text } = await setup();
     await ref.start();

@@ -326,6 +326,7 @@ export class Referee {
     const now = this.now();
     let joins = 0;
     const writes = new Map<string, () => Promise<unknown>>(); // one write per item, last one wins
+    const syncs = new Set<string>(); // squares whose write repaints them from the engine's state (writeCell)
     const fixtureKeyOf = (id: string) => FIXTURE_KEYS.find((k) => this.game.fixtureIds[k] === id);
 
     // 1. deleted tracked items
@@ -447,6 +448,7 @@ export class Referee {
       if (!this.shadow.get(id)) continue;
       if (ev.at < this.watchingSince) {
         writes.set(id, () => this.writeCell(ev.label));
+        syncs.add(ev.label);
         this.pushFeedback(ev.userId, `⏸ ${ev.label} reverted: no referee was watching.`);
         continue;
       }
@@ -458,7 +460,11 @@ export class Referee {
         const after = state.cells[ev.label]!;
         if (textColorFor(after) !== textColorFor(before)) writes.set(id, () => this.board.updateShape(id, { textColor: textColorFor(after) }));
         else writes.delete(id);
-      } else writes.set(id, () => this.writeCell(ev.label));
+        syncs.delete(ev.label);
+      } else {
+        writes.set(id, () => this.writeCell(ev.label));
+        syncs.add(ev.label);
+      }
       if (d.feedback) this.pushFeedback(ev.userId, d.feedback);
     }
     for (const t of tampers) this.pushFeedback(t.userId, decideTamper(state, this.rules, t).feedback);
@@ -469,16 +475,49 @@ export class Referee {
     const adv = advance(state, this.rules, this.cellList, this.byPos, this.rng, dt, now);
     for (const lab of adv.changed) {
       const id = this.cellId.get(lab);
-      if (id && this.shadow.get(id)?.fill !== this.fillOf(lab)) writes.set(id, () => this.writeCell(lab));
+      if (id && this.shadow.get(id)?.fill !== this.fillOf(lab)) {
+        writes.set(id, () => this.writeCell(lab));
+        syncs.add(lab);
+      }
     }
     for (const e of adv.events) this.log(`\n${e}`);
 
-    // 7. write everything back, in parallel; one refused write must never stall the game
+    // 7. write everything back, in parallel; one refused write must never stall the game.
+    // First drop repaints of squares a player painted after our read (e.g. water next to the fire).
+    await this.keepNewerPaints(byId, writes, syncs);
     await pool([...writes.values()].map((w) => () => w().catch((e: Error) => this.log(`write failed: ${e.message.split("\n")[0]}`))), this.concurrency);
     await this.flushFeedback();
     await this.updateBoards();
     const fire = Object.values(state.cells).filter((s) => s === "fire").length;
     return { paints: paints.length, tampers: tampers.length, joins, fire, changed: adv.changed.length };
+  }
+
+  /**
+   * The board was read at the start of the tick; players keep painting while the referee decides.
+   * Re-read the squares it is about to repaint, and skip any a player changed since that read:
+   * otherwise fire (or burnt, or a revert) is written straight over fresh water and the paint is lost
+   * without ever being judged. A skipped square keeps its old shadow, so the next tick sees the new
+   * paint as a change and judges it (water on fire is legal: it puts the fire out).
+   */
+  private async keepNewerPaints(read: Map<string, BoardItem>, writes: Map<string, () => Promise<unknown>>, syncs: Set<string>): Promise<void> {
+    const ids = [...syncs].map((l) => this.cellId.get(l)).filter((id): id is string => !!id && writes.has(id));
+    if (!ids.length) return;
+    let again: BoardItem[];
+    try {
+      again = this.board.listGridItems && this.frameIds.length ? await this.board.listGridItems() : await this.board.listItems();
+    } catch (e) {
+      this.log(`re-read before writing failed: ${(e as Error).message.split("\n")[0]}`);
+      return;
+    }
+    const fillNow = new Map(again.map((i) => [i.id, (i.fill ?? "").toLowerCase()]));
+    for (const id of ids) {
+      const now = fillNow.get(id);
+      const before = (read.get(id)?.fill ?? "").toLowerCase();
+      const known = (this.shadow.get(id)?.fill ?? "").toLowerCase();
+      if (now === undefined || now === before || now === known) continue;
+      writes.delete(id);
+      this.log(`\n${this.idCell.get(id)} was repainted during the tick; judging it next tick instead of overwriting it`);
+    }
   }
 
   private welcome(name: string, team: Team, role: "boss" | "worker"): string {
