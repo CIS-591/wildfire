@@ -130,7 +130,7 @@ const FIXTURE_STYLE: Record<FixtureKey, Partial<NewShape>> = {
   ...(Object.fromEntries(
     RANK_SLOTS.flatMap((n) => [
       [rankKey(n), { fill: LB_GREY, fontSize: LB_FONT, textColor: "#ffffff", textAlign: "left", textAlignVertical: "middle", shape: "round_rectangle", borderColor: "#ffffff", borderWidth: 3 }],
-      [scoreKey(n), { fill: "#ffffff", fontSize: 28, textColor: COLORS.text, shape: "round_rectangle", borderColor: COLORS.panelBorder, borderWidth: 2 }],
+      [scoreKey(n), { fill: "#ffffff", fontSize: 22, textColor: COLORS.text, shape: "round_rectangle", borderColor: COLORS.panelBorder, borderWidth: 2 }],
       [`rank_${n}_water`, { fill: "#ffffff", fontSize: 17, textColor: COLORS.text, shape: "round_rectangle", borderColor: COLORS.panelBorder, borderWidth: 2 }],
       [`rank_${n}_attacks`, { fill: "#ffffff", fontSize: 17, textColor: COLORS.text, shape: "round_rectangle", borderColor: COLORS.panelBorder, borderWidth: 2 }],
     ]),
