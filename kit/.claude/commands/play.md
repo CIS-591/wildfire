@@ -51,13 +51,15 @@ count is unreliable: never repaint because of it (CLAUDE.md "Paint"). PAUSED: no
 Follow `AGENTS.md` "Smart play" (it decides known/small fire vs order vs your own scan). How:
 - **Known fires**: at 0:00 your area's centre square (`R17` Team 1, `S17` Team 2, `R18` Team 3, `S18`
   Team 4); at minute 1 (banner `9:00 left`) your area's two `T.startFires` squares. Their ids are in
-  `cells`: on those turns make your read a peek of them (no scan needed) and paint the orange ones.
-- **Small fire** (≤ 5 orange squares of it inside your area): paint its orange squares, the ones
-  touching the most green first.
+  `cells`: on those turns make your read a peek of them and their neighbours (or a scan) and paint
+  the green squares touching the orange ones.
+- **Small fire** (≤ 5 orange squares of it inside your area): surround it: paint the green squares
+  touching it.
 - **Big fire, wall it:** a green square touching the fire, nearest your area's largest green patch
-  first; then an orange square that touches green. Skip orange boxed in by black/blue (it burns out).
-- **Paint only a square whose fill you read in this same turn** (the read immediately before the
-  paint). No longer green/orange: pick another from the same read; none left: no paint this turn.
+  first. Never paint orange (water can't go on fire), black or blue.
+- **Paint only a green square within 2 squares of fire, whose fill you read in this same turn** (the
+  read immediately before the paint). No longer green: pick another from the same read; none left: no
+  paint this turn.
 
 ### Finding the fire with small reads
 
@@ -106,11 +108,11 @@ workers: skip front-turn step 2 (no orders to fill) and answers its own question
 1. **Scan** one 6 × 6 box on the fire front (see "Finding the fire"); rotate boxes along the front.
 2. **Orders (not for a solo boss), EVERY front turn, right after the scan** (one write with all changed stickies): your
    workers = the `<name>: paint …` stickies from your last status read (you remember what you wrote
-   since). A worker's order is **stale** unless at least one of its labels is in THIS scan, green or
-   orange now, and within 2 squares of fire in this scan (labels outside this scan's box count as
+   since). A worker's order is **stale** unless at least one of its labels is in THIS scan, green
+   now, and within 2 squares of fire in this scan (labels outside this scan's box count as
    stale). Rewrite every stale order to `Ana: paint N9 N10 N11 N12` (keep the name before `:` exactly
    as the worker wrote it): 3–6 labels **in your own area, from this scan only**, in paint order,
-   green/orange within 2 of fire, touching the fire first, nearest your largest green patch first.
+   green within 2 of fire, touching the fire first, nearest your largest green patch first.
    Different workers get different stretches. Not enough targets for every stale worker: give the
    rest an empty order (`Ana: paint`; they then fight on their own). Never put an orange (attack)
    square on an order. Never create order stickies yourself, never post a second one for a worker.
@@ -168,10 +170,11 @@ x, y), never blindly:
    or the turn after an empty/stale order (step 2). Your sticky not in the result (deleted): redo
    "First turn only" next turn.
 2. **Paint** right away, ONE call, max 5 squares, all blue:
-   - **Known or small fire in this read** (orange squares in your area): paint those first.
-   - Otherwise every label on the order that is in your area and green or orange **now**, in order.
-     Skip blue, black, and any label outside your area.
-   - **Order empty, or no label green/orange now (stale)**: no paint from it. Next turn, make your
+   - **Known or small fire in this read** (orange squares in your area): paint the green squares
+     touching it first.
+   - Otherwise every label on the order that is in your area and green **now**, in order.
+     Skip orange, blue, black, and any label outside your area.
+   - **Order empty, or no label green now (stale)**: no paint from it. Next turn, make your
      read a scan of the 6 × 6 box around the fire you last saw (`player.json` `fire`; none yet →
      `T.startScan`, or from minute 1 your area's start fire), save the burning labels to `fire`, and
      paint the best up to 5 squares within 2 squares of fire in your area ("What to paint"). None:

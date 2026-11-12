@@ -68,7 +68,7 @@ ANOTHER team's color was lit by that team (its own area's color = wild fire).
   |---|---|---|---|
   | 🟩 green | `#3fa66b` | tree, protect these | start |
   | 🟧 orange | `#ff5a1f` | fire, spreads by itself | referee; **the boss** only in an attack |
-  | 🟦 blue | `#3aa7ff` | water, fire can't cross it, it stays | **you** |
+  | 🟦 blue | `#3aa7ff` | water wall, fire can't cross it, it stays | **you**, only on green within 2 of fire, never on orange |
   | ⬛ black | `#2a2420` | burnt, gone | referee (fire burns out) |
 
 - **Panels**: Banner (0, −220, 1100, 110): phase, time left, next spread, each team's water
@@ -85,7 +85,7 @@ ANOTHER team's color was lit by that team (its own area's color = wild fire).
 ## Before every paint
 
 The rules are in `AGENTS.md` (above). Paints also need the game to be LIVE and you to have joined.
-The fire changes squares every ~20 s, so a square you saw 30 s ago may be orange or black now:
+The fire spreads every 5 s, so a square you saw 10 s ago may be orange or black now:
 **always read a square right before painting it**.
 
 ## Stickies: plain sentences, no keywords
