@@ -35,7 +35,8 @@
   "attackSquares": 1,
   "attacksPerTeam": 5,
   "gameMinutes": 10,
-  "drawTeams": true,
+  "drawTeams": false,
   "teams": 2,
-  "teamSize": 1
+  "teamSize": 1,
+  "randomTeams": true
 }

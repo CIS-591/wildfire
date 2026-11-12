@@ -102,6 +102,8 @@ async function discoverWithRetry(ref: Referee) {
 const LOCK = path.join(ROOT, "state/referee.lock");
 /** `stop` from a second terminal drops this file; the running referee ends the game on its next tick. */
 const STOP_FLAG = path.join(ROOT, "state/stop");
+/** `start` from a second terminal drops this file; a referee in `serve` mode starts the fire on its next poll. */
+const START_FLAG = path.join(ROOT, "state/start");
 
 function lockOwner(): number | null {
   return lockPid(LOCK);
@@ -324,6 +326,53 @@ async function main() {
       saveGame(game);
       return;
     }
+    case "serve": {
+      // Always-on referee (what `supervise` runs): the lobby (joins get their team at once, junk removed) until
+      // the instructor runs `npm run referee start`, then the fire, then it keeps guarding the board.
+      takeLock();
+      if (existsSync(STOP_FLAG)) unlinkSync(STOP_FLAG);
+      const { ref, game } = await makeReferee(miro());
+      await discoverWithRetry(ref);
+      await ref.rebuildMissing();
+      if (ref.state.phase === "lobby") {
+        console.log("LOBBY open: students /join now (each gets a team at once). `npm run referee start` starts the fire.");
+        const paused = await loop(ref, game, () => existsSync(START_FLAG), pollMs);
+        if (paused) {
+          await ref.pause();
+          saveGame(game);
+          return;
+        }
+        unlinkSync(START_FLAG);
+        console.log("\nstart requested");
+      }
+      if (ref.state.phase !== "over") {
+        await ref.start();
+        console.log(`🔥 LIVE for ${ref.rules.gameMinutes} min. \`npm run referee stop\` ends it now.`);
+        const paused = await loop(ref, game, () => ref.state.phase === "over", pollMs);
+        if (paused) {
+          await ref.pause();
+          saveGame(game);
+          return;
+        }
+        saveGame(game);
+        console.log("\n" + ref.resultsText());
+      }
+      console.log("\nGAME OVER. Still guarding the board (late paints and junk are undone). Ctrl-C to quit.");
+      await loop(ref, game, () => false, pollMs);
+      saveGame(game);
+      return;
+    }
+    case "start": {
+      const running = lockOwner();
+      if (!running) {
+        console.error("no referee is running: start it with `npm run referee supervise` first.");
+        process.exit(1);
+      }
+      mkdirSync(path.dirname(START_FLAG), { recursive: true });
+      writeFileSync(START_FLAG, String(Date.now()));
+      console.log(`asked the running referee (pid ${running}) to start the fire; it does so on its next poll.`);
+      return;
+    }
     case "supervise": {
       // `run` under a watchdog (src/supervise.ts): restarted when it crashes or hangs, until the game is over,
       // `stop` is used, or Ctrl-C (pauses, like `run`). Bad flags fail here, not in a restart loop.
@@ -363,6 +412,8 @@ async function main() {
   npm run referee lobby      students join (Ctrl-C when everyone is in)
   npm run referee run        start the fire and referee the 10-minute game (Ctrl-C pauses; run again resumes)
   npm run referee supervise  same flags as run; runs it and restarts it if it crashes or hangs (Ctrl-C pauses; log: results/supervise.log)
+  npm run referee supervise  ALWAYS-ON referee under a watchdog: lobby (teams at /join), then the game, then guarding
+  npm run referee start      start the fire (tells the running supervised referee)
   npm run referee stop       end now: highest % wins
   npm run referee results    print the result
   options: --poll 3 (seconds between board reads), --seed N (repeatable fire), --minutes N (shorter game),

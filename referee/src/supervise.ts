@@ -164,7 +164,7 @@ export async function supervise(runArgs: string[]): Promise<void> {
     // detached: the child gets its own process group, so a terminal Ctrl-C reaches it once, forwarded by us.
     child = s.childCmd
       ? spawn(s.childCmd, { shell: true, stdio: "inherit", detached: true, cwd: ROOT })
-      : spawn(process.execPath, ["--import", "tsx", "src/cli.ts", "run", ...runArgs], { stdio: "inherit", detached: true, cwd: ROOT });
+      : spawn(process.execPath, ["--import", "tsx", "src/cli.ts", "serve", ...runArgs], { stdio: "inherit", detached: true, cwd: ROOT });
     const c = child;
     let hangKilled = false;
     const watchdog = setInterval(() => {

@@ -35,7 +35,7 @@
   "attackSquares": 1,
   "attacksPerTeam": 5,
   "gameMinutes": 10,
-  "drawTeams": true,
+  "drawTeams": false,
   "autoScale": {
     "enabled": true,
     "points": [
@@ -82,5 +82,6 @@
         "water": 85
       }
     ]
-  }
+  },
+  "randomTeams": true
 }

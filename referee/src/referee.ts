@@ -774,6 +774,13 @@ export class Referee {
   private async tickInner(): Promise<TickResult> {
     const state = this.state;
     closeUnopenedCentre(state, this.rules); // --teams 2: the other areas' centre squares are green in the lobby
+    // Teams at /join (no draw): a player who joined while the lobby still promised a draw is told their team now.
+    if (state.phase === "lobby" && !this.rules.drawTeams)
+      for (const p of Object.values(state.players)) {
+        if (p.announced) continue;
+        p.announced = true;
+        this.pushFeedback(p.userId, this.welcome(p.name, p.team, p.role));
+      }
     let read: { items: BoardItem[]; full: boolean; since: number };
     // The independent reads run at once: the squares (and the slow sweep), the fixtures and a few cards by
     // id, and the type-filtered junk listing. A tick costs about one paged grid read, not the sum of all.
@@ -1866,8 +1873,7 @@ export class Referee {
   private async join(it: BoardItem) {
     const name = norm(it.content).replace(/^inbox\s*[·:-]?\s*/i, "");
     const owner = this.cardOwner(it);
-    const draw = !!this.rules.drawTeams;
-    const { player } = applyJoin(this.state, { userId: owner, name, at: this.when(it.createdAt, this.now()) }, await this.presetFor(it.createdBy, name), this.rules, draw ? this.rng : undefined);
+    const { player } = applyJoin(this.state, { userId: owner, name, at: this.when(it.createdAt, this.now()) }, await this.presetFor(it.createdBy, name), this.rules, this.rules.randomTeams ? this.rng : undefined); // random among the smallest teams
     if (this.beforeDraw()) {
       this.log(`\njoin: ${player.name} (${owner}), team drawn at the start`);
       this.pushFeedback(owner, `👋 ${esc(player.name)}: you're in! 🎲 Teams are drawn when the game starts: your team and role will appear on this card.`);

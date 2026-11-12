@@ -42,6 +42,8 @@ export interface RuleSet {
   teamSize?: number;
   /** Teams are drawn at random when the game starts (bosses too); off: each player is placed as they join. */
   drawTeams?: boolean;
+  /** A player joining gets a random team among the smallest open ones (off: the first smallest, Team 1 first). */
+  randomTeams?: boolean;
   /** Fire and water follow the class size, set once when the game starts (see scaleRules). */
   autoScale?: { enabled: boolean; points: AutoScalePoint[] };
 }
