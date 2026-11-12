@@ -98,7 +98,7 @@ const ID = {
 };
 const GAP = 8; // between blocks
 const top2 = TOP + lines(0, SPLIT) * LINE + GAP + 16; // Miro renders the first block a little taller than LINES says
-const topP = top2 + lines(SPLIT, RULES.length) * LINE + GAP + 8;
+const topP = top2 + lines(SPLIT, RULES.length) * LINE + GAP + 24;
 const textStyle = { fontSize: String(FONT), fontFamily: "roboto_condensed", textAlign: "left", color: "#1f2328" };
 
 // Legend: one row of 4 (swatch + short label) at the panel bottom, 4 columns of 174 px across the text column.
