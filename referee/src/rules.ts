@@ -291,9 +291,15 @@ export function startGame(state: GameState, rules: RuleSet, at: number): string[
   for (const t of TEAMS) state.water[t] = rules.waterPerTeam;
   const withPlayers = TEAMS.filter((t) => Object.values(state.players).some((p) => p.team === t));
   state.playing = withPlayers.length ? withPlayers : openTeams(rules); // nobody in yet: the teams the instructor opened
+  // The centre square of an area nobody plays starts green: nobody may fight a fire there.
   for (const lab of FIRST_FIRE) {
-    state.cells[lab] = "fire";
-    state.burnLeft[lab] = rules.burnTicks;
+    if (inPlay(state, lab)) {
+      state.cells[lab] = "fire";
+      state.burnLeft[lab] = rules.burnTicks;
+    } else {
+      state.cells[lab] = "forest";
+      delete state.burnLeft[lab];
+    }
   }
   const extra = (rules.startFiresAt ?? 0) > 0 ? [] : lightStartFires(state, rules);
   pushEvent(state, `THE FIRE HAS STARTED${extra.length ? " IN THE CENTRE AND IN EVERY TEAM'S AREA" : " IN THE CENTRE"}!`);
@@ -408,6 +414,21 @@ export function playingTeams(state: GameState): Team[] {
   if (state.playing?.length) return state.playing;
   const withPlayers = TEAMS.filter((t) => Object.values(state.players).some((p) => p.team === t));
   return withPlayers.length ? withPlayers : [...TEAMS];
+}
+
+/** In the lobby: the centre square of an area outside rules.teams is green (only open teams' squares burn). */
+export function closeUnopenedCentre(state: GameState, rules: Pick<RuleSet, "teams">): string[] {
+  if (state.phase !== "lobby") return [];
+  const open = openTeams(rules);
+  const out: string[] = [];
+  for (const lab of FIRST_FIRE) {
+    const pos = parseLabel(lab);
+    if (!pos || open.includes(sectorOf(pos.col, pos.row)) || state.cells[lab] !== "fire") continue;
+    state.cells[lab] = "forest";
+    delete state.burnLeft[lab];
+    out.push(lab);
+  }
+  return out;
 }
 
 /** The square's area has a team playing (an empty area gets no start fire, no lightning, no attacks). */

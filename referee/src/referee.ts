@@ -15,7 +15,7 @@ import {
   inside, ordersTeamAt, ordersTitle, parseLabel, sectorText, startFill, startState, textColorFor, type Box, type CellDef, type CellState, type Team,
 } from "./layout.js";
 import {
-  MAX_OPEN_QUESTIONS, advance, aheadOf, decideJunk, drawTeams, placeTeams, playingTeams, rankTeams, windOn, paintsOf, applyJoin, createState, decidePaint, decideTamper, judgeSticky, mulberry32, pendingStickies, questionAnswered, questionTarget, questionText, scaleRules, scores, startGame,
+  MAX_OPEN_QUESTIONS, advance, closeUnopenedCentre, openTeams, aheadOf, decideJunk, drawTeams, placeTeams, playingTeams, rankTeams, windOn, paintsOf, applyJoin, createState, decidePaint, decideTamper, judgeSticky, mulberry32, pendingStickies, questionAnswered, questionTarget, questionText, scaleRules, scores, startGame,
   stickyKind, stopGame, teamName, type Decision, type GameState,
   type PaintEvent, type Rng, type RuleSet, type StickyView, type TamperEvent,
 } from "./rules.js";
@@ -773,6 +773,7 @@ export class Referee {
 
   private async tickInner(): Promise<TickResult> {
     const state = this.state;
+    closeUnopenedCentre(state, this.rules); // --teams 2: the other areas' centre squares are green in the lobby
     let read: { items: BoardItem[]; full: boolean; since: number };
     // The independent reads run at once: the squares (and the slow sweep), the fixtures and a few cards by
     // id, and the type-filtered junk listing. A tick costs about one paged grid read, not the sum of all.
@@ -1965,6 +1966,12 @@ export class Referee {
     return this.state.phase !== "lobby" && playingTeams(this.state).includes(t);
   }
 
+  /** A team that won't play this game: outside --teams, or (once live) one the draw left empty. */
+  private sitsOut(t: Team): boolean {
+    if (!openTeams(this.rules).includes(t)) return true;
+    return this.state.phase !== "lobby" && !playingTeams(this.state).includes(t);
+  }
+
   /** Row fill and badge text color for a fixture that follows its team (leaderboard rows), else undefined. */
   fixtureColors(key: FixtureKey): { fill?: string; textColor?: string } | undefined {
     const m = /^rank_(\d)(?:_(score|water|attacks))?$/.exec(key);
@@ -1984,8 +1991,8 @@ export class Referee {
     const name = TEAM_INFO[t].name.toUpperCase();
     const clamp = (x: string) => esc(x.length > 14 ? `${x.slice(0, 13)}…` : x);
     const rows = (...ls: string[]) => ls.map((l) => `<p>${LB_INDENT}${l}</p>`).join("");
+    if (this.sitsOut(t)) return rows(`<b>${name} · not playing</b>`);
     if (this.beforeDraw()) return rows(`<b>${name}</b>`, "Waiting for the draw");
-    if (s.phase !== "lobby" && !this.ranked(t)) return rows(`<b>${name} · not playing</b>`);
     const players = Object.values(s.stats.byPlayer).filter((p) => p.team === t);
     if (!players.length) return rows(`<b>${name}</b>`, "No players yet");
     const boss = players.find((p) => p.role === "boss")?.name;
