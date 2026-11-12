@@ -117,6 +117,34 @@ describe("fire", () => {
     expect(["B2", "C2", "D2", "B3", "D3"].map((l) => s.cells[l])).toEqual(Array(5).fill("water"));
     expect(["B4", "C4", "D4"].map((l) => s.cells[l])).toEqual(Array(3).fill("burnt"));
   });
+  it("fire can't jump diagonally between two blue squares that touch at a corner", () => {
+    const rules = { ...base, pSide: 0, pDiag: 1 };
+    const s = createState(list, rules, mulberry32(1));
+    s.cells.F10 = "fire";
+    s.burnLeft.F10 = 3;
+    s.cells.G10 = "water"; // east
+    s.cells.F9 = "water"; // north: G9 (north-east) sits behind the blue corner
+    spread(s, rules, list, byPos, mulberry32(2));
+    expect(s.cells.G9).toBe("forest");
+    expect(["E9", "E11", "G11"].map((l) => s.cells[l])).toEqual(Array(3).fill("fire")); // open diagonals still catch
+  });
+  it("a diagonal blue line holds the fire back, even when equal spread tops a team up", () => {
+    // Blue staircase G4 F5 E6 D7 C8 B9 A10 in ridge's area, fire on the outside corner of every step:
+    // its only green neighbours are behind the wall, diagonally. Big fires elsewhere make equal spread
+    // want to give ridge more new fires than it got by chance.
+    for (const pDiag of [1, 0]) {
+      const rules = { ...base, pSide: 1, pDiag, equalSpread: true, lightningAt: [] };
+      const { s, rng } = live(rules, 3);
+      for (const l of ["R17", "S17", "R18", "S18"]) s.cells[l] = "burnt";
+      for (const l of ["G4", "F5", "E6", "D7", "C8", "B9", "A10"]) s.cells[l] = "water";
+      for (const l of ["F4", "E5", "D6", "C7", "B8", "A9"]) { s.cells[l] = "fire"; s.burnLeft[l] = 3; }
+      for (const l of ["F3", "E4", "D5", "C6", "B7", "A8", "G3", "A7", "A6", "A5", "A4", "A3", "A2", "A1", "B1", "C1", "D1", "E1", "F1", "G1", "H1", "H2", "H3", "B2", "C2", "D2", "E2", "F2", "G2", "B3", "C3", "D3", "E3", "B4", "C4", "D4", "B5", "C5", "B6"]) s.cells[l] = "burnt";
+      s.cells.H4 = "water";
+      for (const l of ["AE6", "AE7", "F28", "F29", "AE28", "AE29"]) { s.cells[l] = "fire"; s.burnLeft[l] = 3; }
+      spread(s, rules, list, byPos, rng);
+      for (const l of ["G5", "F6", "E7", "D8", "C9", "B10"]) expect(s.cells[l], `${l} pDiag=${pDiag}`).toBe("forest");
+    }
+  });
   it("advance: spreads every spreadSeconds; lightning at each lightningAt minute, once", () => {
     const r = { ...base, gameMinutes: 30, lightningAt: [2, 4, 6, 8] };
     const { s, rng } = live(r);
