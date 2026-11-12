@@ -23,9 +23,9 @@ student reads (your replies, stickies) say "your team's area", never "sector".
   `role` (`boss|worker`) (team and role come from the inbox card once the game starts: teams are drawn
   at random then; the card always wins over a saved team), `ordersId`,
   `stickies` = ids of stickies YOU created, always this shape: `{"order": "<id>", "questions": ["<id>", …]}`
-  (`order`: a worker's own order sticky; `questions`: the boss's question stickies; start as `{}`),
+  (`order`: a worker's own order sticky; `questions`: attack question stickies you posted, any role; start as `{}`),
   `fire` (labels you last saw burning), `water0` (your team's water at your first LIVE read),
-  `attackYes` (boss: question sticky id → time you first saw its YES),
+  `attackYes` (question sticky id you posted → time you first saw its YES),
   `cellIds` (label → NEW square id, for squares whose `cells` id went stale; see "Square ids"),
   `fixtureIds` (`banner`/`scoreboard`/`rank_1`..`rank_4` → NEW id, same idea),
   `gameOverAt` (time of the first banner read that said GAME OVER), `calls`.
@@ -67,7 +67,7 @@ ANOTHER team's color was lit by that team (its own area's color = wild fire).
   | | Fill | Means | Who paints it |
   |---|---|---|---|
   | 🟩 green | `#3fa66b` | tree, protect these | start |
-  | 🟧 orange | `#ff5a1f` | fire, spreads by itself | referee; **the boss** only in an attack |
+  | 🟧 orange | `#ff5a1f` | fire, spreads by itself | referee; the player who posted an approved attack question (boss or worker), 1 square |
   | 🟦 blue | `#3aa7ff` | water wall, fire can't cross it, it stays | **you**, only on green within 2 of fire, never on orange |
   | ⬛ black | `#2a2420` | burnt, gone | referee (fire burns out) |
 
@@ -93,8 +93,8 @@ The fire spreads every 5 s, so a square you saw 10 s ago may be orange or black 
 | Sticky | Posted by | Text | Color |
 |---|---|---|---|
 | Order | the worker creates its own (`Ana: paint`), the boss fills it in | `Ana: paint N9 N10 N11` (name, colon, `paint`, 3–6 labels in paint order) | `yellow` |
-| Question | boss | `Start a fire in Team 2's area?` (a neighbour's team; when reading, also accept `team2`, `T2` or an old name like `Pine Valley`) / optional reason line, e.g. `Our area is under control.` | `red` |
-| Answer | a teammate who did not post the question (their student said so); in a team of one (`Crew: -`), the boss itself after asking its student | a new line `YES` or `NO` on the question | — |
+| Question | any player (boss or worker), when no other question is waiting | `Start a fire in Team 2's area?` (a neighbour's team; when reading, also accept `team2`, `T2` or an old name like `Pine Valley`) / optional reason line, e.g. `Our area is under control.` | `red` |
+| Answer | a teammate who did not post the question (their student said so); in a team of one (`Crew: -`), the poster itself after asking its student | a new line `YES` or `NO` on the question | — |
 
 - One order sticky per worker: **edit its text, never post a second.** The squares come after `paint`;
   `Ana: paint` with nothing after it means "no order yet".
@@ -123,7 +123,7 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
   around square `L`: x = (colIndex − 2) × 64, y = (row − 3) × 64, w = h = 384, clipped to the grid
   (0, 0, 2304, 2176).
 - **Paint** = a batch of up to **5 squares in ONE `canvas_update_from_svg`**, one `rect` per square,
-  only the id and the fill (`#3aa7ff`; the boss's attack square: `#ff5a1f`):
+  only the id and the fill (`#3aa7ff`; an attack square: `#ff5a1f`):
   `<svg xmlns="http://www.w3.org/2000/svg"><rect data-miro-id="ID1" fill="#3aa7ff"/><rect data-miro-id="ID2" fill="#3aa7ff"/></svg>`
   All squares of one batch go in this ONE call, never one call per square. More than 5 in one batch:
   the extras are reverted. **The update result's count is unreliable** ("Applied diff: 0 updated" or a
@@ -174,7 +174,7 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
 - **One turn ≈ 15 s with a few small calls** (`play.md` gives each role's exact turn). Keep reads small:
   only the ids you need; banner + inbox + the 4 leaderboard rows only every 4th turn. At most **one paint (batch
   of ≤ 5 squares) per turn**.
-- **Paint cooldown: leave at least 8 s between the starts of two paints.** The referee needs 5 s on its
+- **Paint cooldown: leave at least 8 s between the starts of two blue paints** (the one orange attack paint needs no wait). The referee needs 5 s on its
   own ~3 s poll clock, so 5 s on your side is too tight. Reads in between count toward the 8 s; if less
   has passed, wait the rest.
 - **One Miro call at a time.** Never send two writes in the same message (e.g. a paint and a sticky
@@ -202,8 +202,8 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
   room: keep playing (the final minute is the time to paint hardest).
 - `NEW FIRE at K4 (Team 2's area)!` (at minutes 2, 4, 6 and 8, each in a playing team's
   area; on the banner for ~25 s only) names a new fire far from the others.
-- Your team's water at 0 → your team's blue paints are refused; only the boss's attack orange (during
-  a YES) still works. Otherwise just watch.
+- Your team's water at 0 → your team's blue paints are refused; only an approved attack's orange (by the
+  player who posted the question) still works. Otherwise just watch.
 
 ## Inbox card
 

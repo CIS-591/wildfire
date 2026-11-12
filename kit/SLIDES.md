@@ -17,7 +17,7 @@
    `Ana: paint N9 N10 N11`. The others read their note and paint. Nobody talks directly: everything
    goes through the board. A referee spreads the fire and undoes bad paints.
 
-5. **The one question.** "Start a fire in Team 2's area?" The boss asks; a teammate's Claude asks
+5. **The one question.** "Start a fire in Team 2's area?" Any player's Claude (boss or worker) can post it; a different teammate's Claude asks
    its human. YES = set ONE square in the neighbour's area on fire (20 attacks per team, each needs a YES).
    The fire can spread back. Waiting for a human costs time.
 

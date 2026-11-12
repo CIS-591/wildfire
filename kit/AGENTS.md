@@ -31,16 +31,20 @@ other directly: everything goes through the board.
 - A **worker** paints the squares on its own order sticky (see "Smart play" for when it acts on its own).
 
 **Attacks (the one human decision).** A team may set ONE square in a neighbour's area on fire, up to
-20 times per game. Each attack needs a human YES:
-1. The **boss** decides to attack only when its own area is under control and its water isn't low. It
-   posts a sticky in its own Orders frame: `Start a fire in Team 2's area?`. If you are the only player
-   on your team (your leaderboard row has no `Crew:` names, i.e. `Crew: -`), you are boss AND the one who
-   answers: after posting the question, ask your own student YES or NO (AskUserQuestion) and add that
-   line yourself. Otherwise never answer your own question and never ask your own student.
-2. A **worker** (or the solo boss, step 1) who sees that question (the leaderboard row says `Waiting for a YES`) **must stop and
-   ask its own student YES or NO** (AskUserQuestion), then add exactly what the student said (`YES` or
-   `NO`) as a new line on that sticky. A worker never answers without asking.
-3. On YES the **boss** (never a worker) paints ONE attack target orange, within 2 minutes of the YES.
+20 times per game (shared by the whole team). Each attack needs a human YES. **Any player, boss or
+worker, may attack:**
+1. **Ask.** Post a question only when your team's area is under control and its water isn't low: a
+   sticky in your own team's Orders frame, `Start a fire in Team 2's area?`. Look at the Orders frame
+   first: if a question there has no answer yet, or has a YES that hasn't been used yet (less than 2
+   minutes old), don't post another (one question at a time per team).
+2. **Answer.** A DIFFERENT teammate (one who did not post it) who sees that question (the leaderboard
+   row says `Waiting for a YES`) **must stop and ask its own student YES or NO** (AskUserQuestion),
+   then add exactly what the student said (`YES` or `NO`) as a new line on that sticky. Never answer
+   without asking. If you are the only player on your team (your leaderboard row has no `Crew:` names,
+   i.e. `Crew: -`), you answer your own question after asking your own student. Otherwise never answer
+   your own question.
+3. **Light it.** On YES, the player who POSTED the question paints ONE attack target orange, within
+   2 minutes of the YES.
    **Attack target** = a green square in that neighbour's area at least 5 columns (or rows) away from
    the border between the two areas, so it is less likely to spread back:
    - Team 2 (from Team 1) or Team 4 (from Team 3): columns X–AJ.
@@ -48,10 +52,12 @@ other directly: everything goes through the board.
    - Team 3 (from Team 1) or Team 4 (from Team 2): rows 23–34.
    - Team 1 (from Team 3) or Team 2 (from Team 4): rows 1–12.
    On NO: no attack, keep defending.
-The fire you light can spread back into your own area: that is the risk the human weighs.
+The fire you light can spread back into your own area: that is the risk the human weighs. Apart from
+attacks, workers still follow their order sticky and the boss still writes the orders.
 
-**Who asks the human what.** Only one thing ever: a worker (or a solo boss, `Crew: -`) asks its
-student YES/NO on an attack question. Never ask the student which squares to paint, how to defend, or anything else: you decide.
+**Who asks the human what.** Only one thing ever: a teammate who did not post an attack question (or
+a solo player, `Crew: -`, on its own question) asks its student YES/NO on it. Never ask the student
+which squares to paint, how to defend, or anything else: you decide.
 
 # WILDFIRE RULES
 
@@ -59,11 +65,11 @@ The referee checks every change on the board. Follow these always.
 
 1. Paint only squares in your own team's area (the one exception is rule 4).
 2. Paint only blue `#3aa7ff` (except rule 4), and only on green squares within 2 squares of a fire. Never on orange (undone: "water can't go on fire").
-3. A paint is at most 5 squares, all in ONE call. Leave at least 8 s between the starts of two paints (the referee needs 5 s on its own clock).
-4. Orange `#ff5a1f`: only the boss, only during your team's approved attack: ONE green square in that neighbour's area, within 2 minutes of the YES (20 attacks per team, each needs its own YES). Workers never paint orange.
+3. A paint is at most 5 squares, all in ONE call. Leave at least 8 s between the starts of two blue paints (the referee needs 5 s on its own clock).
+4. Orange `#ff5a1f`: only the player who posted the approved attack question (boss or worker): ONE green square in that neighbour's area, within 2 minutes of the YES (20 attacks per team, shared, each needs its own YES). No 8 s wait for the orange paint.
 5. An attack needs a YES from a teammate who did not post the question. Never answer your own question, except as the only player on your team (`Crew: -`): then your own YES/NO line counts. Write YES or NO only when your student just said it.
 6. Create only your own inbox card (at `/join`) and your own stickies inside your own team's Orders frame.
-7. Never move, resize, recolor, delete or edit anything else: square text, the banner, the scoreboard, leaderboard rows, badges and icons, frames, labels, other people's stickies and cards. The one exception: a worker (or a solo boss, on its own question) adds the YES or NO line to the boss's question sticky (rule 5).
+7. Never move, resize, recolor, delete or edit anything else: square text, the banner, the scoreboard, leaderboard rows, badges and icons, frames, labels, other people's stickies and cards. The one exception: a teammate who did not post it (or a solo player, on its own question) adds the YES or NO line to a question sticky (rule 5).
 8. Never add images, shapes, text or stickies anywhere else on the board.
 9. Water is limited: each team has one bucket (shown on the banner). When it is empty, your blue is refused.
 

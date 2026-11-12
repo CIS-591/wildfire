@@ -300,7 +300,7 @@
     }
   },
   "stickySlots": {
-    "note": "Positions are RELATIVE to the Orders frame's top-left. Sticky size 128x147 on a 5x5 grid (x 24/168/312/456/600, y 70/234/398/562/726). question: the boss's 'Start a fire in <team>'s area?' stickies, each a NEW sticky in the first free one, never edited after posting except for a teammate's added YES/NO line. order: one '<name>: paint ...' sticky per worker; a worker without one creates it starting at index (letters in its name) mod 20, then the next free one. Never move a sticky that is already there. Slot (600,726) holds the instructor EXAMPLE sticky: never use it.",
+    "note": "Positions are RELATIVE to the Orders frame's top-left. Sticky size 128x147 on a 5x5 grid (x 24/168/312/456/600, y 70/234/398/562/726). question: any player's (boss or worker) 'Start a fire in <team>'s area?' stickies, each a NEW sticky in the first free one, never edited after posting except for a teammate's added YES/NO line. order: one '<name>: paint ...' sticky per worker; a worker without one creates it starting at index (letters in its name) mod 20, then the next free one. Never move a sticky that is already there. Slot (600,726) holds the instructor EXAMPLE sticky: never use it.",
     "size": {
       "w": 128,
       "h": 147
