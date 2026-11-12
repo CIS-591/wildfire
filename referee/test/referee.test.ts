@@ -36,7 +36,7 @@ describe("discovery and joining", () => {
     const { d, game, fake } = await setup();
     expect(d.cells).toBe(1224);
     expect(d.missing).toEqual([]);
-    expect(d.fixtures.sort()).toEqual(["banner", ...[1, 2, 3, 4].flatMap((n) => [`rank_${n}`, `rank_${n}_attacks`, `rank_${n}_score`, `rank_${n}_water`]), "scoreboard"].sort());
+    expect(d.fixtures.sort()).toEqual(["banner", ...[1, 2, 3, 4].flatMap((n) => [`rank_${n}`, `rank_${n}_attacks`, `rank_${n}_score`, `rank_${n}_water`]), "scoreboard", "team_birch", "team_cedar", "team_pine", "team_ridge"].sort());
     const lb = fake.items.get(game.fixtureIds.rank_1!)!;
     expect(inside(FIXTURES.rank_1, lb.x, lb.y)).toBe(true);
   });

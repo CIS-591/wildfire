@@ -62,16 +62,16 @@ async function call(method, path, body) {
 // (legible on a classroom projector at whole-board zoom). LINES = rendered line count of each rule at FONT px in
 // the 696-px column (checked in the browser); positions below depend on it.
 const RULES = [
-  ["Paint only squares in your team's area.", 1],
-  ["Paint only <b>blue</b>, and only on green or orange squares.", 1],
-  [`Max ${r.paintBatch} squares per move, then wait ${r.cooldownSeconds} s.`, 1],
-  [`<b>Orange</b> only after a teammate's <b>YES</b>: ${r.attackSquares} green square${r.attackSquares === 1 ? "" : "s"} in that neighbour's area, ${r.attackMinutes} min. ${r.attacksPerTeam} attacks per team.`, 2],
-  ["Ask only in your team's Orders, only about a neighbour. Never answer your own question.", 2],
-  ["Edit only your own inbox card and your own Orders sticky.", 1],
-  ["Never move, edit, recolor or delete anything else. No images, shapes or text.", 2],
-  ["Water is limited: one bucket per team (on the banner).", 1],
+  ["Your area = the thick border in your team's color.", 1],
+  ["Paint only <b>blue</b>, only in your area, on green or orange.", 1],
+  [`Up to ${r.paintBatch} squares at a time, then wait ${r.cooldownSeconds} s.`, 1],
+  [`<b>Orange</b> only after a teammate's <b>YES</b>: 1 square next door.`, 1],
+  [`Each team has ${r.attacksPerTeam} attacks and one water bucket.`, 1],
+  ["Write only in your own team's Orders.", 1],
+  ["Don't move, edit or delete anything else.", 1],
+  ["No images, shapes or text on the board.", 1],
 ];
-const PENALTY = ["<b>Break a rule:</b> your move is undone, you are frozen, and the leaderboard names you.", 2];
+const PENALTY = ["<b>Break a rule:</b> it is undone and you are frozen.", 1];
 const SPLIT = 4; // rules 1-4 in one text item, 5-8 in the other
 const rulesHtml = (from, to) => RULES.slice(from, to).map(([l], i) => `<p><b>${from + i + 1}.</b> ${l}</p>`).join("");
 const lines = (from, to) => RULES.slice(from, to).reduce((n, [, k]) => n + k, 0);

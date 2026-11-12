@@ -11,7 +11,7 @@
 import type { BoardAdapter, BoardItem, NewImage, NewShape } from "./board.js";
 import { isGone, isLocked, pool, stripHtml } from "./board.js";
 import {
-  CELL_FONT, COLORS, FIXTURES, GRID, ICON_URL, LB_FONT, LB_ICONS, LB_INDENT, MASCOT, RANK_SLOTS, lbChipBox, lbRowBox, rankKey, scoreKey, type RankSlot, GRID_BOX, ORDERS, PANELS, STATE_COLOR, TEAMS, TEAM_INFO, WIND, buildCells, cellBox, cellStroke, center, frameBoxes, frameOfRow, inboxSlot,
+  CELL_FONT, COLORS, FIXTURES, GRID, ICON_URL, LB_FONT, LB_ICONS, LB_INDENT, MASCOT, RANK_SLOTS, TEAM_TINT, lbChipBox, lbRowBox, rankKey, scoreKey, teamCardKey, type RankSlot, GRID_BOX, ORDERS, PANELS, STATE_COLOR, TEAMS, TEAM_INFO, WIND, buildCells, cellBox, cellStroke, center, frameBoxes, frameOfRow, inboxSlot,
   inside, ordersTeamAt, ordersTitle, parseLabel, sectorText, startFill, startState, textColorFor, type Box, type CellDef, type CellState, type Team,
 } from "./layout.js";
 import {
@@ -135,6 +135,9 @@ const FIXTURE_STYLE: Record<FixtureKey, Partial<NewShape>> = {
       [`rank_${n}_attacks`, { fill: "#ffffff", fontSize: 17, textColor: COLORS.text, shape: "round_rectangle", borderColor: COLORS.panelBorder, borderWidth: 2 }],
     ]),
   ) as Record<`rank_${RankSlot}` | `rank_${RankSlot}_score` | `rank_${RankSlot}_water` | `rank_${RankSlot}_attacks`, Partial<NewShape>>),
+  ...(Object.fromEntries(
+    TEAMS.map((t) => [teamCardKey(t), { fill: TEAM_TINT(t), fontSize: 20, textColor: COLORS.text, textAlign: "left", textAlignVertical: "top", shape: "round_rectangle", borderColor: TEAM_INFO[t].color, borderWidth: 6 }]),
+  ) as Record<`team_${Team}`, Partial<NewShape>>),
 } as Record<FixtureKey, Partial<NewShape>>;
 const CARD_FILL = COLORS.panel;
 
@@ -1984,6 +1987,8 @@ export class Referee {
   private fixtureHtml(key: FixtureKey): string {
     if (key === "banner") return this.bannerOverride ? `<p>${this.bannerOverride}</p>` : this.bannerHtml();
     if (key === "scoreboard") return this.scoreboardHtml();
+    const tm = /^team_(ridge|pine|cedar|birch)$/.exec(key);
+    if (tm) return this.teamListHtml(tm[1] as Team);
     const m = /^rank_(\d)(?:_(score|water|attacks))?$/.exec(key)!;
     if (m[2] === "water" || m[2] === "attacks") return this.chipHtml(Number(m[1]), m[2]);
     return m[2] ? this.badgeHtml(Number(m[1])) : this.rowHtml(Number(m[1]));
@@ -2079,6 +2084,11 @@ export class Referee {
 
   /** Row fill and badge text color for a fixture that follows its team (leaderboard rows), else undefined. */
   fixtureColors(key: FixtureKey): { fill?: string; textColor?: string } | undefined {
+    const tm = /^team_(ridge|pine|cedar|birch)$/.exec(key);
+    if (tm) {
+      const t = tm[1] as Team;
+      return this.sitsOut(t) ? { fill: "#e5e7eb" } : { fill: TEAM_TINT(t) };
+    }
     const m = /^rank_(\d)(?:_(score|water|attacks))?$/.exec(key);
     if (!m) return undefined;
     const t = this.rankOrder()[Number(m[1]) - 1]!;
@@ -2140,6 +2150,18 @@ export class Referee {
     if (which === "water") return `<p>${pad}<b>${s.water[t]}</b> / ${this.rules.waterPerTeam}</p>`;
     const left = Math.max(0, this.rules.attacksPerTeam - (s.attacksUsed?.[t] ?? 0));
     return `<p>${pad}<b>${left}</b> left</p>`;
+  }
+
+  /** A TEAMS panel card: the team's boss and every member, as they join. */
+  teamListHtml(t: Team): string {
+    const name = TEAM_INFO[t].name.toUpperCase();
+    if (this.sitsOut(t)) return `<p><b>${name}</b></p><p>not playing</p>`;
+    const players = Object.values(this.state.players)
+      .filter((p) => p.team === t)
+      .sort((a, b) => (a.role === "boss" ? -1 : b.role === "boss" ? 1 : a.joinedAt - b.joinedAt));
+    if (!players.length) return `<p><b>${name}</b></p><p>no players yet</p>`;
+    const lines = players.map((p) => (p.role === "boss" ? `<b>BOSS: ${esc(p.name)}</b>` : esc(p.name)));
+    return [`<b>${name} · ${players.length} player${players.length === 1 ? "" : "s"}</b>`, ...lines].map((l) => `<p>${l}</p>`).join("");
   }
 
   /** The score badge of slot n: the team's % of forest saved. */

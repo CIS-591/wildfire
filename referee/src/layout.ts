@@ -223,11 +223,22 @@ function rankFixtures() {
   return out;
 }
 
+/** TEAMS panel cards (top-left boxes), 4 in a row above the rules and leaderboard panels. */
+export const TEAM_CARD = { x: 2440, y: -790, w: 380, h: 330, gap: 13 };
+export const teamCardKey = (t: Team) => `team_${t}` as const;
+function teamFixtures() {
+  const out = {} as Record<`team_${Team}`, Box>;
+  TEAMS.forEach((t, i) => (out[`team_${t}`] = { x: TEAM_CARD.x + i * (TEAM_CARD.w + TEAM_CARD.gap), y: TEAM_CARD.y, w: TEAM_CARD.w, h: TEAM_CARD.h }));
+  return out;
+}
+
 export const FIXTURES = {
   banner: { x: 0, y: -220, w: 1100, h: 110 } as Box,
   scoreboard: { x: 1160, y: -220, w: 1140, h: 110 } as Box,
   // The leaderboard: 4 rows sorted by rank (slot 1 = first place), each with a score badge on its right end.
   ...rankFixtures(),
+  // The TEAMS panel above the rules and leaderboard: one card per team listing its boss and members.
+  ...teamFixtures(),
 };
 export const RANK_SLOTS = [1, 2, 3, 4] as const;
 export type RankSlot = (typeof RANK_SLOTS)[number];
