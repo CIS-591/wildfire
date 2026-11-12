@@ -723,6 +723,7 @@ export class Referee {
       // A giant sticky costs nothing: only its start is read.
       const text = stripHtml(String(it.content ?? "").slice(0, STICKY_TEXT_MAX * 4)).slice(0, STICKY_TEXT_MAX).split("\n").map((l) => l.slice(0, 200)).slice(0, 20).join("\n");
       out.push({ id: it.id, team, text, createdAt: it.createdAt, ...this.stickyPeople(team, text, it) });
+      this.stickyNow.set(it.id, { raw: String(it.content ?? ""), at: it.modifiedAt });
     }
     return out;
   }
@@ -945,7 +946,10 @@ export class Referee {
     if (full) {
       this.stickies = this.readStickies(items);
       // Before the draw nobody knows their team: questions wait (judged once the teams are drawn).
-      if (!this.rehearsal && !this.beforeDraw()) this.policeQuestions(ops);
+      if (!this.rehearsal && !this.beforeDraw()) {
+        this.policeForeign(ops, tampers, now);
+        this.policeQuestions(ops);
+      }
       for (const s of this.beforeDraw() ? [] : this.stickies) {
         try {
           for (const n of judgeSticky(state, this.rules, s)) this.pushFeedback(n.userId, n.line);
@@ -998,7 +1002,7 @@ export class Referee {
     // A square is written only when this tick's read showed it as the engine last wrote/saw it, or its change
     // was judged above: a player's newer blue is never overwritten by a fire change planned on an older look.
     const writable = (lab: string) => readFill.has(lab) && (judged.has(lab) || readFill.get(lab) === preFill.get(lab));
-    ops.push(...this.guardFireWrites(this.cellOps(new Set(adv.changed), writable), readFill), ...this.rebuildOps(), ...this.fixtureOps(), ...this.cardOps());
+    ops.push(...this.guardFireWrites(this.cellOps(new Set(adv.changed), writable), readFill), ...this.rebuildOps(), ...this.fixtureOps(), ...this.cardOps(), ...this.retiredPartOps());
     let { deferred } = await this.execute(ops);
     // Miro said 404 (deleted) for something: rebuild it now, not on a later tick.
     if (this.goneThisTick) deferred += (await this.execute([...this.rebuildOps(), ...this.fixtureOps(), ...this.cardOps()])).deferred;
@@ -1405,6 +1409,44 @@ export class Referee {
    * posted in another team's Orders (or by someone not on the team), naming a non-neighbour, or more
    * than 2 open (unanswered) questions by one player.
    */
+  /** Each Orders sticky as last read (raw content, modifiedAt), and the last version written by its own team. */
+  private stickyNow = new Map<string, { raw: string; at: number }>();
+  private stickyGood = new Map<string, string>();
+
+  /**
+   * Orders frames belong to their team: a joined player's sticky in ANOTHER team's frame is removed (junk
+   * penalty), and an edit by a joined player of another team to a sticky there is put back to that team's
+   * last version (tamper penalty). The instructor, guests and the referee are left alone.
+   */
+  private policeForeign(ops: Op[], tampers: TamperEvent[], now: number) {
+    const state = this.state;
+    for (const s of this.stickies) {
+      if (this.isSelf(s.createdBy) || this.removedStickies.has(s.id)) continue;
+      const cur = this.stickyNow.get(s.id);
+      const creator = state.players[s.createdBy];
+      if (creator && creator.team !== s.team) {
+        this.removedStickies.add(s.id);
+        const line = `🗑️ Removed your sticky in ${teamName(s.team)}'s Orders: write only in your own team's Orders.`;
+        if (state.noted[s.id] !== line) {
+          state.noted[s.id] = line;
+          this.pushFeedback(s.createdBy, line);
+        }
+        this.penalize(tampers, s.createdBy, "added", `a sticky in ${teamName(s.team)}'s Orders`, s.id, this.when(s.createdAt ?? 0, now));
+        ops.push({ key: `junk:${s.id}`, prio: 3, run: () => this.board.deleteItem(s.id) });
+        continue;
+      }
+      const editor = state.players[s.modifiedBy];
+      if (editor && editor.team !== s.team) {
+        this.penalize(tampers, s.modifiedBy, "edited", `a sticky in ${teamName(s.team)}'s Orders`, s.id, this.when(cur?.at ?? 0, now));
+        const good = this.stickyGood.get(s.id);
+        if (good !== undefined && good !== cur?.raw) ops.push({ key: `sticky:${s.id}`, id: s.id, prio: 3, run: () => this.board.updateShape(s.id, { content: good }) });
+        continue;
+      }
+      if (cur) this.stickyGood.set(s.id, cur.raw);
+    }
+    this.stickies = this.stickies.filter((s) => !this.removedStickies.has(s.id));
+  }
+
   private policeQuestions(ops: Op[]) {
     const state = this.state;
     const remove = (s: StickyView, line?: string) => {
@@ -1468,8 +1510,7 @@ export class Referee {
       delete this.game.fixtureIds[k];
       this.shadow.delete(id);
       this.written[k] = undefined;
-      this.gone.add(id);
-      void this.board.deleteItem(id).catch(() => {});
+      this.retiredParts.add(id); // deleted by the next ticks' ops, retried until Miro confirms
     }
     for (const part of ["medal", "mascot", "water", "attacks"]) {
       const rec = this.game.icons?.[`${part}_${n}`];
@@ -1478,6 +1519,20 @@ export class Referee {
       this.retiredIcons.set(rec.id, this.now());
       void this.board.deleteItem(rec.id).catch(() => {});
     }
+  }
+
+  /** Old badges/chips of a remade row: deleted with retries (a failed delete must not leave them behind). */
+  private retiredParts = new Set<string>();
+  private retiredPartOps(): Op[] {
+    const ops: Op[] = [];
+    for (const id of this.retiredParts) {
+      if (this.gone.has(id)) {
+        this.retiredParts.delete(id);
+        continue;
+      }
+      ops.push({ key: `junk:${id}`, prio: 3, run: () => this.board.deleteItem(id), ok: () => this.retiredParts.delete(id) });
+    }
+    return ops;
   }
 
   private retireFixture(key: FixtureKey, id: string) {
@@ -1538,7 +1593,7 @@ export class Referee {
   strokeFor(lab: string): { color: string; width: number } {
     const st = this.state.cells[lab];
     const o = this.state.origin?.[lab];
-    if (o && o !== "wild" && (st === "fire" || st === "burnt")) return { color: TEAM_INFO[o].color, width: st === "fire" ? 8 : 6 };
+    if (o && o !== "wild" && (st === "fire" || st === "burnt")) return { color: TEAM_INFO[o].color, width: st === "fire" ? 10 : 8 };
     return cellStroke(this.cells.get(lab)!);
   }
 

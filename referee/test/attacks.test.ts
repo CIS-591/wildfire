@@ -744,6 +744,24 @@ describe("Miro misbehaving, restarts, clocks", () => {
     expect([g.fill("R18"), g.fill("S18")]).toEqual([C.forest, C.forest]);
     expect([g.fill("R17"), g.fill("S17")]).toEqual([C.fire, C.fire]);
   });
+  it(T("A134", "another team's player can't write in an Orders frame: their sticky there is removed, their edit to an order there is put back; the team's own edits stay"), async () => {
+    const g = await setup({ live: true });
+    // r2 (Team 1) posts a fake order in Team 2's Orders; p2 (Team 2) writes its own order there.
+    const fake = g.fake.playerSticky("r2", "pine", "Pia: paint A1 A2 A3");
+    const own = g.fake.playerSticky("p2", "pine", "Pia: paint S9 S10");
+    await g.ticks(2);
+    expect(g.fake.items.has(fake.id)).toBe(false);
+    expect(g.card("r2")).toContain("write only in your own team's Orders");
+    expect(g.fake.items.has(own.id)).toBe(true);
+    // c1 (Team 3) rewrites Team 2's order: put back. p1 (Team 2, the boss) edits it: kept.
+    g.fake.playerEditSticky("c1", own.id, "Pia: paint AJ34");
+    await g.ticks(2);
+    expect(stripHtml(g.fake.items.get(own.id)!.content)).toContain("Pia: paint S9 S10");
+    expect(g.ref.state.timeoutUntil.c1 ?? 0).toBeGreaterThan(0);
+    g.fake.playerEditSticky("p1", own.id, "Pia: paint T9 T10");
+    await g.ticks(2);
+    expect(stripHtml(g.fake.items.get(own.id)!.content)).toContain("Pia: paint T9 T10");
+  });
   it(T("A97", "game.json cut short by a kill: the previous save is loaded"), () => {
     const dir = mkdtempSync(path.join(tmpdir(), "wf-"));
     const file = path.join(dir, "game.json");
@@ -931,7 +949,7 @@ describe("rehearsal 2 on the real board: Miro-like fake (404 on deleted items, s
     const left = [...g.fake.items.values()].filter((i) => i.type === "sticky_note");
     expect(left.map((i) => i.id).sort()).toEqual([mine[0]!.id, mine[1]!.id].sort());
     expect(g.fake.items.has(far.id)).toBe(false);
-    expect(g.card("r1")).toMatch(/at most 2 open questions|own team's Orders/);
+    expect(g.card("r1")).toMatch(/at most 2 open questions|own team.s Orders|Orders removed/);
     expect(g.card("r2")).toMatch(/ask about a neighbour/i);
     const lb = g.fx("leaderboard");
     expect(lb.match(/Waiting for a YES/g)).toHaveLength(1);
@@ -983,14 +1001,14 @@ describe("fire attack, per-team water, batches, the fire model", () => {
     expect(["Z4", "Z5", "Z6", "Z7"].map(g.fill)).toEqual([C.fire, C.fire, C.fire, C.forest]);
     expect(g.card("r2")).toContain("has lit its 3 squares");
     const violet = TEAM_INFO.ridge.color;
-    expect(border(g, "Z4")).toEqual({ color: violet, width: 8 });
+    expect(border(g, "Z4")).toEqual({ color: violet, width: 10 });
     expect(g.ref.state.stats.lit.ridge).toBe(3);
     expect(g.fx(`rank_${g.ref.rankOrder().indexOf("ridge") + 1}_attacks` as "rank_1_attacks")).toContain("1 left");
     await g.ticks(25); // 75 s: 3 spreads, Z4 burns out and keeps a thinner border in Team 1's color
     expect(g.fill("Z4")).toBe(C.burnt);
-    expect(border(g, "Z4")).toEqual({ color: violet, width: 6 });
+    expect(border(g, "Z4")).toEqual({ color: violet, width: 8 });
     expect(g.ref.state.stats.burnedOthers.ridge).toBe(3);
-    expect(border(g, "R17").width ?? 2).not.toBe(6); // wild fire: normal border
+    expect(border(g, "R17").width ?? 2).not.toBe(10); // wild fire: normal border
     expect(g.ref.state.water.ridge).toBe(400); // orange costs no water
     expectConverged(g);
   });
@@ -1001,7 +1019,7 @@ describe("fire attack, per-team water, batches, the fire model", () => {
     await g.tick(6000);
     await g.ticks(7); // one spread
     expect([g.ref.state.cells.R10, g.ref.state.origin.R10]).toEqual(["fire", "ridge"]); // into Team 1's own area
-    expect(border(g, "R10")).toEqual({ color: TEAM_INFO.ridge.color, width: 8 });
+    expect(border(g, "R10")).toEqual({ color: TEAM_INFO.ridge.color, width: 10 });
     expect(g.ref.state.origin.T10).toBe("ridge");
     await g.ticks(30);
     expect(g.ref.state.stats.blowback.ridge).toBeGreaterThan(0);
