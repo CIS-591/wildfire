@@ -41,44 +41,44 @@
     "points": [
       {
         "perTeam": 1,
-        "pSide": 0.06,
-        "pDiag": 0.009,
+        "pSide": 0.35,
+        "pDiag": 0.052,
         "water": 45
       },
       {
         "perTeam": 2,
-        "pSide": 0.066,
-        "pDiag": 0.01,
+        "pSide": 0.35,
+        "pDiag": 0.052,
         "water": 55
       },
       {
         "perTeam": 3,
-        "pSide": 0.083,
-        "pDiag": 0.0123,
+        "pSide": 0.35,
+        "pDiag": 0.052,
         "water": 65
       },
       {
         "perTeam": 4,
-        "pSide": 0.088,
-        "pDiag": 0.0133,
+        "pSide": 0.35,
+        "pDiag": 0.052,
         "water": 70
       },
       {
         "perTeam": 5,
-        "pSide": 0.096,
-        "pDiag": 0.0143,
+        "pSide": 0.35,
+        "pDiag": 0.052,
         "water": 75
       },
       {
         "perTeam": 7.5,
-        "pSide": 0.109,
-        "pDiag": 0.0167,
+        "pSide": 0.35,
+        "pDiag": 0.052,
         "water": 75
       },
       {
         "perTeam": 10,
-        "pSide": 0.126,
-        "pDiag": 0.019,
+        "pSide": 0.35,
+        "pDiag": 0.052,
         "water": 85
       }
     ]
@@ -87,5 +87,6 @@
   "freeze": false,
   "equalSpread": true,
   "waterNearFire": true,
-  "burnAfterShown": true
+  "burnAfterShown": true,
+  "attackCooldown": false
 }

@@ -50,6 +50,8 @@ export interface RuleSet {
   waterNearFire?: boolean;
   /** A newly lit fire neither spreads nor burns down until the referee has shown it on the board. */
   burnAfterShown?: boolean;
+  /** false: the boss's attack fire (orange) skips the paint cooldown. */
+  attackCooldown?: boolean;
   /** A player joining gets a random team among the smallest open ones (off: the first smallest, Team 1 first). */
   randomTeams?: boolean;
   /** Fire and water follow the class size, set once when the game starts (see scaleRules). */
@@ -788,9 +790,13 @@ export function decidePaint(state: GameState, rules: RuleSet, cells: Map<string,
   if (rules.freeze !== false && frozen !== undefined && ev.at < frozen) return reject(state, ev.userId, "timeout", `🧊 ${lab} undone: you are frozen ${Math.ceil((frozen - ev.at) / 1000)} s more.`);
   // Batches: up to paintBatch squares in one go (same poll, within BATCH_WINDOW of its first square), then the cooldown.
   state.batch ??= {};
+  // An attack fire (orange) has no cooldown and doesn't start one (rules.attackCooldown false).
+  const noCool = rules.attackCooldown === false && stateOfFill(ev.fill) === "fire";
   const b = state.batch[ev.userId];
   const sameBatch = (rules.paintBatch ?? 1) > 1 && !!b && ev.at >= b.at && (ev.at - b.at < BATCH_WINDOW_MS || (ev.batchId !== undefined && ev.batchId === b.id));
-  if (sameBatch) {
+  if (noCool) {
+    // judged below by the attack rules only
+  } else if (sameBatch) {
     if (b.n >= (rules.paintBatch ?? 1)) return reject(state, ev.userId, "batch", `✋ ${lab} undone: at most ${rules.paintBatch ?? 1} squares per paint, then wait a few seconds (8 s is safe).`);
   } else {
     const last = state.lastPaintAt[ev.userId];
@@ -799,6 +805,7 @@ export function decidePaint(state: GameState, rules: RuleSet, cells: Map<string,
   }
   // An accepted square joins the current batch, or starts a new one (which restarts the cooldown).
   const startBatch = () => {
+    if (noCool) return;
     if (sameBatch) b!.n++;
     else {
       state.batch[ev.userId] = { at: ev.at, n: 1, id: ev.batchId };
