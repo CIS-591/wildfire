@@ -42,6 +42,8 @@ export interface RuleSet {
   teamSize?: number;
   /** Teams are drawn at random when the game starts (bosses too); off: each player is placed as they join. */
   drawTeams?: boolean;
+  /** Freeze a player after tampering or junk (false: the move is only undone, nobody is blocked). Default on. */
+  freeze?: boolean;
   /** A player joining gets a random team among the smallest open ones (off: the first smallest, Team 1 first). */
   randomTeams?: boolean;
   /** Fire and water follow the class size, set once when the game starts (see scaleRules). */
@@ -800,7 +802,7 @@ export function decideTamper(state: GameState, rules: RuleSet, ev: TamperEvent):
   if (!player) return { accept: false, rule: "tamper", feedback: `⚠️ ${verb0} ${ev.target} (${ev.what}).` };
   const verb = ev.what === "added" ? "Removed" : "Put back";
   let freeze = "";
-  if (player && state.phase === "live") {
+  if (player && state.phase === "live" && rules.freeze !== false) {
     state.timeoutUntil[ev.userId] = ev.at + rules.timeoutSeconds * 1000;
     freeze = ` You are frozen for ${rules.timeoutSeconds} s.`;
   }
@@ -814,14 +816,14 @@ export const JUNK_FREEZE_SECONDS = [5, 30, 120];
  * A player added junk (a meme image anywhere, a shape on the forest, a panel or an Orders frame): it is
  * removed and they are frozen, longer each time (5 s, 30 s, then 2 min).
  */
-export function decideJunk(state: GameState, ev: { userId: string; what: string; at: number }): Decision {
+export function decideJunk(state: GameState, ev: { userId: string; what: string; at: number }, rules?: Pick<RuleSet, "freeze">): Decision {
   state.junk ??= {};
   const n = (state.junk[ev.userId] = (state.junk[ev.userId] ?? 0) + 1);
   const secs = JUNK_FREEZE_SECONDS[Math.min(n, JUNK_FREEZE_SECONDS.length) - 1]!;
   const player = state.players[ev.userId];
   if (!player) return { accept: false, rule: "tamper", feedback: `🚫 ${ev.what} removed.` };
   let freeze = "";
-  if (state.phase === "live") {
+  if (state.phase === "live" && rules?.freeze !== false) {
     state.timeoutUntil[ev.userId] = Math.max(state.timeoutUntil[ev.userId] ?? 0, ev.at + secs * 1000);
     freeze = ` — frozen ${secs >= 60 ? `${secs / 60} min` : `${secs} s`}`;
   }

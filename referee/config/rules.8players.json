@@ -36,5 +36,6 @@
   "attacksPerTeam": 5,
   "gameMinutes": 10,
   "drawTeams": false,
-  "randomTeams": true
+  "randomTeams": true,
+  "freeze": false
 }

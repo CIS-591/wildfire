@@ -83,5 +83,6 @@
       }
     ]
   },
-  "randomTeams": true
+  "randomTeams": true,
+  "freeze": false
 }

@@ -38,5 +38,6 @@
   "drawTeams": false,
   "teams": 2,
   "teamSize": 1,
-  "randomTeams": true
+  "randomTeams": true,
+  "freeze": false
 }

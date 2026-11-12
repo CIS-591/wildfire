@@ -989,7 +989,7 @@ export class Referee {
         this.log(`\nput back: ${t.target} (${t.what})`);
         continue;
       }
-      this.pushFeedback(t.userId, (t.what === "added" ? decideJunk(state, { userId: t.userId, what: t.target, at: t.at }) : decideTamper(state, this.rules, t)).feedback);
+      this.pushFeedback(t.userId, (t.what === "added" ? decideJunk(state, { userId: t.userId, what: t.target, at: t.at }, this.rules) : decideTamper(state, this.rules, t)).feedback);
     }
 
     // 6. the fire: game time moves on (spread, burn-out, lightning, attacks running out, the end)

@@ -170,7 +170,7 @@ const rulesHtml = (r: RuleSet) => [
     "Write only in your own team's Orders.",
     "Don't move, edit or delete anything. No images or text.",
   ].map((l, i) => `<b>${i + 1}.</b> ${l}`),
-  "<b>Break a rule:</b> it is undone and you are frozen.",
+  "<b>Break a rule:</b> your move is undone.",
 ];
 
 async function build() {

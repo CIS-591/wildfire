@@ -71,7 +71,7 @@ const RULES = [
   ["Write only in your own team's Orders.", 1],
   ["Don't move, edit or delete anything. No images or text.", 1],
 ];
-const PENALTY = ["<b>Break a rule:</b> it is undone and you are frozen.", 1];
+const PENALTY = ["<b>Break a rule:</b> your move is undone.", 1];
 const SPLIT = 4; // rules 1-4 in one text item, 5-8 in the other
 const rulesHtml = (from, to) => RULES.slice(from, to).map(([l], i) => `<p><b>${from + i + 1}.</b> ${l}</p>`).join("");
 const lines = (from, to) => RULES.slice(from, to).reduce((n, [, k]) => n + k, 0);

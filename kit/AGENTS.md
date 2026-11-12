@@ -68,8 +68,7 @@ The referee checks every change on the board. Follow these always.
 
 - The move is undone.
 - The reason appears on your inbox card.
-- You are frozen (your paints are refused): 5 s for touching something you shouldn't.
-- Junk (images, shapes, text, stray stickies) is removed and its poster frozen 5 s, then 30 s, then 2 min.
+- Junk (images, shapes, text, stickies in another team's Orders) is removed; edits to other people's things are put back.
 - Repeat junk posters are named on the leaderboard.
 
 ## Smart play (strategy, not a referee rule)
