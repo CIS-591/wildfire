@@ -718,6 +718,21 @@ describe("Miro misbehaving, restarts, clocks", () => {
     expect(at(g.game.icons!.medal_1!.id)).toBeGreaterThan(at(g.game.fixtureIds.rank_1!));
     expectConverged(g);
   });
+  it(T("A133", "--teams 2: in the lobby Teams 3 and 4 are grey 'not playing' rows with '-' chips, and their centre squares are green"), async () => {
+    const g = await setup({ rules: { ...RULES, teams: 2 } });
+    await g.ticks(2);
+    const slot = (t: string) => g.ref.rankOrder().indexOf(t as never) + 1;
+    for (const t of ["cedar", "birch"]) {
+      const n = slot(t);
+      expect(g.fx(`rank_${n}` as "rank_1")).toContain("not playing");
+      expect(g.fx(`rank_${n}_water` as "rank_1_water").trim()).toBe("-");
+      expect(g.fx(`rank_${n}_score` as "rank_1_score").trim()).toBe("-");
+      expect(g.fake.items.get(g.game.fixtureIds[`rank_${n}` as "rank_1"]!)!.fill).toBe("#9ca3af");
+    }
+    expect(g.fx(`rank_${slot("ridge")}` as "rank_1")).not.toContain("not playing");
+    expect([g.fill("R18"), g.fill("S18")]).toEqual([C.forest, C.forest]);
+    expect([g.fill("R17"), g.fill("S17")]).toEqual([C.fire, C.fire]);
+  });
   it(T("A97", "game.json cut short by a kill: the previous save is loaded"), () => {
     const dir = mkdtempSync(path.join(tmpdir(), "wf-"));
     const file = path.join(dir, "game.json");

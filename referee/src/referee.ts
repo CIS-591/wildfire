@@ -1977,7 +1977,7 @@ export class Referee {
     const m = /^rank_(\d)(?:_(score|water|attacks))?$/.exec(key);
     if (!m) return undefined;
     const t = this.rankOrder()[Number(m[1]) - 1]!;
-    const on = this.state.phase === "lobby" || this.ranked(t);
+    const on = !this.sitsOut(t);
     return m[2] ? { textColor: on ? TEAM_INFO[t].color : LB_GREY } : { fill: on ? TEAM_INFO[t].color : LB_GREY };
   }
 
@@ -2030,7 +2030,7 @@ export class Referee {
   chipHtml(n: number, which: "water" | "attacks"): string {
     const s = this.state;
     const t = this.rankOrder()[n - 1]!;
-    if (s.phase !== "lobby" && !this.ranked(t)) return "<p>-</p>";
+    if (this.sitsOut(t)) return "<p>-</p>";
     const pad = "&nbsp;".repeat(7);
     if (which === "water") return `<p>${pad}<b>${s.water[t]}</b> / ${this.rules.waterPerTeam}</p>`;
     const left = Math.max(0, this.rules.attacksPerTeam - (s.attacksUsed?.[t] ?? 0));
@@ -2040,7 +2040,7 @@ export class Referee {
   /** The score badge of slot n: the team's % of forest saved. */
   badgeHtml(n: number): string {
     const t = this.rankOrder()[n - 1]!;
-    if (this.beforeDraw() || (this.state.phase !== "lobby" && !this.ranked(t))) return "<p><b>-</b></p>";
+    if (this.beforeDraw() || this.sitsOut(t)) return "<p><b>-</b></p>";
     return `<p><b>${scores(this.state, this.cellList)[t].pct}%</b></p>`;
   }
 
