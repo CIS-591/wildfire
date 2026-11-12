@@ -36,7 +36,9 @@ export interface GameFile {
   orders?: Partial<Record<Team, string>>;
   /** Where each fixture sits (center-based), so a recreated one lands in exactly the same box. */
   fixtureBoxes?: Partial<Record<FixtureKey, { x: number; y: number; w: number; h: number }>>;
-  /** Icon key ("pine_title", "strip") -> the image placed for it and the url it shows. */
+  /** When the game was reset (epoch ms): items created after it are never the board's own decoration. */
+  resetAt?: number;
+  /** Icon key ("medal_1", "trophy") -> the image placed for it and the url it shows. */
   icons?: Record<string, { id: string; url: string }>;
   /** Items that refused every write (locked): never adopted again, deleted when Miro lets us. */
   stuck?: string[];
@@ -224,6 +226,8 @@ export class Referee {
   private baseline = new Set<string>(); // items (and frames) on the board when this referee started
   private staticSnap = new Map<string, StaticSnap>();
   private iconMissing = new Map<string, number>();
+  /** Icons we replaced and deleted ourselves (a lagging listing may still show them: not strays). */
+  private retiredIcons = new Map<string, number>(); // id -> when we last tried to delete it
   /** Frames (center-based boxes) as the last frame listing saw them. */
   private frameSeen = new Map<string, { x: number; y: number; w: number; h: number }>();
   private reported = new Set<string>(); // one log line per lasting problem
@@ -374,7 +378,10 @@ export class Referee {
     this.cellId.clear();
     this.idCell.clear();
     this.stale.clear();
-    this.baseline = new Set(items.map((i) => i.id));
+    // The board's own items: what was there when the game was reset (or started). Anything made later is a
+    // player's, even if the referee was restarted after it appeared (a pause must not launder junk).
+    const cutoff = this.game.resetAt ?? this.game.state?.startedAt ?? Infinity;
+    this.baseline = new Set(items.filter((i) => !(i.createdAt > cutoff)).map((i) => i.id));
     const fx = this.game.fixtureIds;
     const present = new Set(items.map((i) => i.id));
     for (const key of FIXTURE_KEYS) if (fx[key] && (!present.has(fx[key]!) || this.stuck.has(fx[key]!))) delete fx[key]; // stale (board rebuilt) or locked
@@ -518,6 +525,7 @@ export class Referee {
   async reset(): Promise<{ repainted: number; deleted: number }> {
     if (!this.cellId.size) await this.discover();
     this.game.state = createState(this.cellList, this.rules, this.rng);
+    this.game.resetAt = this.now();
     this.game.cards = {};
     this.game.slots = {};
     const items = await this.board.listItems();
@@ -1029,8 +1037,9 @@ export class Referee {
     }
   }
 
+  /** One of our icons, or one we replaced and deleted ourselves (a stale listing may still show it). */
   private isIcon(id: string): boolean {
-    return Object.values(this.game.icons ?? {}).some((r) => r.id === id);
+    return this.retiredIcons.has(id) || Object.values(this.game.icons ?? {}).some((r) => r.id === id);
   }
 
   /** Where every icon goes now: a medal per team card by rank (a tree before the draw or for a team not playing), one icon per card row, a trophy on the ranking strip. */
@@ -1082,20 +1091,42 @@ export class Referee {
         continue;
       }
       this.iconMissing.delete(key);
-      const off = Math.abs(it.x - img.x) > TOL || Math.abs(it.y - img.y) > TOL || Math.abs(it.w - img.w) > TOL || !!it.rotation;
-      if (!off && rec.url === img.url) continue;
+      const moved = Math.abs(it.x - img.x) > TOL || Math.abs(it.y - img.y) > TOL;
+      const resized = Math.abs(it.w - img.w) > TOL || !!it.rotation;
+      if (!moved && !resized && rec.url === img.url) continue;
+      if (!resized && rec.url === img.url) {
+        // Only moved: put it back (a position PATCH is safe; Miro ignores a width PATCH on images and snaps them to full size).
+        jobs.push(async () => {
+          try {
+            await updateImage.call(this.board, rec.id, { x: img.x, y: img.y });
+          } catch (e) {
+            if (isGone(e)) delete icons[key];
+            else throw e;
+          }
+        });
+        continue;
+      }
+      // Resized, rotated or a new picture (a medal after a change of rank): a fresh image at the right size, the old one deleted.
       jobs.push(async () => {
-        try {
-          await updateImage.call(this.board, rec.id, { ...(off ? { x: img.x, y: img.y, w: img.w } : {}), ...(rec.url !== img.url ? { url: img.url } : {}) });
-          rec.url = img.url;
-        } catch (e) {
-          if (isGone(e)) delete icons[key]; // deleted: placed again next poll
-          else throw e;
-        }
+        const id = await createImage.call(this.board, img);
+        icons[key] = { id, url: img.url };
+        this.createdIds.add(id);
+        this.seen.add(id);
+        this.knownAt.set(id, this.now());
+        this.retiredIcons.set(rec.id, this.now());
+        await this.board.deleteItem(rec.id).catch((e) => void (isGone(e) || this.log(`old icon delete failed: ${errMsg(e)}`)));
       });
     }
     // A create that timed out may still have happened: our own untracked images on the leaderboard panel go.
     for (const it of images) {
+      // One we replaced is still listed: its delete failed or the listing lags; try again every 10 s.
+      const retired = this.retiredIcons.get(it.id);
+      if (it.type === "image" && retired !== undefined) {
+        if (now - retired < 10_000) continue;
+        this.retiredIcons.set(it.id, now);
+        jobs.push(() => this.board.deleteItem(it.id).catch((e) => void (isGone(e) || this.log(`old icon delete failed: ${errMsg(e)}`))));
+        continue;
+      }
       if (it.type !== "image" || this.isIcon(it.id) || this.staticIds.has(it.id) || !this.isSelf(it.createdBy) || !inside(PANELS.leaderboard, it.x, it.y)) continue;
       if (now - (this.knownAt.get(it.id) ?? -Infinity) < ICON_GRACE_MS) continue;
       jobs.push(() => this.board.deleteItem(it.id).catch((e) => void (isGone(e) || this.log(`stray icon delete failed: ${errMsg(e)}`))));

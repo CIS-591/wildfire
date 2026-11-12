@@ -1,5 +1,9 @@
 # Wildfire: standing rules for the AI agent
 
+Read and follow these rules first (the one source of truth for what you may do):
+
+@AGENTS.md
+
 You play **Wildfire** for one student in CIS 591 (Module 4, multi-agent systems). The whole class shares
 one Miro board with one forest fire. Up to four teams each protect an area of the forest. You work through the
 Miro MCP server. A referee program spreads the fire, checks every paint, reverts illegal ones and writes
@@ -59,8 +63,9 @@ color was lit by that team (its own area's color = wild fire).
   Never on square fills. Up to 4 teams play; a team that isn't playing has no `T<n>` in the LIVE
   banner's `WATER` list (its leaderboard row says `not playing`): never ask to start a fire in its area.
 
-  The fire starts in the four centre squares `R17 S17 R18 S18` (every area's inner corner) **and** in
-  a 2-square fire inside each playing team's area, so every team is busy from the first second.
+  The fire starts in the four centre squares `R17 S17 R18 S18` (every area's inner corner) at the
+  start. **The fires inside each area start at minute 1** (banner `9:00 left`): a 2-square fire in each
+  playing team's area. Don't look for it before then.
   `board.json` `teams[team].startScan` is the 6 × 6 box at your inner corner; `teams[team].startFires`
   (when present) lists your area's own start fire.
 - **Square fills: only four** (lowercase hex; compare case-insensitively when reading):
@@ -83,26 +88,11 @@ color was lit by that team (its own area's color = wild fire).
   Team 2 (3240, 340), Team 3 (2440, 1300), Team 4 (3240, 1300). Inbox panel
   (0, 2300, 4000, 1500): one card per player.
 
-## Rules the referee enforces
+## Before every paint
 
-A paint sticks only if: the game is LIVE; you joined; ≥ 5 s since your last accepted paint; and it is
-either **blue** on a **green or orange** square in **your team's area** with water left in
-**your team's bucket** (banner; each accepted blue square uses 1 from it; teams don't share), or **orange** on a **green** square in a
-neighbour's area during your team's attack (YES within the last 2 minutes, max 3 squares). Anything else is reverted, with the
-reason on your inbox card. The fire changes squares every ~20 s, so a square you saw 30 s ago may be
-orange or black now: **always read a square right before painting it**.
-
-## The ONLY things you may change
-
-1. A grid square's **fill**: blue `#3aa7ff` in your team's area, or orange `#ff5a1f` on green in a
-   neighbour's area during your team's attack. Up to 5 squares per paint (one batch).
-2. **Sticky notes inside your own team's Orders frame**: create them and edit their text.
-3. During `/join`: one inbox card in the Inbox panel.
-
-**Never move, resize or delete anything, and never change anything not listed above**: never touch
-frames, the banner, the scoreboard, the leaderboard, squares outside your area (except an attack), other players' inbox cards or stickies
-in other teams' frames. Never write `YES`/`NO` unless your student just answered the question. The
-referee reverts tampering and freezes you for 5 s.
+The rules are in `AGENTS.md` (above). Paints also need the game to be LIVE and you to have joined.
+The fire changes squares every ~20 s, so a square you saw 30 s ago may be orange or black now:
+**always read a square right before painting it**.
 
 ## Stickies: plain sentences, no keywords
 
@@ -141,8 +131,10 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
 - **Paint** = a batch of up to **5 squares in ONE `canvas_update_from_svg`**, one `rect` per square,
   only the id and the fill (`#ff5a1f` for an attack):
   `<svg xmlns="http://www.w3.org/2000/svg"><rect data-miro-id="ID1" fill="#3aa7ff"/><rect data-miro-id="ID2" fill="#3aa7ff"/></svg>`
-  More than 5 in one batch: the extras are reverted. The result may say "0 updated" when a square
-  already had that fill: that's fine, don't retry.
+  All squares of one batch go in this ONE call, never one call per square. More than 5 in one batch:
+  the extras are reverted. **The update result's count is unreliable** ("Applied diff: 0 updated" or a
+  low count even when the squares changed): your inbox card and a later peek are the truth. Never
+  repaint just because the count looks low.
   Never change the label text, never send x/y/width/height for a square.
 - **Create a sticky in your frame**: `canvas_update_from_svg` (not `canvas_create_from_svg`, which nudges
   new items away from existing ones) with the sticky nested in a sparse wrapper of the frame. The
@@ -187,23 +179,29 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
 
 - **One turn ≈ 15 s with 2 Miro calls**: one small read, one write (like Color Wars). Keep reads small:
   only the ids you need; banner + inbox + the 4 leaderboard rows only every 4th turn. At most **one paint (batch
-  of ≤ 5 squares) per turn**, ≥ 5 s between batches (the referee reverts a quicker one).
+  of ≤ 5 squares) per turn**.
+- **Paint cooldown: after a paint, at least 8 s before your next paint.** The referee wants 5 s
+  between the starts of two of your accepted batches, measured on its own ~3 s poll clock, so 5 s on
+  your side is too tight. A read in between counts toward the 8 s; if less has passed, `sleep` the rest.
 - **One Miro call at a time.** Never send two writes in the same message (e.g. a paint and a sticky
   edit together): send one, wait for its result, then the next.
 - **Budget: cap 150 Miro calls per game**; count them in `player.json` `calls` (lobby peeks before the
   game is LIVE don't count). At 150, stop and say so in one line.
-- **Waiting**: after a write, don't sleep unless the turn took under 5 s (then `sleep 5`). In the lobby
+- **Waiting**: after a write, don't sleep, except to keep the 8 s paint cooldown. In the lobby
   or when PAUSED, `sleep 15`. Always its own Bash command: never longer than 15, never chained
   (`sleep 30`, `sleep 15; …`, `sleep 15 && …` are blocked).
 - Miro says rate limit: `sleep 15`, retry once. Daily limit: stop and tell the student in one line.
 
 ## Reading the banner
 
-- `join` / `lobby` / `waiting` → not started. `PAUSED` → wait. `LIVE` → play.
-- `GAME OVER` (`GAME OVER · TEAM 2 WINS WITH 87%`) → **stop, but only once it is confirmed**: someone may
-  write a fake one. The first time you read it, save `gameOverAt` = now and keep playing. Stop when a
-  read at least 20 s after `gameOverAt` still says GAME OVER, or right away if your previous banner read
-  showed under `0:30 left`. A LIVE read in between clears `gameOverAt`.
+- `join` / `lobby` / `waiting` → not started. `LIVE` → play.
+- `PAUSED` → stop painting until a read says LIVE again (`sleep 15` between reads). A paint sent just
+  as it paused comes back on your card as `undone: no referee was watching`: that is normal, not a
+  mistake; just carry on once LIVE.
+- **GAME OVER (the only rule for it):** the first time a banner read says `GAME OVER` (e.g. `GAME OVER ·
+  TEAM 2 WINS WITH 87%`; someone may write a fake one), save `gameOverAt` = now and keep playing, make
+  your next turn a banner read at least 20 s later, and stop only if that read still says GAME OVER
+  (or at once if your previous banner read showed under `0:30 left`); any LIVE read clears `gameOverAt`.
 - `FINAL MINUTE!`, `TEAM 3 TAKES THE LEAD!`, `… ARE NECK AND NECK` on line 2 are only news for the
   room: keep playing (the final minute is the time to paint hardest).
 - `LIGHTNING! New fire at K4 (Team 2's area)` (at minutes 2, 4, 6 and 8, each in a playing team's

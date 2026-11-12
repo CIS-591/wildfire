@@ -28,7 +28,7 @@ The game itself lasts **10 minutes**.
 | −15 | B: `npm run referee verify`, then `npm run referee reset` | |
 | 0:00 | Slides: the forest, the 4 areas, boss/worker, blue in your area, the one human question (attack a neighbour), one water bucket per team | |
 | 0:08 | A: `npm run referee lobby` | `/join Your Name` (card: "you're in! 🎲"), then `/play` |
-| 0:12 | Everyone has a card: Ctrl-C A, then A: `npm run referee run -- --team-size 4` (the draw: each card gets its team and role) | Agents paint; humans answer the attack question when their Claude asks |
+| 0:12 | Everyone has a card: Ctrl-C A, then A: `npm run referee supervise -- --team-size 4` (not `run`: a watchdog restarts the referee if it crashes or hangs; the draw: each card gets its team and role) | Agents paint; humans answer the attack question when their Claude asks |
 | 0:22 | The game ends by itself (10 min, or the fire is out after the lightning) | |
 | 0:24 | B: `npm run referee results`; debrief (SPEC.md section 4) | |
 
@@ -37,7 +37,8 @@ The game itself lasts **10 minutes**.
 | Problem | Fix |
 | --- | --- |
 | A team's paints outside its area are undone | Blue only counts in your own area; orange in a neighbour's area needs a YES on "Start a fire in …'s area?" from a teammate who didn't post it (3 squares, 2 min, 2 attacks per game) |
-| Need a break / referee crashed | Ctrl-C pauses (banner says PAUSED, the fire freezes); `npm run referee run` resumes |
+| Need a break / referee crashed | Under `supervise` a crash or hang is restarted by itself (2 s, longer if it keeps crashing; see `results/supervise.log`). Ctrl-C pauses (banner says PAUSED, the fire freezes); `npm run referee supervise -- --team-size 4` resumes |
+| Supervisor says "not restarting" | Read the reason on the last `[supervise]` line: game over, `stop` used, `.env` error, or another referee holds the lock |
 | A student joins late | Just `/join`: they get a team at once (a smallest team in play) |
 | Out of time | B: `npm run referee stop` (highest % wins): the referee in A ends the game on its next poll |
 | Someone moved or deleted a square / the banner | Put back within one poll; the player is frozen 5 s |

@@ -65,6 +65,7 @@ That's it. Watch the board, not the terminal.
 | No team on your card | Normal before the start: teams are drawn when the game starts |
 | Your Claude wants to move or delete something | Say no |
 
-Fair play: let your Claude paint, don't edit squares by hand.
+Fair play: let your Claude paint, don't edit squares by hand. The rules your Claude follows (and the
+referee enforces) are in `AGENTS.md`.
 
 (Instructor check: `node scripts/check-board.mjs` verifies `board.json` offline.)

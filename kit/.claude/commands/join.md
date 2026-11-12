@@ -10,7 +10,9 @@ initial, then continue). Keep the name short; it goes on your order sticky (`Ana
 
 1. Read `board.json` (and `CLAUDE.md` if not already in context). If `boardUrl` is empty, tell the
    student "The instructor hasn't published the board link yet; pull the kit again (`git pull`) in a
-   minute." and stop. If `player.json` already has an `inboxId`, the student has joined: go to step 4.
+   minute." and stop. `player.json` does not exist before the first `/join`: that is normal, go to
+   step 2 (step 3 creates it). If `player.json` already has an `inboxId`, the student has joined: go
+   to step 4.
 2. Pick a spot: top-left x = 40 + a random number 0–3500, y = 2400 + a random number 0–1300
    (inside the Inbox panel `board.json` `panels.inbox`).
 3. Create the card in ONE `canvas_update_from_svg` call (never `canvas_create_from_svg`), replacing

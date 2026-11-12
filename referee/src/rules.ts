@@ -243,6 +243,8 @@ export function startGame(state: GameState, rules: RuleSet, at: number): string[
   if (state.phase !== "lobby") return [];
   state.phase = "live";
   state.startedAt = at;
+  // The buckets follow the rules the game starts with (a reset may have run with another rules file).
+  for (const t of TEAMS) state.water[t] = rules.waterPerTeam;
   const withPlayers = TEAMS.filter((t) => Object.values(state.players).some((p) => p.team === t));
   state.playing = withPlayers.length ? withPlayers : openTeams(rules); // nobody in yet: the teams the instructor opened
   for (const lab of FIRST_FIRE) {

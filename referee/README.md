@@ -27,6 +27,7 @@ Run day: [RUNBOOK.md](RUNBOOK.md).
 | `npm run referee reset` | New game: all green, the 4 centre squares orange, empty Inbox and Orders |
 | `npm run referee lobby` | Students `/join`. Ctrl-C when all are in |
 | `npm run referee run` | Draws the teams, starts the 10-minute fire and referees it. Ctrl-C pauses; `run` resumes |
+| `npm run referee supervise -- <run flags>` | `run` under a watchdog: restarted automatically if it crashes, is killed or hangs (see below). Use this in class |
 | `npm run referee stop` | End now: highest % wins |
 | `npm run referee results` | Winner, % per team, paints, approvals, refusals |
 | `npm test` · `npm run typecheck` · `npm run lint` | Checks (incl. every attack in `test/ATTACKS.md` and a 30-bot vandal stress game) |
@@ -40,6 +41,27 @@ poll, so a crashed or paused referee resumes; only one referee runs at a time (`
 Whenever a fixture or square gets a new id (and on `reset`), the referee writes the live ids to
 `state/live-ids.json`; run `python3 ../board/build/sync_ids.py` to merge them into `board/board.json`,
 `kit/board.json` and `config/layout.json`, so agents never peek at a replaced id.
+
+## Watchdog: `supervise`
+
+`npm run referee supervise -- --team-size 4` (same flags as `run`) starts `run` as a child process and keeps it
+going (`src/supervise.ts`):
+
+- When the referee exits it is restarted after 2 s; if it keeps dying within 20 s of starting the wait doubles
+  (2, 4, 8, 16, 30, 30 … s), and a run that lasted over 60 s resets it to 2 s. The game resumes from `state/game.json`.
+- Hang watchdog: if `state/game.json` (saved every poll) hasn't changed for 60 s while the referee is alive, it
+  gets SIGTERM, SIGKILL 10 s later, and is restarted. A fresh referee gets 3 min for its first save (board discovery retries).
+- It stops supervising when the game is over, when `npm run referee stop` was used (`state/stop`), on a `.env`
+  error (exit 2), or when another referee holds `state/referee.lock`. Ctrl-C (or SIGTERM) is passed to the referee
+  once, which pauses the game as with `run`; the supervisor waits for the pause, then exits. Ctrl-C again kills it.
+- A killed referee's lock (its pid) is cleared by the supervisor before the restart. One supervisor at a time (`state/supervise.lock`).
+- Every exit and restart is printed (`[supervise] referee exited (code 1); restarting in 4 s (restart #2)`) and
+  appended with a timestamp to `results/supervise.log`.
+- After the game ends, `run` keeps guarding the board; the supervisor keeps that guard alive too, until Ctrl-C.
+- Testing without Miro: `WILDFIRE_CHILD` replaces the child command, `WILDFIRE_STATE_DIR` / `WILDFIRE_SUPERVISE_LOG`
+  move the state folder and log, `WILDFIRE_HANG_SECONDS`, `WILDFIRE_STARTUP_GRACE_SECONDS`, `WILDFIRE_KILL_GRACE_SECONDS` shorten the timers:
+  `WILDFIRE_STATE_DIR=/tmp/sv WILDFIRE_CHILD="node -e 'process.exit(1)'" npm run referee supervise`.
+  The policy is unit-tested in `test/supervise.test.ts`.
 
 ## Teams: the draw
 

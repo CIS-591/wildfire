@@ -8,6 +8,7 @@
   "scripts": {
     "referee": "tsx src/cli.ts",
     "sim": "tsx src/cli.ts sim",
+    "supervise": "tsx src/cli.ts supervise",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "eslint --fix ."

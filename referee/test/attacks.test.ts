@@ -394,8 +394,10 @@ describe("covering the board", () => {
     const j = g.fake.vandalAdd("p1", "image", { x: 600, y: 600, w: 100, h: 100 });
     g.fake.lock(j.id);
     const d0 = g.fake.calls.delete;
+    const i0 = g.fake.calls.image;
     await g.ticks(40);
-    expect(g.fake.calls.delete - d0).toBeLessThanOrEqual(8);
+    // Icons replaced when the rank changes (a new image, the old one deleted) are not junk retries.
+    expect(g.fake.calls.delete - d0 - (g.fake.calls.image - i0)).toBeLessThanOrEqual(8);
     g.fake.unlock(j.id);
     await g.ticks(20);
     expect(g.fake.items.has(j.id)).toBe(false);
@@ -669,6 +671,19 @@ describe("Miro misbehaving, restarts, clocks", () => {
     expect(g2.ref.state.phase).toBe("live");
     expect(g2.ref.state.stats.byPlayer.r2!.water).toBe(1);
     expect(g2.card("r2")).toContain("Rob · TEAM 1");
+    expectConverged(g2);
+  });
+  it(T("A130", "junk posted while the referee is paused (a shape over the leaderboard, a meme in the Orders) is still removed after it restarts"), async () => {
+    const g = await setup({ live: true, rules: RULES });
+    await g.ticks(5);
+    const saved = JSON.parse(JSON.stringify(g.game));
+    g.advance(20_000);
+    const fake = g.fake.vandalAdd("c1", "shape", { x: 3600, y: -50, w: 600, h: 400 }, "FAKE LEADERBOARD");
+    const meme = g.fake.vandalAdd("c1", "image", { x: ORDERS.pine.x + 300, y: ORDERS.pine.y + 400, w: 200, h: 200 });
+    const g2 = await setup({ fake: g.fake, game: saved, rules: RULES, t0: g.now() + 30_000 });
+    await g2.ticks(4);
+    expect(g2.fake.items.has(fake.id)).toBe(false);
+    expect(g2.fake.items.has(meme.id)).toBe(false);
     expectConverged(g2);
   });
   it(T("A97", "game.json cut short by a kill: the previous save is loaded"), () => {

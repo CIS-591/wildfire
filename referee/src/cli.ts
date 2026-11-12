@@ -13,6 +13,7 @@ import { MiroRest } from "./miro-rest.js";
 import { Referee } from "./referee.js";
 import { mulberry32, scores, type RuleSet } from "./rules.js";
 import { formatSim, runSimulation } from "./sim.js";
+import { supervise } from "./supervise.js";
 
 const args = process.argv.slice(2);
 const cmd = args[0] ?? "help";
@@ -156,12 +157,20 @@ const rulesFile = () => (opt("rules") ? path.resolve(opt("rules")!) : undefined)
 
 /** The rules panel, from the numbers the referee actually plays with (config/rules.json). */
 const rulesHtml = (r: RuleSet) => [
-  "<b>HOW WILDFIRE WORKS</b>",
-  `Every ${r.spreadSeconds} s the fire (ORANGE) may spread to the green trees around it, the same in every direction; it starts in the centre and in every team's area. A square burns ${r.burnTicks} spreads, then it is gone (BLACK).`,
-  `<b>Paint blue</b> on green or orange squares in your team's area (colored edges). Blue stops the fire and stays. Up to ${r.paintBatch} squares per paint, then wait ${r.cooldownSeconds} s. Each team has its own ${r.waterPerTeam} water.`,
-  `<b>Score</b> = green squares left in your area (% of 306). The game lasts ${r.gameMinutes} min.${r.lightningAt.length ? ` Lightning starts a new fire in each team's area once (minutes ${r.lightningAt.join(", ")}).` : ""}`,
-  `<b>The human call:</b> the boss asks in your Orders: <b>Start a fire in Team 2's area?</b> (a neighbour). A teammate who didn't ask answers with a line <b>YES</b> or <b>NO</b>. On YES your team may paint orange on up to ${r.attackSquares} green squares there for ${r.attackMinutes} min (${r.attacksPerTeam} attacks per game). A team's fire has a border in its color and can spread back into your own area.`,
-  "Anything else you touch is put back.",
+  "<b>RULES</b>",
+  ...[
+    "Paint only squares in your team's area.",
+    "Paint only <b>blue</b>, and only on green or orange squares.",
+    `Max ${r.paintBatch} squares per move, then wait ${r.cooldownSeconds} s.`,
+    `<b>Orange</b> only after a teammate's <b>YES</b>: ${r.attackSquares} green squares in that neighbour's area, ${r.attackMinutes} min.`,
+    "Ask only in your own team's Orders, and only about a neighbour.",
+    "Never answer your own question.",
+    "Edit only your own inbox card and your own Orders sticky.",
+    "Never move, edit, recolor or delete anything else.",
+    "No images, shapes or text anywhere.",
+    `Water is limited: each team has one bucket (on the banner). ${r.attacksPerTeam} attacks per team.`,
+  ].map((l, i) => `<b>${i + 1}.</b> ${l}`),
+  "<b>Break a rule:</b> your move is undone, you are frozen, and the leaderboard names you.",
 ];
 
 async function build() {
@@ -317,6 +326,13 @@ async function main() {
       saveGame(game);
       return;
     }
+    case "supervise": {
+      // `run` under a watchdog (src/supervise.ts): restarted when it crashes or hangs, until the game is over,
+      // `stop` is used, or Ctrl-C (pauses, like `run`). Bad flags fail here, not in a restart loop.
+      intOpt("teams", 1, 4);
+      intOpt("team-size", 1);
+      return supervise(args.slice(1));
+    }
     case "stop": {
       const running = lockOwner();
       if (running) {
@@ -348,6 +364,7 @@ async function main() {
   npm run referee reset      new game: starting colors, empty Inbox and Orders
   npm run referee lobby      students join (Ctrl-C when everyone is in)
   npm run referee run        start the fire and referee the 10-minute game (Ctrl-C pauses; run again resumes)
+  npm run referee supervise  same flags as run; runs it and restarts it if it crashes or hangs (Ctrl-C pauses; log: results/supervise.log)
   npm run referee stop       end now: highest % wins
   npm run referee results    print the result
   options: --poll 3 (seconds between board reads), --seed N (repeatable fire), --minutes N (shorter game),

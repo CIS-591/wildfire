@@ -48,7 +48,7 @@ export class FakeBoard implements BoardAdapter {
   private seq = 1000;
   now: () => number;
   names: Record<string, string> = {};
-  calls = { list: 0, grid: 0, typed: 0, get: 0, update: 0, delete: 0, create: 0, frame: 0, failed: 0 };
+  calls = { list: 0, grid: 0, typed: 0, get: 0, update: 0, delete: 0, create: 0, frame: 0, failed: 0, image: 0 };
   /** Set (or call enableFastReads) to exercise the referee's fast (per-frame) read path. */
   listGridItems?: () => Promise<BoardItem[]>;
   private byLabel = new Map<string, string>();
@@ -300,7 +300,7 @@ export class FakeBoard implements BoardAdapter {
   }
 
   async createImage(img: NewImage): Promise<string> {
-    this.calls.create++;
+    this.calls.image++; // icons are counted apart: "nothing rebuilt" means no square or fixture
     await this.lag();
     const ghost = this.writeFault("POST images");
     const id = this.add({ type: "image", content: img.url, x: img.x, y: img.y, w: img.w, h: img.w }, REFEREE_USER).id;

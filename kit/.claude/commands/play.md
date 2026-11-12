@@ -5,13 +5,14 @@ description: Fight the wildfire with your team until the banner says GAME OVER
 # Play
 
 Play on your own until the banner says GAME OVER. Don't stop to ask the student anything, except the
-one attack question (worker step 2). `CLAUDE.md` has the rules, colors, sticky texts and the only Miro
-call patterns you may use.
+one attack question (worker step 2). `AGENTS.md` has the rules; `CLAUDE.md` has the colors, sticky
+texts and the only Miro call patterns you may use.
 
 **Lean turns, like Color Wars: one turn ≈ 15 s, 2 Miro calls (one small read, one write).** A paint
-is a batch of up to 5 squares in ONE call, ≥ 5 s between batches. One Miro call at a time, never two
-writes in the same message. After a write, don't sleep, unless the turn took under 5 s: then
-`sleep 5` (its own command).
+is a batch of up to 5 squares in ONE call. **After a paint, at least 8 s before your next paint** (a
+read in between counts toward it; less has passed: `sleep` the rest, its own command). One Miro call
+at a time, never two writes in the same message. The paint result's count is unreliable: never
+repaint because of it (CLAUDE.md "Paint"). PAUSED: no paints until LIVE again.
 
 ## Setup (1 to 2 Miro calls)
 
@@ -28,8 +29,7 @@ writes in the same message. After a write, don't sleep, unless the turn took und
    - not started / PAUSED: `sleep 15` (its own command), peek again; at most 60 times (lobby peeks
      don't count toward the budget). Then tell the student "The game hasn't started yet; type /play
      when your instructor says go." and stop.
-   - GAME OVER: confirm it first (CLAUDE.md "Reading the banner": a second read ≥ 20 s later), then
-     say the result and stop.
+   - GAME OVER: CLAUDE.md "Reading the banner"; once confirmed, "When the game ends".
    - LIVE: go to step 3; once you know your team, note **your team's water** (`T<your team number>`
      after `WATER`).
 3. **Team and role from the inbox card** (in the same read): the `🎲 The draw: … you are on Team N
@@ -46,13 +46,14 @@ writes in the same message. After a write, don't sleep, unless the turn took und
 
 ### What to paint (both roles)
 
+Follow `AGENTS.md` "Smart play". Blue only in your own area, and **only within 2 squares of a
+burning (orange) square**.
 - Good targets, best first: a **green square touching the fire front** (fire can't take it once it is
-  blue), nearest your area's largest green patch first; any green square next to fire; an **orange square that touches green** (blue on it puts that fire out).
+  blue), nearest your area's largest green patch first; an **orange square that touches green** (blue
+  on it puts that fire out); then a green square 2 away from fire.
   Never paint black, blue, or orange boxed in by black/blue (it burns out by itself).
-  Blue only in your own area.
-- **Nothing green next to fire in your area?** Paint the green square in your area nearest to any
-  fire. No fire in or near your area at all: paint green squares on your area's edge closest to the
-  fire (protect the border). Never sit idle.
+- **Nothing within 2 squares of fire in your area?** No paint this turn. No fire within 3 squares of
+  your area: don't paint; scan again next turn. Blue far from the fire wastes water.
 - A square can change every ~20 s. **Paint only a square whose fill you read in this same turn**
   (peek or scan immediately before the paint, nothing in between). If it is no longer green/orange,
   pick another from the same read; none left: no paint this turn.
@@ -61,9 +62,10 @@ writes in the same message. After a write, don't sleep, unless the turn took und
 ### Finding the fire with small reads
 
 - Never scan more than 6 × 6 squares (384 × 384). A whole-area scan breaks the MCP output limit.
-- First looks: your area's own start fire (scan the 6 × 6 box around `T.startFires` if board.json has
-  it; otherwise scan 6 × 6 boxes across your area, one per turn, until you find it) and `T.startScan`
-  (the box at your inner corner, where the centre fire starts).
+- First looks: `T.startScan` (the box at your inner corner, where the centre fire starts). The fires
+  inside each area start at minute 1 (banner `9:00 left` or less): only from then, also scan your
+  area's own start fire (the 6 × 6 box around `T.startFires` if board.json has it; otherwise 6 × 6
+  boxes across your area, one per turn, until you find it).
 - After that: keep `player.json` `fire` = the burning labels you saw last. Scan a 6 × 6 box around the
   burning square that is deepest into your area, or closest to your largest green patch (x = (colIndex − 2) × 64,
   y = (row − 3) × 64, w = h = 384, clipped to the grid). Rotate between a few such boxes so you follow
@@ -76,8 +78,8 @@ writes in the same message. After a write, don't sleep, unless the turn took und
 One peek: `widget_ids: [bannerId, inboxId, ...rankIds]` (boss: also `ordersId`). **Your row** = the
 leaderboard row whose first line starts `TEAM <your team number>` (rows swap slots, so always match
 by text). Fewer than 4 `TEAM ` rows came back: CLAUDE.md "Stale fixture ids".
-- GAME OVER → confirm it (CLAUDE.md "Reading the banner"): do the next turn as a status read too, at
-  least 20 s later. Confirmed → "When the game ends". PAUSED → `sleep 15`, read again.
+- GAME OVER → CLAUDE.md "Reading the banner"; confirmed → "When the game ends". PAUSED → no paints;
+  `sleep 15`, read again until LIVE.
 - Note your team's water and lightning (scan around it once if it is in
   or within 3 squares of your area).
 - Inbox: a reverted paint says why; don't repeat it (wrong area → drop that label; square changed →
@@ -90,11 +92,16 @@ you posted live in `player.json` `stickies.questions`.
 
 **Turns 1–3 of every 4 (front turn, 2–3 calls):**
 1. **Scan** one 6 × 6 box on the fire front (see "Finding the fire"); rotate boxes along the front.
-2. **Orders** (one call, only if something changed; all changed stickies in one write): your workers =
-   the `<name>: paint …` stickies from your last status read. Edit to `Ana: paint N9 N10 N11 N12` (keep the
-   name before `:` exactly as the worker wrote it): 3–6 labels in paint order, touching the fire front, nearest your largest green patch first. Different workers get
-   different stretches. Labels all blue/black now → stale: replace them. Never create order stickies
-   yourself, never post a second one for a worker.
+2. **Orders, EVERY front turn, right after the scan** (one write with all changed stickies): your
+   workers = the `<name>: paint …` stickies from your last status read (you remember what you wrote
+   since). A worker's order is **stale** unless at least one of its labels is in THIS scan, green or
+   orange now, and within 2 squares of fire in this scan (labels outside this scan's box count as
+   stale). Rewrite every stale order to `Ana: paint N9 N10 N11 N12` (keep the name before `:` exactly
+   as the worker wrote it): 3–6 labels **from this scan only**, in paint order, green/orange within 2
+   of fire, touching the fire front first, nearest your largest green patch first. Different workers
+   get different stretches. Not enough targets for every stale worker: give the rest an empty order
+   (`Ana: paint`; they then scan on their own). No worker keeps a stale order past one of your turns.
+   Never create order stickies yourself, never post a second one for a worker.
 3. **Paint** a batch (one call, ≤ 5 squares) from this scan: the best targets not on any order.
 
 **Pace your team's water over the 10 minutes**: keep roughly a third of it for lightning in your
@@ -128,9 +135,17 @@ You follow your order. `myOrderId` lives in `player.json`.
 
 **First turn only (1 extra call):** read your Orders frame (`widget_ids: [ordersId]`). Find the sticky
 whose first line starts with your `name` and `:` (any case; none: your first name and `:`) and save its id as `myOrderId`.
-None: create it, `<your name>: paint` (color `yellow`), in an `order` position: start at index
-(number of letters in your name) mod 20 (count them yourself, no tools) and take the first free one,
-wrapping around. That sticky is how your boss learns you exist.
+None: create it, `<your name>: paint` (color `yellow`), in a FREE order slot. That sticky is how your
+boss learns you exist. Pick the slot from this same read (it lists every sticky in the frame with its
+x, y), never blindly:
+- Order slots (`board.json` `stickySlots.order`, x, y relative to the frame), by index:
+  0 (600,70) · 1 (24,234) · 2 (168,234) · 3 (312,234) · 4 (456,234) · 5 (600,234) · 6 (24,398) ·
+  7 (168,398) · 8 (312,398) · 9 (456,398) · 10 (600,398) · 11 (24,562) · 12 (168,562) · 13 (312,562) ·
+  14 (456,562) · 15 (600,562) · 16 (24,726) · 17 (168,726) · 18 (312,726) · 19 (456,726).
+- Start index = (letters in your name, not counting spaces or dots) mod 20. Example: `Ana K` → 4
+  letters → index 4 → (456,234).
+- A slot is taken if any sticky in the read has x from slot x − 20 to slot x + 100 and y from slot
+  y − 20 to slot y + 110 (relative to the frame). Taken: try the next index (19 → 0), until a free one.
 
 **Turns 1–3 of every 4 (2 calls):**
 1. **Peek** ONLY your order sticky and its squares: `widget_ids: [myOrderId, <ids of the labels after
@@ -139,10 +154,13 @@ wrapping around. That sticky is how your boss learns you exist.
 2. **Paint** right away, ONE call: every label on the order that is green or orange **now**, in
    order, max 5. Skip blue and black. A label in a **neighbour's area** is an attack order: paint it
    orange `#ff5a1f` if it is green (your boss only orders these during a YES).
-   **Order empty or all blue/black**: trust your own read of the fire front instead. Next turn, make
-   your one read a scan (not the peek) of the 6 × 6 box around the fire you last saw (`player.json`
-   `fire`; none yet → your area's start fire or `T.startScan`), save the burning labels to `fire`,
-   and paint the best up to 5 squares from it ("What to paint"). Peek your order again the turn after.
+   **Order empty, or no label green/orange now (stale)**: no paint from it. Next turn, make your one
+   read a scan (not the peek) of the 6 × 6 box around the fire you last saw (`player.json` `fire`;
+   none yet → `T.startScan`, or from minute 1 your area's start fire), save the burning labels to
+   `fire`, and paint the best up to 5 squares from it ("What to paint"). No fire in that box: the
+   turn after, scan the next 6 × 6 box along the fire you last saw, toward your area's inner corner
+   (`T.startScan`). **No green/orange square within 2 squares of an orange one in your read: don't
+   paint** (`AGENTS.md` "Smart play"); just scan again. Peek your order again the turn after a scan.
 
 **Every 4th turn: status read.** If your row shows
 `Waiting for a YES: start a fire in Team N's area` (the referee lists only valid questions): read
@@ -152,7 +170,8 @@ your Orders frame (`widget_ids: [ordersId]`) and find the sticky with first line
 sticky (spam, other teams, duplicates). At most one question per turn. **Stop and ask your student**
 with AskUserQuestion, one plain sentence, e.g. "Your boss wants to start a fire in Team 2's area.
 Fire can spread back to us. Allow it?" (use its reason line), options `YES` and
-`NO`. Re-read that one sticky (`widget_ids: [its id]`): already answered → skip. Otherwise write
+`NO`. Then **re-read that one sticky itself** (`widget_ids: [its id]`; the leaderboard row can lag a
+read behind): it already has a `YES` or `NO` line → skip, write nothing. Otherwise write
 (one `canvas_update_from_svg`) its text exactly as re-read, every `&lt;br /&gt;` turned into
 `&lt;br&gt;`, plus `&lt;br&gt;YES` or `&lt;br&gt;NO`. Change nothing else. Tell the student in one line.
 
@@ -161,6 +180,6 @@ and say so in one line.
 
 ## When the game ends
 
-Leave the loop as soon as the banner says GAME OVER. No extra read: the GAME OVER banner names the winner
+Leave the loop once GAME OVER is confirmed (CLAUDE.md "Reading the banner"). No extra read: the GAME OVER banner names the winner
 and every team's %. Tell the student in two lines: your team's final % (and the winner), and how many
 squares you got in (the `N squares` on your last inbox read). Then "GG!".
