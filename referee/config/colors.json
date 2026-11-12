@@ -1,9 +1,15 @@
 {
-  "forest": "#93d275",
-  "cabin": "#f5d128",
-  "river": "#414bb2",
-  "fire": "#ff9d48",
-  "water": "#23bfe7",
-  "firebreak": "#8b5a2b",
-  "burnt": "#1a1a1a"
+  "forest": "#3fa66b",
+  "fire": "#ff5a1f",
+  "water": "#3aa7ff",
+  "burnt": "#2a2420",
+  "teams": { "ridge": "#a78bfa", "pine": "#f472b6", "cedar": "#fde047", "birch": "#e2e8f0" },
+  "square": { "border": "#0e1311", "borderWidth": 2, "label": "#0b1a10", "labelBurnt": "#7d736a" },
+  "frame": "#0e1311",
+  "backdrop": "#0e1311",
+  "panel": "#161d19",
+  "panelBorder": "#25302a",
+  "text": "#f1efe9",
+  "muted": "#9aa39c",
+  "heading": "#ff7a3d"
 }

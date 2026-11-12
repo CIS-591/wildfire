@@ -9,8 +9,8 @@
 //   GET    /v2/boards/{board_id}/members?limit=50&cursor=    (Level 1)
 //   GET    /v1/oauth-token                                   (token context: user id, team, scopes)
 // Global limit: 100,000 credits/min per user per app; 429 carries X-RateLimit-Reset.
-import { pool, type BoardAdapter, type BoardItem, type NewShape, type ShapePatch } from "./board.js";
-import type { Box } from "./layout.js";
+import { pool, type BoardAdapter, type BoardItem, type FrameBox, type NewShape, type ShapePatch } from "./board.js";
+import { frameBoxes, type Box } from "./layout.js";
 
 const API = "https://api.miro.com";
 
@@ -20,7 +20,7 @@ interface RawItem {
   data?: { content?: string; title?: string };
   style?: { fillColor?: string };
   position?: { x: number; y: number; relativeTo?: string };
-  geometry?: { width?: number; height?: number };
+  geometry?: { width?: number; height?: number; rotation?: number };
   parent?: { id?: string };
   createdBy?: { id: string };
   modifiedBy?: { id: string };
@@ -35,6 +35,7 @@ export class MiroRest implements BoardAdapter {
   private typeOf = new Map<string, string>(); // item id -> type (sticky notes patch at another endpoint)
   /** Every frame seen in the last full listing: id -> box + title. */
   seenFrames = new Map<string, Box & { title: string }>();
+  private rawFrames: RawItem[] = [];
   constructor(
     private token: string,
     private boardId: string,
@@ -65,6 +66,7 @@ export class MiroRest implements BoardAdapter {
       createdAt: Date.parse(r.createdAt ?? "") || 0,
       modifiedAt: Date.parse(r.modifiedAt ?? "") || 0,
       parentId: r.parent?.id,
+      rotation: r.geometry?.rotation || undefined,
     };
   }
 
@@ -113,7 +115,8 @@ export class MiroRest implements BoardAdapter {
     }
     if (res.status === 429 && attempt < 5) {
       const reset = Number(res.headers.get("X-RateLimit-Reset"));
-      const waitMs = Number.isFinite(reset) && reset > 0 ? Math.max(1000, reset * 1000 - Date.now()) : 2000 * 2 ** attempt;
+      // Never sleep longer than 20 s inside one call: the referee would rather skip a tick and try again.
+      const waitMs = Math.min(20_000, Number.isFinite(reset) && reset > 0 ? Math.max(1000, reset * 1000 - Date.now()) : 2000 * 2 ** attempt);
       this.log(`429 rate limited; waiting ${Math.round(waitMs / 1000)}s`);
       await new Promise((r) => setTimeout(r, waitMs));
       return this.req(method, path, body, attempt + 1);
@@ -132,6 +135,7 @@ export class MiroRest implements BoardAdapter {
     const raw = await this.pages("");
     const frameBox = new Map<string, Box>();
     this.seenFrames.clear();
+    this.rawFrames = raw.filter((r) => r.type === "frame");
     for (const r of raw) {
       if (r.type !== "frame") continue;
       const w = r.geometry?.width ?? 0;
@@ -141,6 +145,28 @@ export class MiroRest implements BoardAdapter {
       this.seenFrames.set(r.id, { ...box, title: r.data?.title ?? "" });
     }
     return raw.filter((r) => r.type !== "frame").map((r) => this.toItem(r, r.parent?.id ? (frameBox.get(r.parent.id) ?? this.frames.get(r.parent.id)) : undefined));
+  }
+
+  /** Frames from the last full listing (center-based, like every item). */
+  async listFrames(): Promise<BoardItem[]> {
+    return this.rawFrames.map((r) => ({ ...this.toItem(r), content: r.data?.title ?? "" }));
+  }
+
+  async createFrame(box: FrameBox, fill: string, title: string): Promise<string> {
+    const [id] = await this.createFrames([{ ...box, title }], fill);
+    return id!;
+  }
+
+  /** Move/resize a frame back (center-based box); Miro moves its children with it. */
+  async updateFrame(id: string, box: FrameBox): Promise<void> {
+    await this.req("PATCH", `${this.b}/frames/${id}`, { position: { x: box.x, y: box.y }, geometry: { width: box.w, height: box.h } });
+  }
+
+  /** The 9 grid band frames, top band first (after the referee recreated one). */
+  setGridFrames(ids: string[]): void {
+    const boxes = frameBoxes();
+    this.frames.clear();
+    ids.forEach((id, i) => id && boxes[i] && this.frames.set(id, boxes[i]!));
   }
 
   /** Create frames (dark grid bands have no title). Returns their ids in order. */
@@ -185,6 +211,15 @@ export class MiroRest implements BoardAdapter {
       await this.req("PATCH", `${this.b}/sticky_notes/${id}`, body);
       return;
     }
+    if (this.typeOf.get(id) === "text") {
+      // A static text (title, rules, headers) put back after a vandal edited or moved it.
+      const body: Record<string, unknown> = {};
+      if (p.content !== undefined) body.data = { content: p.content };
+      if (p.x !== undefined && p.y !== undefined) body.position = { x: p.x, y: p.y };
+      if (p.w !== undefined) body.geometry = { width: p.w, ...(p.rotation !== undefined ? { rotation: p.rotation } : {}) };
+      await this.req("PATCH", `${this.b}/texts/${id}`, body);
+      return;
+    }
     const body: Record<string, unknown> = {};
     if (p.content !== undefined) body.data = { content: p.content };
     const style: Record<string, unknown> = {};
@@ -198,7 +233,8 @@ export class MiroRest implements BoardAdapter {
       const f = this.frames.get(this.parentOf.get(id) ?? "");
       body.position = f ? { x: p.x - f.x, y: p.y - f.y } : { x: p.x, y: p.y };
     }
-    if (p.w !== undefined && p.h !== undefined) body.geometry = { width: p.w, height: p.h };
+    if (p.w !== undefined && p.h !== undefined) body.geometry = { width: p.w, height: p.h, ...(p.rotation !== undefined ? { rotation: p.rotation } : {}) };
+    else if (p.rotation !== undefined) body.geometry = { rotation: p.rotation };
     await this.req("PATCH", `/v2/boards/${encodeURIComponent(this.boardId)}/shapes/${id}`, body);
   }
 

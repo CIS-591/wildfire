@@ -14,6 +14,15 @@ export interface BoardItem {
   createdAt: number; // epoch ms
   modifiedAt: number; // epoch ms
   parentId?: string; // the frame it sits in (x/y are still absolute)
+  rotation?: number; // degrees; 0 or absent = upright
+}
+
+/** A Miro frame (grid band or Orders frame). Center-based like every BoardItem. */
+export interface FrameBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 export interface ShapePatch {
@@ -27,6 +36,7 @@ export interface ShapePatch {
   borderWidth?: number;
   textColor?: string;
   fontSize?: number;
+  rotation?: number;
 }
 
 export interface NewShape {
@@ -56,6 +66,14 @@ export interface BoardAdapter {
   createShapes(shapes: NewShape[]): Promise<string[]>;
   /** userId -> display name for board members (REST only; the fake returns what it knows). */
   members(): Promise<Record<string, string>>;
+  /** Frames seen in the last full listing (no extra API call). Absent = frames are not guarded. */
+  listFrames?(): Promise<BoardItem[]>;
+  /** Create one frame (box TOP-LEFT, like layout.ts). Returns its id. */
+  createFrame?(box: FrameBox, fill: string, title: string): Promise<string>;
+  /** Move/resize a frame back (CENTER-based box). Its children move with it. */
+  updateFrame?(id: string, box: FrameBox): Promise<void>;
+  /** The 9 grid band frame ids, top band first, after the referee recreated one (fast reads). */
+  setGridFrames?(ids: string[]): void;
 }
 
 export function stripHtml(s: string): string {

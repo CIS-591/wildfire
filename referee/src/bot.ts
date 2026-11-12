@@ -1,8 +1,10 @@
 // Scripted players for the simulation. A bot sees only what a student's agent sees (square colors,
 // banner, scoreboard, leaderboard, its own inbox card, the Orders frames) and plays like the kit:
-// the boss reads the fire and keeps one ORDER sticky per worker, posts PLAN / BACKBURN / HELP;
-// workers paint one square from their ORDER about every 15 s, from orders that may be stale, with mistakes.
-import { STATE_COLOR, TEAMS, TEAM_INFO, WIND, label, type CellKind, type Team } from "./layout.js";
+// the boss keeps one order sticky per worker ("Ana: paint N9 N10"), paints at half a worker's rate, and asks
+// "Spray water in <neighbour>'s area?" when a neighbour's fire is about to cross in; workers paint one
+// square from their (maybe stale) order per turn.
+// Turn pace is set by the simulation (real agents: one paint per 45-60 s, rehearsal-1.log).
+import { STATE_COLOR, TEAMS, TEAM_INFO, WIND, type Team } from "./layout.js";
 import type { Rng } from "./rules.js";
 
 export interface CellView {
@@ -10,7 +12,6 @@ export interface CellView {
   label: string;
   col: number;
   row: number;
-  kind: CellKind;
   sector: Team;
   fill: string;
 }
@@ -35,28 +36,19 @@ export interface PlayerBoard {
 
 export interface BotOptions {
   mistakeRate?: number; // chance a paint is wrong (agents misread the board)
-  blindRate?: number; // chance a worker paints its next ordered square without checking it still makes sense
 }
 
 const C = STATE_COLOR;
 const cheb = (a: { col: number; row: number }, b: { col: number; row: number }) => Math.max(Math.abs(a.col - b.col), Math.abs(a.row - b.row));
 const TEAM_BY_CAPS: Record<string, Team> = Object.fromEntries(TEAMS.map((t) => [TEAM_INFO[t].name.toUpperCase(), t]));
-const COLOR_WORD: Record<string, string> = { water: C.water, firebreak: C.firebreak, burnt: C.burnt };
-
-interface Order {
-  fill: string;
-  label: string;
-}
+const live = (c: CellView | undefined) => !!c && (c.fill === C.forest || c.fill === C.fire);
 
 export class Bot {
   team: Team | null = null;
   role: "boss" | "worker" | null = null;
-  planApproved = false;
-  backburn = new Set<string>();
-  help: { to: Team; until: number } | null = null;
-  planPosted = false;
-  lastBackburnAt = -Infinity;
-  lastHelpAt = -Infinity;
+  /** A running spray-outside grant this bot's team got (from the inbox card). */
+  outside: { to: Team; until: number } | null = null;
+  lastOutsideAt = -Infinity;
   nextTurnAt = 0;
   painted = 0;
   turns = 0;
@@ -71,103 +63,92 @@ export class Bot {
     public opts: BotOptions = {},
   ) {}
 
-  /** Read the inbox card: team, role, approvals (remembered once seen; the card keeps only 6 lines). */
+  /** Read the inbox card: team, role, answers to the spray question (remembered once seen; the card keeps only 6 lines). */
   async readInbox(board: PlayerBoard, now: number): Promise<void> {
     const text = await board.inbox(this.userId);
-    const m = /Team (RIDGE|PINE VALLEY|CEDAR CREEK|BIRCH HOLLOW)/.exec(text);
+    const m = /\b(TEAM [1-4])\b/.exec(text);
     if (m) this.team = TEAM_BY_CAPS[m[1]!]!;
     const r = /· (BOSS|WORKER) ·/.exec(text);
     if (r) this.role = r[1] === "BOSS" ? "boss" : "worker";
     for (const line of text.split("\n")) {
       if (this.seenLines.has(line)) continue;
       this.seenLines.add(line);
-      if (/PLAN approved|already has an approved PLAN/.test(line)) this.planApproved = true;
-      const bb = /BACKBURN approved.* on (.+)$/.exec(line);
-      if (bb) for (const l of bb[1]!.split(/\s+/)) this.backburn.add(l);
-      const h = /HELP approved: .*\((ridge|pine|cedar|birch)\) for (\d+) min/.exec(line);
-      if (h) this.help = { to: h[1] as Team, until: now + Number(h[2]) * 60_000 };
+      const yes = /said YES: you may paint blue in .*\((ridge|pine|cedar|birch)\) for (\d+) min/.exec(line);
+      if (yes) this.outside = { to: yes[1] as Team, until: now + Number(yes[2]) * 60_000 };
+      if (/^⌛ Time is up in /.test(line)) this.outside = null;
     }
   }
 
   async act(board: PlayerBoard, now: number): Promise<number> {
     if (!this.team) return 0;
     this.turns++;
-    return this.role === "boss" ? this.bossTurn(board, now) : this.workerTurn(board);
+    return this.role === "boss" ? this.bossTurn(board, now) : this.workerTurn(board, now);
   }
 
-  // ---------- boss: stickies only ----------
+  private grantTo(now: number): Team | null {
+    return this.outside && now < this.outside.until ? this.outside.to : null;
+  }
+
+  // ---------- boss: orders, OUTSIDE, and one paint ----------
   private async bossTurn(board: PlayerBoard, now: number): Promise<number> {
     const team = this.team!;
-    if (!this.planPosted) {
-      await board.postSticky(team, "PLAN\nWater the fire edge nearest our trees, firebreaks downwind, protect both cabins.");
-      this.planPosted = true;
-      return 0;
-    }
     const cells = await board.cells();
-    const { banner, scoreboard, leaderboard } = await board.fixtures();
+    const { banner, leaderboard } = await board.fixtures();
+    if (/GAME OVER|\/join now/.test(banner)) return 0;
     const wind = windOf(banner);
-    const water = waterOf(banner);
     const crew = crewOf(leaderboard, team);
     const stickies = await board.stickies(team);
 
-    // One ORDER per worker, updated in place. Two go help another team while a HELP grant runs.
-    const helping = this.help && now < this.help.until ? this.help.to : null;
-    const home = crew.slice(helping ? 2 : 0);
-    const away = helping ? crew.slice(0, 2) : [];
-    const plans: [string[], Team][] = [[home, team]];
-    if (helping) plans.push([away, helping]);
+    // One order per worker, updated in place. Half the crew goes outside while a spray-outside grant runs.
+    const away = this.grantTo(now);
+    const outCrew = away ? crew.slice(0, Math.ceil(crew.length / 2)) : [];
+    const plans: [string[], Team][] = [[crew.filter((n) => !outCrew.includes(n)), team]];
+    if (away) plans.push([outCrew, away]);
+    const own = targetsFor(cells, team, wind, this.rng);
     for (const [names, sector] of plans) {
-      const targets = targetsFor(cells, sector, wind, water, sector === team ? this.backburn : new Set(), this.rng);
+      const targets = sector === team ? own : targetsFor(cells, sector, wind, this.rng, team);
       for (let i = 0; i < names.length; i++) {
         const mine = targets.filter((_, k) => k % names.length === i).slice(0, 3);
-        const byColor = new Map<string, string[]>();
-        for (const o of mine) {
-          const word = Object.keys(COLOR_WORD).find((w) => COLOR_WORD[w] === o.fill)!;
-          byColor.set(word, [...(byColor.get(word) ?? []), o.label]);
-        }
-        const body = byColor.size ? [...byColor].map(([w, ls]) => `${w} ${ls.join(" ")}`).join("\n") : "stand by: watch the fire";
-        const text = `ORDER · ${names[i]}\n${body}`;
-        const old = stickies.find((s) => s.text.split("\n")[0]!.trim() === `ORDER · ${names[i]}`);
+        const text = mine.length ? `${names[i]}: paint ${mine.map((c) => c.label).join(" ")}` : `${names[i]}: paint nothing yet, watch the fire`;
+        const old = stickies.find((s) => s.text.startsWith(`${names[i]}: paint`));
         if (!old) await board.postSticky(team, text);
         else if (old.text !== text) await board.editSticky(old.id, text);
       }
     }
-    if (!this.planApproved) return 0;
-    if (now - this.lastBackburnAt > 240_000) {
-      const run = backburnRun(cells, team, wind, this.rng);
-      if (run) {
-        await board.postSticky(team, `BACKBURN ${run}\nto stop the front before it reaches our trees`);
-        this.lastBackburnAt = now;
-        return 0;
+
+    // The one human decision: a neighbour's fire is about to cross into us.
+    if (!away && now - this.lastOutsideAt > 150_000) {
+      const threat = TEAM_INFO[team].neighbours
+        .map((n) => ({ n, k: cells.filter((c) => c.sector === n && c.fill === C.fire && cells.some((g) => g.sector === team && g.fill === C.forest && cheb(g, c) <= 2)).length }))
+        .sort((a, b) => b.k - a.k)[0]!;
+      if (threat.k >= 3) {
+        await board.postSticky(team, `Spray water in ${TEAM_INFO[threat.n].name}'s area?\nTheir fire is about to cross into ours.`);
+        this.lastOutsideAt = now;
       }
     }
-    if (now - this.lastHelpAt > 240_000) {
-      const pct = percents(scoreboard);
-      const own = pct[team];
-      const best = TEAM_INFO[team].neighbours.slice().sort((a, b) => (pct[b] ?? 0) - (pct[a] ?? 0))[0]!;
-      if (own !== undefined && own < 75 && (pct[best] ?? 0) >= own + 10) {
-        await board.postSticky(best, `HELP ${TEAM_INFO[team].name}\nfire is eating our sector, 2 painters please`);
-        this.lastHelpAt = now;
-      }
-    }
-    return 0;
+
+    // The boss paints too (half a worker's rate: one paint per boss turn).
+    const pick = own[0];
+    if (!pick) return 0;
+    await board.paint(pick.id, C.water);
+    this.painted++;
+    return 1;
   }
 
-  // ---------- worker: one paint from its ORDER ----------
-  private async workerTurn(board: PlayerBoard): Promise<number> {
-    if (!this.planApproved && this.rng() > 0.1) return 0; // agents sometimes jump the gun
+  // ---------- worker: one paint from its order ----------
+  private async workerTurn(board: PlayerBoard, now: number): Promise<number> {
+    const { banner } = await board.fixtures();
+    if (/GAME OVER|\/join now/.test(banner)) return 0;
     const cells = await board.cells();
     const byLabel = new Map(cells.map((c) => [c.label, c]));
     const stickies = await board.stickies(this.team!);
-    const order = stickies.find((s) => s.text.split("\n")[0]!.trim() === `ORDER · ${this.name}`);
+    const order = stickies.find((s) => s.text.startsWith(`${this.name}: paint`));
     let target: CellView | undefined;
-    let fill = C.water;
     if (this.rng() < (this.opts.mistakeRate ?? 0.1)) {
-      // A mistake: a random square near the fire, a color it thinks is right.
+      // A mistake: a random square near the fire, wherever it is (other areas, already blue or burnt).
       const fires = cells.filter((c) => c.fill === C.fire);
       const near = cells.filter((c) => fires.some((f) => cheb(c, f) <= 2));
       target = near[Math.floor(this.rng() * near.length)];
-      fill = [C.water, C.firebreak, C.burnt][Math.floor(this.rng() * 3)]!;
     } else if (order) {
       if (order.text !== this.orderText) {
         this.orderText = order.text;
@@ -175,78 +156,70 @@ export class Bot {
       }
       const list = parseOrder(order.text);
       while (this.orderDone < list.length && !target) {
-        const o = list[this.orderDone++]!;
-        const c = byLabel.get(o.label);
-        if (!c) continue;
-        const fits = o.fill === C.water ? [C.fire, C.forest, C.cabin].includes(c.fill) : c.fill === C.forest;
-        if (fits || this.rng() < (this.opts.blindRate ?? 0.3)) {
-          target = c;
-          fill = o.fill;
-        }
+        const c = byLabel.get(list[this.orderDone++]!);
+        if (c && live(c)) target = c; // re-check the exact square
       }
-    } else {
-      // No order yet: water the burning square nearest the team's trees.
-      const fires = cells.filter((c) => c.fill === C.fire && c.sector === this.team);
-      const trees = cells.filter((c) => c.sector === this.team && (c.fill === C.forest || c.fill === C.cabin));
-      target = fires.sort((a, b) => nearest(a, trees) - nearest(b, trees))[0];
+    }
+    if (!target) {
+      // No usable order: the burning square (or green next to the fire) nearest our trees.
+      const where = this.grantTo(now) ?? this.team!;
+      target = targetsFor(cells, where, windOf(banner), this.rng, this.team!)[0] ?? targetsFor(cells, this.team!, windOf(banner), this.rng)[0];
     }
     if (!target) return 0;
-    await board.paint(target.id, fill);
+    await board.paint(target.id, C.water);
     this.painted++;
     return 1;
   }
 }
 
-/** What a boss wants painted in `sector`, most urgent first. */
-export function targetsFor(cells: CellView[], sector: Team, wind: number, water: number, backburn: Set<string>, rng: Rng): Order[] {
-  const fires = cells.filter((c) => c.fill === C.fire);
+/**
+ * Squares a team wants blue in `sector`, most urgent first: burning squares next to green trees
+ * (more green around, downwind of them, and close to `protect`'s area first), then green squares
+ * right downwind of the fire.
+ */
+export function targetsFor(cells: CellView[], sector: Team, wind: number, rng: Rng, protect: Team = sector): CellView[] {
   const byPos = new Map(cells.map((c) => [`${c.col},${c.row}`, c]));
-  const living = (c: CellView | undefined) => !!c && c.sector === sector && (c.fill === C.forest || c.fill === C.cabin);
+  const home = cells.filter((c) => c.sector === protect && c.fill === C.forest);
+  const near = (c: CellView) => {
+    if (protect === sector) return 0;
+    let d = Infinity;
+    for (const g of home) d = Math.min(d, cheb(c, g));
+    return d;
+  };
   const threat = (c: CellView) => {
     let v = 0;
     WIND.forEach((w, i) => {
       const n = byPos.get(`${c.col + w.dc},${c.row + w.dr}`);
-      if (living(n)) v += (n!.fill === C.cabin ? 6 : 1) * (i === wind ? 2 : 1);
+      if (n && n.fill === C.forest) v += i === wind ? 3 : 1;
     });
-    return v + rng();
+    return v;
   };
-  const out: Order[] = [];
-  for (const c of cells) if (backburn.has(c.label) && c.fill === C.forest) out.push({ label: c.label, fill: C.burnt });
   const mine = cells.filter((c) => c.sector === sector);
-  const burning = mine.filter((c) => c.fill === C.fire).sort((a, b) => threat(b) - threat(a));
-  const front = mine
-    .filter((c) => c.fill === C.forest || c.fill === C.cabin)
-    .map((c) => ({ c, d: nearest(c, fires), down: downwind(c, fires, wind) + (c.fill === C.cabin ? 4 : 0) + rng() }))
-    .filter((x) => x.d >= 1 && x.d <= 2)
-    .sort((a, b) => b.down - a.down)
+  const fires = mine
+    .filter((c) => c.fill === C.fire)
+    .map((c) => ({ c, v: threat(c) - 2 * near(c) + rng() }))
+    .filter((x) => threat(x.c) > 0)
+    .sort((a, b) => b.v - a.v)
     .map((x) => x.c);
-  if (water > 0) {
-    // Mostly water on the flames, a firebreak line just downwind, cabins soaked.
-    const n = Math.max(burning.length, front.length);
-    for (let i = 0; i < n; i++) {
-      if (burning[i]) out.push({ label: burning[i]!.label, fill: C.water });
-      if (front[i] && (i % 2 === 1 || front[i]!.fill === C.cabin)) out.push({ label: front[i]!.label, fill: front[i]!.fill === C.cabin ? C.water : C.firebreak });
-    }
-  } else {
-    for (const c of front) if (c.fill === C.forest) out.push({ label: c.label, fill: C.firebreak });
-  }
-  return out;
+  const w = WIND[wind]!;
+  const front = mine.filter((c) => {
+    if (c.fill !== C.forest) return false;
+    const up = byPos.get(`${c.col - w.dc},${c.row - w.dr}`);
+    return up?.fill === C.fire;
+  });
+  return [...fires, ...front];
 }
 
-export function parseOrder(text: string): Order[] {
-  const out: Order[] = [];
-  for (const line of text.split("\n").slice(1)) {
-    const m = /^(water|firebreak|burnt)\s+(.+)$/i.exec(line.trim());
-    if (!m) continue;
-    for (const l of m[2]!.split(/[\s,]+/).filter(Boolean)) out.push({ label: l.toUpperCase(), fill: COLOR_WORD[m[1]!.toLowerCase()]! });
-  }
-  return out;
+/** Square labels on an order sticky ("Ana: paint N9 N10 N11"). */
+export function parseOrder(text: string): string[] {
+  const m = /:\s*paint\s+(.+)$/i.exec(text.split("\n")[0]!.trim());
+  return m ? m[1]!.split(/[\s,]+/).filter((l) => /^[A-Z]{1,2}\d{1,2}$/i.test(l)).map((l) => l.toUpperCase()) : [];
 }
 
 // ---------- reading the projector ----------
 
 export function windOf(banner: string): number {
-  const m = /WIND \S+ (NE|NW|SE|SW|N|E|S|W)\b/.exec(banner) ?? /blowing (north-east|north-west|south-east|south-west|north|east|south|west)/.exec(banner);
+  const m = /wind \S+ (NE|NW|SE|SW|N|E|S|W)\b/i.exec(banner) ?? /blowing \S+ (north-east|north-west|south-east|south-west|north|east|south|west)/.exec(banner);
   if (!m) return 0;
   const i = WIND.findIndex((w) => w.name === m[1] || w.word === m[1]);
   return Math.max(0, i);
@@ -273,56 +246,4 @@ export function crewOf(leaderboard: string, team: Team): string[] {
   if (i < 0) return [];
   const crew = lines.slice(i + 1, i + 4).find((l) => l.startsWith("crew: "));
   return crew ? crew.slice(6).split(", ").filter(Boolean) : [];
-}
-
-function nearest(c: CellView, others: CellView[]): number {
-  let d = Infinity;
-  for (const f of others) d = Math.min(d, cheb(c, f));
-  return d;
-}
-
-/** How much `c` lies downwind of the nearest fire (positive = the fire is coming). */
-function downwind(c: CellView, fires: CellView[], wind: number): number {
-  let best: CellView | null = null;
-  let d = Infinity;
-  for (const f of fires) {
-    const k = cheb(c, f);
-    if (k < d) {
-      d = k;
-      best = f;
-    }
-  }
-  if (!best) return 0;
-  const w = WIND[wind]!;
-  return (c.col - best.col) * w.dc + (c.row - best.row) * w.dr;
-}
-
-/** A straight run of forest 3-5 squares downwind of the fire, inside the sector, across the wind. */
-export function backburnRun(cells: CellView[], team: Team, wind: number, rng: Rng): string | null {
-  const fires = cells.filter((c) => c.fill === C.fire);
-  const near = fires.filter((f) => cells.some((c) => c.sector === team && cheb(c, f) <= 6));
-  if (near.length < 6) return null;
-  const w = WIND[wind]!;
-  const vertical = w.dc !== 0; // wind has an east/west part: a column blocks it
-  const cand = cells.filter((c) => c.sector === team && c.fill === C.forest && nearest(c, fires) >= 3 && nearest(c, fires) <= 5 && downwind(c, fires, wind) > 0);
-  const groups = new Map<number, CellView[]>();
-  for (const c of cand) {
-    const k = vertical ? c.col : c.row;
-    groups.set(k, [...(groups.get(k) ?? []), c]);
-  }
-  let bestRun: CellView[] = [];
-  for (const g of groups.values()) {
-    g.sort((a, b) => (vertical ? a.row - b.row : a.col - b.col));
-    let run: CellView[] = [];
-    for (const c of g) {
-      const prev = run.at(-1);
-      if (prev && (vertical ? c.row - prev.row : c.col - prev.col) === 1) run.push(c);
-      else run = [c];
-      if (run.length > bestRun.length || (run.length === bestRun.length && rng() < 0.3)) bestRun = run.slice(0, 10);
-    }
-  }
-  if (bestRun.length < 4) return null;
-  const a = bestRun[0]!;
-  const b = bestRun.at(-1)!;
-  return `${label(a.col, a.row)}-${label(b.col, b.row)}`;
 }

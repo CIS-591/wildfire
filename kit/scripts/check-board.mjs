@@ -1,4 +1,4 @@
-// Offline sanity check for kit/board.json: label <-> coordinate math, sectors, cabins, rivers, slots.
+// Offline sanity check for kit/board.json: label <-> coordinate math, areas, scan boxes, 4 colors, slots, ids.
 // Run: node scripts/check-board.mjs
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
@@ -63,25 +63,22 @@ ok("every square in exactly one sector, 306 each", () => {
     }
   for (const t of Object.keys(board.teams)) assert.equal(count[t], 18 * 17);
 });
-ok("cabins and first fire inside their own sector", () => {
+ok("first fire inside its own area, startScan is 6x6 at the inner corner", () => {
   for (const [t, team] of Object.entries(board.teams)) {
-    for (const c of team.cabins) assert.equal(sectorOf(c), t, c);
     assert.equal(sectorOf(team.firstFire), t);
+    const b = team.startScan, s = team.sector;
+    assert.ok(b.w <= board.maxScan.w && b.h <= board.maxScan.h);
+    assert.ok(b.x >= s.x && b.y >= s.y && b.x + b.w <= s.x + s.w && b.y + b.h <= s.y + s.h);
+    const { x, y } = toXY(team.firstFire);
+    assert.ok(inBox(b, x, y), `${t} startScan misses ${team.firstFire}`);
   }
 });
-ok("cabins are mirror images (col c <-> 35-c, row r <-> 33-r)", () => {
-  const mirrorLR = (l) => { const { col, row } = parse(l); return `${colName(35 - col)}${row}`; };
-  const mirrorTB = (l) => { const { col, row } = parse(l); return `${colName(col)}${34 - row + 1}`; };
-  assert.deepEqual(board.teams.pine.cabins, board.teams.ridge.cabins.map(mirrorLR));
-  assert.deepEqual(board.teams.cedar.cabins, board.teams.ridge.cabins.map(mirrorTB));
-  assert.deepEqual(board.teams.birch.cabins, board.teams.ridge.cabins.map((l) => mirrorTB(mirrorLR(l))));
+ok("no leftover kinds (cabins, rivers)", () => {
+  for (const team of Object.values(board.teams)) assert.ok(!("cabins" in team) && !("river" in team));
 });
-ok("rivers inside their own sector", () => {
-  for (const [t, team] of Object.entries(board.teams)) {
-    const [a, b] = team.river.split("-");
-    assert.equal(sectorOf(a), t);
-    assert.equal(sectorOf(b), t);
-  }
+ok("neighbours share a border", () => {
+  for (const [t, team] of Object.entries(board.teams))
+    for (const n of team.neighbours) assert.ok(board.teams[n].neighbours.includes(t));
 });
 ok("watch box = sector + 3 squares, inside the grid", () => {
   for (const team of Object.values(board.teams)) {
@@ -92,9 +89,12 @@ ok("watch box = sector + 3 squares, inside the grid", () => {
     assert.equal(w.h, s.h + 3 * P);
   }
 });
-ok("sticky slots fit inside an Orders frame and do not overlap", () => {
-  const { size, colors, note, ...kinds } = board.stickySlots;
-  const all = Object.values(kinds).flat();
+ok("sticky slots: only order/question, fit the frame, no overlap, EXAMPLE corner reserved", () => {
+  const { size, colors, note, reserved, ...kinds } = board.stickySlots;
+  assert.deepEqual(Object.keys(kinds).sort(), ["order", "question"]);
+  assert.deepEqual(Object.keys(colors).sort(), ["order", "question"]);
+  assert.deepEqual(reserved.example, { x: 600, y: 726 });
+  const all = [...Object.values(kinds).flat(), reserved.example];
   const f = board.orders.ridge;
   for (const s of all) assert.ok(s.x >= 0 && s.y >= 0 && s.x + size.w <= f.w && s.y + size.h <= f.h, JSON.stringify(s));
   for (let i = 0; i < all.length; i++)
@@ -111,6 +111,38 @@ ok("Orders frames do not overlap the grid or each other", () => {
       const a = boxes[i], b = boxes[j];
       assert.ok(!(a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h));
     }
+});
+ok("exactly four square colors", () => {
+  const { frame, ...squares } = board.colors;
+  assert.deepEqual(squares, { tree: "#3fa66b", fire: "#ff5a1f", water: "#3aa7ff", burnt: "#2a2420" });
+  assert.equal(frame, "#0e1311");
+});
+ok("teams are Team 1..Team 4 with their team colors and Orders titles", () => {
+  const want = {
+    ridge: ["Team 1", "#a78bfa"],
+    pine: ["Team 2", "#f472b6"],
+    cedar: ["Team 3", "#fde047"],
+    birch: ["Team 4", "#e2e8f0"],
+  };
+  assert.deepEqual(Object.keys(board.teams).sort(), Object.keys(want).sort());
+  for (const [id, [name, color]] of Object.entries(want)) {
+    assert.equal(board.teams[id].name, name, id);
+    assert.equal(board.teams[id].color, color, id);
+    assert.equal(board.orders[id].title, `ORDERS · ${name.toUpperCase()}`, id);
+  }
+});
+ok("legend uses the four square colors", () => {
+  const { frame, ...squares } = board.colors;
+  const text = board.legend.join("\n");
+  for (const hex of Object.values(squares)) assert.ok(text.includes(hex), hex);
+});
+ok("ids present: board, frames, fixtures, orders, all 1224 cells", () => {
+  assert.ok(board.boardUrl && board.boardId);
+  assert.equal(board.frames.length, 9);
+  for (const f of Object.values(board.fixtures)) assert.ok(f.id);
+  for (const o of Object.values(board.orders)) assert.ok(o.id);
+  assert.equal(Object.keys(board.cells).length, 36 * 34);
+  for (let c = 0; c < 36; c++) for (let r = 1; r <= 34; r++) assert.ok(board.cells[`${colName(c)}${r}`]);
 });
 ok("colors are lowercase hex", () => {
   for (const v of Object.values(board.colors)) assert.match(v, /^#[0-9a-f]{6}$/);

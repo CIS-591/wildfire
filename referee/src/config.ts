@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { RuleSet } from "./rules.js";
 import { TEAMS, type Team } from "./layout.js";
@@ -54,17 +54,42 @@ export function loadLayoutIds(file = path.join(ROOT, "config/layout.json")): Lay
 
 export const GAME_FILE = path.join(ROOT, "state/game.json");
 
-export function loadGame(file = GAME_FILE): GameFile {
-  if (!existsSync(file)) return emptyGame();
-  const saved = JSON.parse(readFileSync(file, "utf8")) as Partial<GameFile>;
-  // A Color Wars save has no fire: start a fresh game (keep the fixture ids).
-  const state = saved.state && "burnLeft" in saved.state ? saved.state : undefined;
-  return { ...emptyGame(), fixtureIds: saved.fixtureIds ?? {}, state };
+/**
+ * The saved game. A file cut short by a kill mid-write (or edited by hand into bad JSON) falls back to the
+ * previous save (`game.json.bak`), then to a fresh game: a restart never crashes on its own save.
+ */
+export function loadGame(file = GAME_FILE, log: (s: string) => void = console.warn): GameFile {
+  for (const f of [file, `${file}.bak`]) {
+    if (!existsSync(f)) continue;
+    let saved: Partial<GameFile>;
+    try {
+      saved = JSON.parse(readFileSync(f, "utf8")) as Partial<GameFile>;
+      if (!saved || typeof saved !== "object") throw new Error("not an object");
+    } catch (e) {
+      log(`${path.basename(f)} is unreadable (${(e as Error).message.slice(0, 80)}); trying the previous save`);
+      continue;
+    }
+    // A save from an older version of the game (Color Wars, or Wildfire with PLAN/cabins): start a fresh game (keep the fixture ids).
+    const state = saved.state && (saved.state as { version?: number }).version === 2 && typeof saved.state.cells === "object" ? saved.state : undefined;
+    return { ...emptyGame(), ...saved, fixtureIds: saved.fixtureIds ?? {}, state };
+  }
+  return emptyGame();
 }
 
+/** Atomic save: write a temp file, keep the last good save as .bak, then rename over (a kill never leaves half a file). */
 export function saveGame(game: GameFile, file = GAME_FILE): void {
   mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, JSON.stringify(game, null, 2));
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(game, null, 2));
+  if (existsSync(file)) {
+    try {
+      JSON.parse(readFileSync(file, "utf8"));
+      copyFileSync(file, `${file}.bak`);
+    } catch {
+      /* the old file was already bad: keep the older .bak */
+    }
+  }
+  renameSync(tmp, file);
 }
 
 /** Minimal .env loader: KEY=VALUE lines, no quotes handling beyond trimming. */

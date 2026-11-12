@@ -7,19 +7,32 @@ All item ids are in `board.json`.
 
 | Item | Where | board.json |
 |---|---|---|
-| 1,224 squares A1..AJ34 (60x60, pitch 64, border = sector color, width 3) | 9 dark band frames, rows 1-4, 5-8, ..., 33-34 | `frames`, `cells` |
+| Locked dark backdrop (sent to back, behind everything) | (-330, -440, 4410, 4320) | `static` (`restyle.added.backdrop`) |
+| 1,224 squares A1..AJ34 (60x60, pitch 64, border #0e1311 width 2, label #0b1a10; `build/restyle_squares.mjs`) | 9 band frames (fill #0e1311), rows 1-4, 5-8, ..., 33-34 | `frames`, `cells` |
 | Dark rim with column letters (top/bottom) and row numbers (left/right), team colored | around the grid, 72 wide | `static` |
-| Title "WILDFIRE" + subtitle | (0, -330) | `static` |
-| Wind rose (N/E/S/W) | left of the banner, centre (-90, -165) | `static` |
+| Team area labels "TEAM 1'S AREA" etc. (rotated, text in team color on #0e1311) + one 10 px team-colored edge per area (top for Teams 1-2, bottom for Teams 3-4) | left x -126..-74, right x 2374..2426; stripes y -84 and 2246 | `static` |
+| Title "WILDFIRE" (Titan One 80) + subtitle | (0, -332) and (560, -295) | `static` |
+| Wind rose (N/E/S/W) | left of the banner, centre (-100, -165), r 68 | `static` |
 | Banner (fixture) | (0, -220, 1100, 110) | `fixtures.banner` |
 | Scoreboard (fixture) | (1160, -220, 1140, 110) | `fixtures.scoreboard` |
-| Rules + color legend + sector mini-map | (2440, -330, 760, 610) | `static` |
+| "HOW TO PLAY" panel: 4 color swatches (green/orange/blue/black) + 3 plain lines | (2440, -330, 760, 610) | `static` |
 | Leaderboard panel, fixture inside | (3240, -330, 760, 610); fixture (3272, -254, 696, 502) | `fixtures.leaderboard` |
-| ORDERS frames, 2x2 like the sectors, team-colored header band, one EXAMPLE sticky each | Ridge (2440, 340), Pine (3240, 340), Cedar (2440, 1300), Birch (3240, 1300), 760x900 | `orders`, `examples` |
-| Inbox panel "INBOX · one card per player · read only your own" | (0, 2300, 4000, 1500) | `static` |
+| ORDERS frames, 2x2 like the team areas: 64-high header ("ORDERS · TEAM N" in team color + one muted line, team-colored divider underneath), one EXAMPLE sticky each at slot (600, 726) | Team 1 / ridge (2440, 340), Team 2 / pine (3240, 340), Team 3 / cedar (2440, 1300), Team 4 / birch (3240, 1300), 760x900 | `orders`, `examples` |
+| Inbox panel, heading "INBOX" + one hint line (cards start at y 2400) | (0, 2300, 4000, 1500) | `static` |
 
-The example stickies start with `EXAMPLE ·` (never with a keyword), so no one can approve one as a PLAN. They are listed in `static` (and `examples`) so the
-referee never treats them as a real PLAN.
+The Orders frames' own Miro titles are a single space: real titles rendered huge over the panels when zoomed out.
+The header text inside each frame carries the name. Everything sticky-free sits above y 64 inside a frame, so it never
+collides with the sticky slots (y 70+).
+
+The example stickies start with `Example:` (never with "Spray water"), so no one mistakes one for a real question. They are listed in `static` (and `examples`) so the
+referee never treats them as a real question.
+
+## Palette ("night map")
+
+Backdrop, band frames, square borders `#0e1311`; panels `#161d19` with `#25302a` borders; headings ember `#ff7a3d`; text `#f1efe9`, muted `#9aa39c`.
+Team 1 violet `#a78bfa`, Team 2 rose `#f472b6`, Team 3 lemon `#fde047`, Team 4 frost `#e2e8f0`.
+The backdrop is locked: unlock it in Miro (Cmd+Shift+L) before restyling it, then lock it again.
+Screenshots: `screenshots/palette/`.
 
 ## Rebuild
 

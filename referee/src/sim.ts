@@ -1,6 +1,8 @@
 // Offline game on the fake board with a virtual clock: N bots (one boss per team, the rest workers)
-// and a simulated human per team who answers approvals after 10-40 s. Answers "is the fire still
-// burning at 20 min, and how spread out do the scores end?" for tuning config/rules.json.
+// and simulated humans who answer each "Spray water in X's area?" after 20-60 s. Bots play at the pace measured in the
+// first live rehearsal (results/rehearsal-1.log; after kit fixes: a worker paints every 45-60 s, a boss
+// at half that rate). Answers "is the fire still burning at minute 8, how spread out are the scores,
+// how much water is used?" for tuning config/rules.json.
 import { stripHtml } from "./board.js";
 import { Bot, type CellView, type PlayerBoard, type StickyNote } from "./bot.js";
 import { FakeBoard } from "./fake-board.js";
@@ -11,9 +13,9 @@ import { mulberry32, scores, stickyKind, type RuleSet } from "./rules.js";
 export interface SimOptions {
   players?: number;
   seed?: number;
-  turnSec?: number; // how long one agent move takes, ~15 s with Claude
+  paceSec?: number; // a worker paints every paceSec..paceSec*4/3 s (45-60 s); a boss every twice that
   mistakeRate?: number;
-  lobbySec?: number; // time before the fire starts (PLANs get approved)
+  lobbySec?: number; // time before the fire starts
   log?: (s: string) => void;
 }
 
@@ -23,33 +25,46 @@ export interface SimResult {
   endReason: string;
   minutes: number;
   pct: Record<Team, number>;
-  burningAt20: number;
+  burningAt8: number;
+  waterUsedPct: number;
+  attempts: number; // paints the bots tried (accepted + undone)
   waterLeft: number;
   paints: number;
   refused: Record<string, number>;
   approvals: Record<string, number>;
   strikes: string[];
-  embers: number;
-  cabinsLost: string[];
   timeline: { minute: number; fire: number; water: number; pct: Record<Team, number> }[];
   maxWritesPerTick: number;
 }
 
-class FakePlayerBoard implements PlayerBoard {
+export class FakePlayerBoard implements PlayerBoard {
   private kinds = new Map(buildCells().map((c) => [c.label, c]));
   current = "";
+  /** How old the board a bot acts on is (an agent reads, thinks, then paints): set per turn. */
+  lagMs = 0;
+  private snaps: { at: number; cells: CellView[] }[] = [];
   constructor(
     private fake: FakeBoard,
     private ref: Referee,
     private jitter: () => number = () => 0,
   ) {}
+  /** Remember the board every few seconds so bots can act on a stale read. */
+  snapshot(at: number): void {
+    this.snaps.push({ at, cells: this.read() });
+    while (this.snaps.length > 20) this.snaps.shift();
+  }
   async cells(): Promise<CellView[]> {
+    const want = this.fake.now() - this.lagMs;
+    const old = this.snaps.filter((s) => s.at <= want).at(-1);
+    return old ? old.cells : this.read();
+  }
+  private read(): CellView[] {
     const out: CellView[] = [];
     for (const it of this.fake.items.values()) {
       if (it.type !== "shape" || it.w > 100 || !inside(GRID_BOX, it.x, it.y)) continue;
       const lab = stripHtml(it.content);
       const def = parseLabel(lab) && this.kinds.get(lab);
-      if (def) out.push({ id: it.id, label: lab, col: def.col, row: def.row, kind: def.kind, sector: def.sector, fill: (it.fill ?? "").toLowerCase() });
+      if (def) out.push({ id: it.id, label: lab, col: def.col, row: def.row, sector: def.sector, fill: (it.fill ?? "").toLowerCase() });
     }
     return out;
   }
@@ -84,7 +99,9 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
   const n = opts.players ?? 28;
   const seed = opts.seed ?? 1;
   const rng = mulberry32(seed);
-  const turnSec = opts.turnSec ?? 15;
+  const pace = opts.paceSec ?? 45;
+  // A Claude turn: read the board, think, paint. The paint lands on a board read 15-30 s earlier.
+  const lagMs = (_b: Bot) => 15_000 + Math.floor(rng() * 15_000);
   let t = 1_700_000_000_000;
   const now = () => t;
   const fake = FakeBoard.seeded(now);
@@ -101,27 +118,28 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
   for (const b of bots) await b.readInbox(pb, t);
   const answerAt = new Map<string, { at: number; by: string; yes: boolean }>(); // sticky id -> the human's answer
   const step = async () => {
-    // Bots: one turn every ~turnSec; a boss turn (read + several stickies) takes about twice as long.
+    // Bots: a worker turn (one paint) every 45-60 s; a boss turn (orders + one paint) every 90-120 s.
     for (const b of [...bots].sort(() => rng() - 0.5)) {
       if (t < b.nextTurnAt) continue;
       pb.current = b.userId;
+      pb.lagMs = lagMs(b);
       await b.readInbox(pb, t);
       await b.act(pb, t);
-      b.nextTurnAt = t + Math.round(turnSec * (b.role === "boss" ? 2 : 1) * (0.7 + rng() * 0.6) * 1000);
+      b.nextTurnAt = t + Math.round(pace * (b.role === "boss" ? 2 : 1) * (1 + rng() / 3) * 1000);
     }
-    // Humans: answer each PLAN / BACKBURN / HELP after 10-40 s (a teammate who didn't post it; 10% NO on backburns).
+    // Humans: a teammate who didn't post it answers each spray question after 20-60 s (15% NO).
     for (const team of TEAMS) {
       for (const s of await pb.stickies(team)) {
-        const kind = stickyKind(s.text);
-        if (kind !== "PLAN" && kind !== "BACKBURN" && kind !== "HELP") continue;
+        if (stickyKind(s.text) !== "QUESTION") continue;
         if (/\n(YES|NO)$/i.test(s.text)) continue;
         const a = answerAt.get(s.id);
         if (!a) {
           const mates = bots.filter((b) => b.team === team && b.userId !== s.createdBy);
-          if (mates.length) answerAt.set(s.id, { at: t + 10_000 + Math.floor(rng() * 30_000), by: mates[Math.floor(rng() * mates.length)]!.userId, yes: kind !== "BACKBURN" || rng() > 0.1 });
+          if (mates.length) answerAt.set(s.id, { at: t + 20_000 + Math.floor(rng() * 40_000), by: mates[Math.floor(rng() * mates.length)]!.userId, yes: rng() > 0.15 });
         } else if (t >= a.at) fake.playerEditSticky(a.by, s.id, `${s.text}\n${a.yes ? "YES" : "NO"}`);
       }
     }
+    if ((t / 1000) % 5 === 0) pb.snapshot(t);
     if (t - lastTick >= 3000) {
       const w0 = writes();
       await ref.tick();
@@ -133,13 +151,14 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
   let lastTick = t;
   let maxWritesPerTick = 0;
   const writes = () => fake.calls.update + fake.calls.create + fake.calls.delete;
-  // Lobby: everyone has joined; bosses post PLANs and teammates approve them before the fire starts.
-  for (const b of bots) b.nextTurnAt = t + Math.floor(rng() * turnSec * 1000);
-  const lobbyEnd = t + (opts.lobbySec ?? 90) * 1000;
+  // Lobby: everyone has joined. When the fire starts, each agent needs a first read of the board.
+  const lobbyEnd = t + (opts.lobbySec ?? 30) * 1000;
   while (t < lobbyEnd) await step();
   await ref.start();
+  // Agents notice the LIVE banner on their next loop, then need a full turn for their first paint.
+  for (const b of bots) b.nextTurnAt = t + Math.round(pace * (b.role === "boss" ? 2 : 1) * (0.5 + rng()) * 1000);
   const timeline: SimResult["timeline"] = [];
-  let burningAt20 = -1;
+  let burningAt8 = -1;
   while (ref.state.phase === "live") {
     await step();
     const el = ref.state.elapsed;
@@ -147,27 +166,27 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
       const sc = scores(ref.state, ref.cellList);
       const fire = Object.values(ref.state.cells).filter((c) => c === "fire").length;
       timeline.push({ minute: timeline.length, fire, water: ref.state.water, pct: Object.fromEntries(TEAMS.map((x) => [x, sc[x].pct])) as Record<Team, number> });
-      if (timeline.length - 1 === 20) burningAt20 = fire;
+      if (timeline.length - 1 === 8) burningAt8 = fire;
     }
   }
   const s = ref.state;
   const sc = scores(s, ref.cellList);
   const approvals: Record<string, number> = {};
-  for (const a of Object.values(s.approvals)) approvals[`${a.kind} ${a.status}`] = (approvals[`${a.kind} ${a.status}`] ?? 0) + 1;
+  for (const a of Object.values(s.approvals)) approvals[`spray ${a.status}`] = (approvals[`spray ${a.status}`] ?? 0) + 1;
   return {
     seed,
     winner: s.winner ?? "-",
     endReason: s.endReason ?? "-",
     minutes: Math.round(s.elapsed / 6000) / 10,
     pct: Object.fromEntries(TEAMS.map((x) => [x, sc[x].pct])) as Record<Team, number>,
-    burningAt20: burningAt20 < 0 ? 0 : burningAt20,
+    burningAt8: burningAt8 < 0 ? 0 : burningAt8,
+    attempts: bots.reduce((a, b) => a + b.painted, 0),
+    waterUsedPct: Math.round((100 * (rules.waterTotal - s.water)) / rules.waterTotal),
     waterLeft: s.water,
     paints: s.stats.accepted,
     refused: Object.fromEntries(Object.entries(s.stats.illegal).filter(([, v]) => v)),
     approvals,
     strikes: s.stats.strikes,
-    embers: s.stats.embers,
-    cabinsLost: s.stats.cabinsLost,
     timeline,
     maxWritesPerTick,
   };
@@ -176,13 +195,13 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
 export function formatSim(r: SimResult, full = true): string {
   const pct = (p: Record<Team, number>) => TEAMS.map((t) => String(p[t]).padStart(6)).join("");
   const lines = [
-    `seed ${r.seed}: ${r.winner} wins (${r.endReason}) after ${r.minutes} min · burning at 20 min: ${r.burningAt20} squares · final % ridge/pine/cedar/birch:${pct(r.pct)}`,
-    `  paints ${r.paints} · water left ${r.waterLeft} · lightning ${r.strikes.join(" ") || "-"} · embers ${r.embers} · cabins lost ${r.cabinsLost.join(" ") || "none"} · max writes/tick ${r.maxWritesPerTick}`,
+    `seed ${r.seed}: ${r.winner} wins (${r.endReason}) after ${r.minutes} min · burning at min 8: ${r.burningAt8} squares · final % ridge/pine/cedar/birch:${pct(r.pct)}`,
+    `  paints ${r.paints} accepted of ${r.attempts} tried · water left ${r.waterLeft} (${r.waterUsedPct}% used) · lightning ${r.strikes.join(" ") || "-"} · max writes/tick ${r.maxWritesPerTick}`,
     `  approvals: ${Object.entries(r.approvals).map(([k, v]) => `${k} ${v}`).join(", ") || "none"} · refused: ${Object.entries(r.refused).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}`,
   ];
   if (full) {
     lines.push("  min  fire water   ridge  pine cedar birch");
-    for (const p of r.timeline) if (p.minute % 2 === 0) lines.push(`  ${String(p.minute).padStart(3)} ${String(p.fire).padStart(5)} ${String(p.water).padStart(5)} ${pct(p.pct)}`);
+    for (const p of r.timeline) lines.push(`  ${String(p.minute).padStart(3)} ${String(p.fire).padStart(5)} ${String(p.water).padStart(5)} ${pct(p.pct)}`);
   }
   return lines.join("\n");
 }

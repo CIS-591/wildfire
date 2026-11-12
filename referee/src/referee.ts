@@ -1,16 +1,22 @@
 // The referee loop: reads the board, diffs it against what it expects (the shadow), asks the rules
-// engine, and writes back: fire spread and burn-out, drying water, reverted paints, inbox cards,
-// banner, scoreboard and leaderboard. It never paints water, firebreaks or backburns for anyone.
+// engine, and writes back: fire spread and burn-out, reverted paints, inbox cards, banner,
+// scoreboard and leaderboard. It never paints water for anyone.
+//
+// Every board operation is fallible (REFLECTION.md §2): a read that fails skips the tick, a write that
+// fails is retried on a later tick (with backoff), an item that refuses writes three times (locked) is
+// replaced, and tick() never throws. Writes are planned, prioritised and capped per tick (no write
+// storms): the fire first, then reverts, then repairs; what doesn't fit is done on the next tick, because
+// every plan is re-derived from "board vs engine" each tick (reconciliation, not a queue of events).
 // Works on any BoardAdapter.
 import type { BoardAdapter, BoardItem, NewShape } from "./board.js";
 import { pool, stripHtml } from "./board.js";
 import {
-  CELL_FONT, FIXTURES, GRID, GRID_BOX, PANELS, STATE_COLOR, TEAMS, TEAM_INFO, WIND, buildCells, cellBox, cellStroke, center, frameOfRow, inboxSlot, inside,
-  ordersTeamAt, ordersTitle, parseLabel, sectorText, startFill, teamByName, textColorFor, type CellDef, type Team,
+  CELL_FONT, COLORS, FIXTURES, GRID, GRID_BOX, ORDERS, PANELS, STATE_COLOR, TEAMS, TEAM_INFO, WIND, buildCells, cellBox, cellStroke, center, frameBoxes, frameOfRow, inboxSlot,
+  inside, ordersTeamAt, ordersTitle, parseLabel, sectorText, startFill, startState, textColorFor, type Box, type CellDef, type CellState, type Team,
 } from "./layout.js";
 import {
-  advance, applyJoin, createState, decidePaint, decideTamper, judgeSticky, mulberry32, pendingStickies, scores, startGame, stopGame, teamName, type GameState, type PaintEvent,
-  type Rng, type RuleSet, type StickyView, type TamperEvent,
+  advance, applyJoin, createState, decidePaint, decideTamper, judgeSticky, mulberry32, pendingStickies, scores, startGame, stopGame, teamName, type Decision, type GameState,
+  type PaintEvent, type Rng, type RuleSet, type StickyView, type TamperEvent,
 } from "./rules.js";
 
 export type FixtureKey = keyof typeof FIXTURES;
@@ -20,6 +26,15 @@ export interface GameFile {
   fixtureIds: Partial<Record<FixtureKey, string>>;
   /** The whole game, saved every tick so a restarted referee carries on where it stopped. */
   state?: GameState;
+  /** userId -> inbox card id (a card the referee had to recreate is not the player's own). */
+  cards?: Record<string, string>;
+  /** userId -> inbox slot index (stable even when cards are deleted). */
+  slots?: Record<string, number>;
+  /** Grid band frame ids (top band first) and Orders frame ids, as last repaired. */
+  frames?: string[];
+  orders?: Partial<Record<Team, string>>;
+  /** Items that refused every write (locked): never adopted again, deleted when Miro lets us. */
+  stuck?: string[];
 }
 
 export function emptyGame(): GameFile {
@@ -27,7 +42,7 @@ export function emptyGame(): GameFile {
 }
 
 interface Shadow {
-  content: string; // stripped
+  content: string; // normalized text
   fill?: string;
   x: number;
   y: number;
@@ -35,15 +50,59 @@ interface Shadow {
   h: number;
 }
 
+interface StaticSnap extends Shadow {
+  raw: string;
+  type: string;
+}
+
+/** One planned board write. */
+interface Op {
+  key: string; // one op per key per tick; failures back off per key
+  prio: number; // lower runs first
+  calls?: number; // API calls it costs (default 1)
+  run: () => Promise<unknown>;
+  ok?: () => void;
+  fail?: (e: Error, failures: number) => void;
+}
+
+export interface TickResult {
+  paints: number;
+  tampers: number;
+  joins: number;
+  fire: number;
+  changed: number;
+  /** Board write calls this tick, and writes left for a later tick (the cap). */
+  writes: number;
+  deferred: number;
+  /** The board could not be read: nothing was judged and game time did not move. */
+  skipped?: boolean;
+  /** Something unexpected was caught; the game goes on. */
+  error?: string;
+}
+
 const FEEDBACK_LINES = 6;
 const TOL = 1.5;
 /** Game time never jumps more than this per tick (a paused or crashed referee doesn't fast-forward the fire). */
 const MAX_STEP_MS = 15_000;
+/** A tracked item must be missing from this many reads in a row before it is rebuilt (a partial page is not a delete). */
+const MISSING_READS = 2;
+/** A write that failed this many times in a row: the item is treated as locked and replaced. */
+const STUCK_AFTER = 3;
+const STICKY_TEXT_MAX = 2000;
 const FIXTURE_STYLE: Record<FixtureKey, Partial<NewShape>> = {
-  banner: { fill: "#2b2f3a", fontSize: 28, textColor: "#ffffff" },
-  scoreboard: { fill: "#fff6e0", fontSize: 30 },
-  leaderboard: { fill: "#ffffff", fontSize: 16, textAlign: "left", textAlignVertical: "top" },
+  banner: { fill: COLORS.panel, fontSize: 28, textColor: COLORS.text },
+  scoreboard: { fill: COLORS.panel, fontSize: 30, textColor: COLORS.text },
+  leaderboard: { fill: COLORS.panel, fontSize: 16, textColor: COLORS.text, textAlign: "left", textAlignVertical: "top" },
 };
+const CARD_FILL = COLORS.panel;
+
+/** Plain text, whitespace collapsed: how two versions of an item's text are compared. */
+export const norm = (s: string | undefined) => stripHtml(String(s ?? "").slice(0, 50_000)).replace(/\s+/g, " ").trim();
+/** Names and other student text going into HTML. */
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const errMsg = (e: unknown) => String((e as Error)?.message ?? e).split("\n")[0]!.slice(0, 200);
+const intersects = (a: { x: number; y: number; w: number; h: number }, b: Box) =>
+  a.x + a.w / 2 >= b.x && a.x - a.w / 2 <= b.x + b.w && a.y + a.h / 2 >= b.y && a.y - a.h / 2 <= b.y + b.h;
 
 export interface RefereeOptions {
   now?: () => number;
@@ -56,6 +115,8 @@ export interface RefereeOptions {
   presets?: Record<string, Team>;
   /** Grid frame ids, one per band of rows, so recreated squares go back in. Enables the fast read path. */
   frameIds?: string[];
+  /** Orders frame ids (found by position when absent). */
+  ordersIds?: Partial<Record<Team, string>>;
   /** Fire randomness. Seed it for a repeatable game. */
   rng?: Rng;
   /**
@@ -64,6 +125,12 @@ export interface RefereeOptions {
    * are stand-ins from the right teams. Never use it in class: it trusts everyone.
    */
   rehearsal?: boolean;
+  /** The referee token's Miro user id: its own writes echoed back are never judged as moves. Learnt from items it creates when absent. */
+  selfId?: string;
+  /** Hard cap on board write calls per tick (fire + reverts + repairs + cards + fixtures). */
+  maxWritesPerTick?: number;
+  /** Every judged paint, for logs and audits. */
+  onPaint?: (ev: PaintEvent, d: Decision) => void;
 }
 
 export class Referee {
@@ -82,15 +149,17 @@ export class Referee {
   now: () => number;
   log: (s: string) => void;
   staticIds: Set<string>;
+  rehearsal: boolean;
+  /** Writes per tick, for the stress test and the CLI status line. */
+  lastWrites = 0;
+  maxWritesPerTick: number;
   private concurrency: number;
   private presets: Record<string, Team>;
   private memberNames: Record<string, string> | null = null;
   private written: Partial<Record<FixtureKey, string>> = {};
-  private dirty = new Set<string>();
-  /** When this process started watching. Paints made before it (no referee running) are undone. */
-  private watchingSince = Infinity;
   private lastAdvanceAt: number | null = null;
-  private frameIds: string[];
+  frameIds: string[];
+  private ordersIds: Partial<Record<Team, string>>;
   private sweep: Promise<unknown> | null = null;
   private sweepResult: BoardItem[] | null = null;
   private sweepStartedAt = 0;
@@ -98,6 +167,24 @@ export class Referee {
   private lastWriteAt = new Map<string, number>(); // when this referee last wrote their content
   private geomWriteAt = new Map<string, number>(); // ... their position or size
   private knownAt = new Map<string, number>(); // ... created them or first saw them
+  // Robustness bookkeeping:
+  private tickNo = 0;
+  private writesThisTick = 0;
+  private missing = new Map<string, number>(); // id or "frame:key" -> reads in a row it was missing
+  private failures = new Map<string, { n: number; next: number }>(); // op key -> consecutive failures
+  private penalized = new Set<string>(); // "id@modifiedAt": one penalty per change, however long the repair takes
+  private stale = new Map<string, number>(); // square id -> modifiedAt of a paint made while no referee watched
+  private stuck = new Set<string>();
+  private replaceCells = new Set<string>(); // labels whose square refuses writes
+  private replacedCards = new Set<string>(); // owners whose card the referee recreated
+  private createdIds = new Set<string>();
+  private selfId?: string;
+  private baseline = new Set<string>(); // items (and frames) on the board when this referee started
+  private staticSnap = new Map<string, StaticSnap>();
+  private reported = new Set<string>(); // one log line per lasting problem
+  private fastOff = false;
+  private placing = new Set<string>(); // cards placed this tick (their text goes with the placing write)
+  private onPaint?: (ev: PaintEvent, d: Decision) => void;
 
   constructor(
     public board: BoardAdapter,
@@ -111,15 +198,23 @@ export class Referee {
     this.staticIds = opts.staticIds ?? new Set();
     this.concurrency = opts.concurrency ?? 10;
     this.presets = opts.presets ?? {};
-    this.frameIds = opts.frameIds ?? [];
+    this.frameIds = [...(game.frames?.length === 9 ? game.frames : (opts.frameIds ?? []))];
+    this.ordersIds = { ...(opts.ordersIds ?? {}), ...(game.orders ?? {}) };
     this.rng = opts.rng ?? mulberry32(Date.now() % 2 ** 31);
     this.rehearsal = opts.rehearsal ?? false;
+    this.selfId = this.rehearsal ? undefined : opts.selfId;
+    this.maxWritesPerTick = opts.maxWritesPerTick ?? 120;
+    this.onPaint = opts.onPaint;
+    for (const id of game.stuck ?? []) this.stuck.add(id);
   }
-  rehearsal: boolean;
 
   /** Who owns an inbox card: its creator, or in rehearsal the card itself. */
   private cardOwner(it: BoardItem): string {
     return this.rehearsal ? `card:${it.id}` : it.createdBy;
+  }
+
+  private isSelf(userId: string | undefined): boolean {
+    return !!userId && !!this.selfId && userId === this.selfId;
   }
 
   private teamPlayers(team: Team): string[] {
@@ -144,84 +239,175 @@ export class Referee {
     return STATE_COLOR[this.state.cells[label]!];
   }
 
+  /**
+   * A Miro timestamp we can trust: never missing, never in the future. A stamp from the future (Miro's
+   * clock ahead of ours) is taken as "just after our previous read", the earliest it can have happened.
+   */
+  private when(ms: number, now: number): number {
+    if (!Number.isFinite(ms) || ms <= 0) return now;
+    return ms > now ? Math.min(now, this.prevReadAt ?? now) : ms;
+  }
+  private prevReadAt: number | null = null;
+
+  private learnSelf(items: BoardItem[]) {
+    if (this.selfId || this.rehearsal || !this.createdIds.size) return;
+    for (const it of items) {
+      if (this.createdIds.has(it.id) && it.createdBy) {
+        this.selfId = it.createdBy;
+        return;
+      }
+    }
+  }
+
+  private persistIds() {
+    this.game.cards = Object.fromEntries(this.inboxCard);
+    if (this.frameIds.length === 9 && this.frameIds.every(Boolean)) this.game.frames = [...this.frameIds];
+    this.game.orders = { ...this.ordersIds };
+    this.game.stuck = [...this.stuck].slice(-500);
+  }
+
   // ---------- discovery ----------
   private isFixtureShape(it: BoardItem, key: FixtureKey): boolean {
     const b = FIXTURES[key];
     return it.type === "shape" && inside(b, it.x, it.y) && it.w <= b.w * 1.15 && it.h <= b.h * 1.15 && it.w >= b.w * 0.5 && it.h >= b.h * 0.5;
   }
 
-  /** Map squares, fixtures and inbox cards on the board. Creates any missing fixture. */
+  private cellGeomOk(it: BoardItem, lab: string): boolean {
+    const c = center(cellBox(this.cells.get(lab)!));
+    return Math.abs(it.x - c.x) <= TOL && Math.abs(it.y - c.y) <= TOL && Math.abs(it.w - GRID.cell) <= TOL && Math.abs(it.h - GRID.cell) <= TOL && !it.rotation;
+  }
+
+  /** Map squares, fixtures, frames and inbox cards on the board. Creates any missing fixture. */
   async discover(): Promise<{ cells: number; missing: string[]; fixtures: string[] }> {
     const items = await this.board.listItems();
-    this.watchingSince = this.now();
     this.cellId.clear();
     this.idCell.clear();
+    this.stale.clear();
+    this.baseline = new Set(items.map((i) => i.id));
     const fx = this.game.fixtureIds;
     const present = new Set(items.map((i) => i.id));
-    for (const key of FIXTURE_KEYS) if (fx[key] && !present.has(fx[key]!)) delete fx[key]; // stale (board rebuilt)
+    for (const key of FIXTURE_KEYS) if (fx[key] && (!present.has(fx[key]!) || this.stuck.has(fx[key]!))) delete fx[key]; // stale (board rebuilt) or locked
     const state = this.state;
+    await this.discoverFrames();
+    // Squares: when a label appears twice (a vandal's copy, a locked old square), keep the one in the right
+    // place that is not stuck, oldest first (copies come later).
+    const candidates = new Map<string, BoardItem[]>();
     for (const it of items) {
-      // An inbox card from someone not yet on a team was made while no referee ran: a join, for the first tick.
-      const pendingJoin = this.isInboxCard(it) && !state.players[this.cardOwner(it)];
+      const pendingJoin = this.isInboxCard(it) && !state.players[this.cardOwner(it)] && !Object.values(this.game.cards ?? {}).includes(it.id);
       if (!pendingJoin) this.seen.add(it.id);
-      if (it.type !== "shape" || this.staticIds.has(it.id)) continue;
-      const text = stripHtml(it.content);
+      if (it.type !== "shape" || this.staticIds.has(it.id) || this.stuck.has(it.id)) continue;
+      const text = norm(it.content);
       if (parseLabel(text) && inside(GRID_BOX, it.x, it.y) && it.w < GRID.pitch * 2) {
-        const lab = text.trim().toUpperCase();
-        if (!this.cellId.has(lab)) {
-          this.cellId.set(lab, it.id);
-          this.idCell.set(it.id, lab);
-          this.setCellShadow(lab, this.fillOf(lab));
-        }
-        continue;
+        const lab = text.toUpperCase();
+        if (!this.cells.has(lab)) continue;
+        candidates.set(lab, [...(candidates.get(lab) ?? []), it]);
       }
+    }
+    for (const [lab, list] of candidates) {
+      const best = list.sort((a, b) => Number(this.cellGeomOk(b, lab)) - Number(this.cellGeomOk(a, lab)) || a.createdAt - b.createdAt)[0]!;
+      this.cellId.set(lab, best.id);
+      this.idCell.set(best.id, lab);
+      this.setCellShadow(lab, this.fillOf(lab));
+      // A square whose fill differs from the engine was painted (or vandalised) while no referee watched.
+      if ((best.fill ?? "").toLowerCase() !== this.fillOf(lab)) this.stale.set(best.id, best.modifiedAt);
+    }
+    for (const it of items) {
+      if (this.idCell.has(it.id) || this.staticIds.has(it.id)) continue;
       for (const key of FIXTURE_KEYS) {
-        if (!fx[key] && this.isFixtureShape(it, key) && !Object.values(fx).includes(it.id)) fx[key] = it.id;
+        if (!fx[key] && !this.stuck.has(it.id) && this.isFixtureShape(it, key) && !Object.values(fx).includes(it.id)) fx[key] = it.id;
       }
     }
     const created: FixtureKey[] = [];
     for (const key of FIXTURE_KEYS) {
       if (fx[key]) continue;
-      const [id] = await this.board.createShapes([this.fixtureShape(key, "")]);
-      fx[key] = id!;
-      this.seen.add(id!);
-      this.knownAt.set(id!, this.now());
-      created.push(key);
+      try {
+        const [id] = await this.board.createShapes([this.fixtureShape(key, "")]);
+        fx[key] = id!;
+        this.createdIds.add(id!);
+        this.seen.add(id!);
+        this.knownAt.set(id!, this.now());
+        created.push(key);
+      } catch (e) {
+        this.log(`creating the ${key} failed (${errMsg(e)}); the next tick tries again`);
+      }
     }
     for (const key of FIXTURE_KEYS) {
+      if (!fx[key]) continue;
       const it = items.find((i) => i.id === fx[key]);
       // An existing fixture keeps its own geometry (the MCP-built board places the leaderboard a few units
       // off FIXTURES.leaderboard); only a fixture the referee just created uses the FIXTURES box.
-      const box = it ? { x: it.x, y: it.y, w: it.w, h: it.h } : { ...center(FIXTURES[key]), w: FIXTURES[key].w, h: FIXTURES[key].h };
-      this.shadow.set(fx[key]!, { content: it ? stripHtml(it.content) : "", fill: it?.fill ?? FIXTURE_STYLE[key].fill, ...box });
+      const box = it && intersects(it, FIXTURES[key]) ? { x: it.x, y: it.y, w: it.w, h: it.h } : { ...center(FIXTURES[key]), w: FIXTURES[key].w, h: FIXTURES[key].h };
+      this.shadow.set(fx[key]!, { content: it ? norm(it.content) : "", fill: FIXTURE_STYLE[key].fill, ...box });
+      if (it && it.fill?.toLowerCase() !== FIXTURE_STYLE[key].fill) this.shadow.get(fx[key]!)!.fill = it.fill ?? FIXTURE_STYLE[key].fill; // keep the board's own style
     }
     if (created.length) this.log(`created missing fixtures: ${created.join(", ")}`);
+    // Inbox cards: the saved map first (it knows cards the referee recreated), then each player's own card.
+    const savedCards = this.game.cards ?? {};
+    for (const [owner, id] of Object.entries(savedCards)) {
+      const it = items.find((i) => i.id === id);
+      if (it && state.players[owner]) this.trackCard(owner, it);
+    }
     for (const it of items) {
-      if (this.isInboxCard(it) && state.players[this.cardOwner(it)] && !this.inboxCard.has(this.cardOwner(it))) {
-        this.inboxCard.set(this.cardOwner(it), it.id);
-        this.shadow.set(it.id, { content: stripHtml(it.content), fill: it.fill, x: it.x, y: it.y, w: it.w, h: it.h });
-      }
+      const owner = this.cardOwner(it);
+      if (this.isInboxCard(it) && state.players[owner] && !this.inboxCard.has(owner)) this.trackCard(owner, it);
+    }
+    for (const id of this.staticIds) {
+      const it = items.find((i) => i.id === id);
+      if (it) this.staticSnap.set(id, { content: norm(it.content), raw: it.content, type: it.type, fill: it.fill, x: it.x, y: it.y, w: it.w, h: it.h });
     }
     this.stickies = this.readStickies(items);
+    this.learnSelf(items);
+    this.persistIds();
     const missing = [...this.cells.keys()].filter((l) => !this.cellId.has(l));
     return { cells: this.cellId.size, missing, fixtures: FIXTURE_KEYS.filter((k) => fx[k]) };
   }
 
-  /** Recreate every grid square that is missing from the board, in batches. */
-  async rebuildMissing(): Promise<number> {
-    const missing = this.cellList.filter((c) => !this.cellId.has(c.label));
-    for (let i = 0; i < missing.length; i += 20) {
-      const batch = missing.slice(i, i + 20);
-      const ids = await this.board.createShapes(batch.map((c) => this.cellShape(c, this.fillOf(c.label))));
-      batch.forEach((c, k) => {
-        this.cellId.set(c.label, ids[k]!);
-        this.idCell.set(ids[k]!, c.label);
-        this.setCellShadow(c.label, this.fillOf(c.label));
-        this.seen.add(ids[k]!);
-      });
+  private trackCard(owner: string, it: BoardItem) {
+    this.inboxCard.set(owner, it.id);
+    this.seen.add(it.id);
+    this.shadow.set(it.id, { content: norm(it.content), fill: it.type === "sticky_note" ? undefined : it.fill, x: it.x, y: it.y, w: it.w, h: it.h });
+  }
+
+  /** Grid band and Orders frames: by saved id, else by where they sit. */
+  private async discoverFrames() {
+    if (!this.board.listFrames) return;
+    let frames: BoardItem[];
+    try {
+      frames = await this.board.listFrames();
+    } catch {
+      return;
     }
-    if (missing.length) this.log(`rebuilt ${missing.length} missing squares`);
-    return missing.length;
+    for (const f of frames) this.baseline.add(f.id);
+    const ids = new Set(frames.map((f) => f.id));
+    const near = (f: BoardItem, b: Box) => Math.abs(f.x - (b.x + b.w / 2)) < 8 && Math.abs(f.y - (b.y + b.h / 2)) < 8 && Math.abs(f.w - b.w) < 16;
+    frameBoxes().forEach((b, i) => {
+      if (this.frameIds[i] && ids.has(this.frameIds[i]!)) return;
+      const m = frames.find((f) => near(f, b));
+      if (m) this.frameIds[i] = m.id;
+    });
+    for (const t of TEAMS) {
+      if (this.ordersIds[t] && ids.has(this.ordersIds[t]!)) continue;
+      const m = frames.find((f) => near(f, ORDERS[t]));
+      if (m) this.ordersIds[t] = m.id;
+    }
+    this.board.setGridFrames?.(this.frameIds);
+  }
+
+  /** Recreate every grid square that is missing from the board, in batches (startup: not capped). */
+  async rebuildMissing(): Promise<number> {
+    const ops = this.rebuildOps();
+    const before = this.cellId.size;
+    for (const op of ops) {
+      try {
+        await op.run();
+        op.ok?.();
+      } catch (e) {
+        this.log(`rebuild failed (${errMsg(e)}); the referee tries again every tick`);
+      }
+    }
+    const n = this.cellId.size - before;
+    if (n) this.log(`rebuilt ${n} missing squares`);
+    return n;
   }
 
   private setCellShadow(label: string, fill: string) {
@@ -236,6 +422,8 @@ export class Referee {
   async reset(): Promise<{ repainted: number; deleted: number }> {
     if (!this.cellId.size) await this.discover();
     this.game.state = createState(this.cellList, this.rules, this.rng);
+    this.game.cards = {};
+    this.game.slots = {};
     const items = await this.board.listItems();
     const fixtureIds = new Set(Object.values(this.game.fixtureIds));
     const writes: (() => Promise<unknown>)[] = [];
@@ -247,39 +435,43 @@ export class Referee {
         const cell = this.cells.get(lab)!;
         const fill = startFill(cell);
         const c = center(cellBox(cell));
-        const geomOff = Math.abs(it.x - c.x) > TOL || Math.abs(it.y - c.y) > TOL || Math.abs(it.w - GRID.cell) > TOL || Math.abs(it.h - GRID.cell) > TOL;
-        if ((it.fill ?? "").toLowerCase() !== fill || geomOff || stripHtml(it.content) !== lab) {
-          writes.push(() => this.board.updateShape(it.id, { fill, textColor: textColorFor(cell.kind), content: lab, ...c, w: GRID.cell, h: GRID.cell }));
+        if ((it.fill ?? "").toLowerCase() !== fill || !this.cellGeomOk(it, lab) || norm(it.content) !== lab) {
+          const st = cellStroke(cell);
+          writes.push(() => this.board.updateShape(it.id, { fill, textColor: textColorFor(startState(cell)), borderColor: st.color, borderWidth: st.width, content: lab, ...c, w: GRID.cell, h: GRID.cell, rotation: 0 }));
           repainted++;
         }
         this.setCellShadow(lab, fill);
         continue;
       }
       if (fixtureIds.has(it.id) || this.staticIds.has(it.id)) continue;
-      const junk = this.isInboxCard(it) || (it.type === "sticky_note" && ordersTeamAt(it.x, it.y)) || (inside(GRID_BOX, it.x, it.y) && it.w <= 400 && it.h <= 400);
+      const junk = this.isInboxCard(it) || (it.type === "sticky_note" && ordersTeamAt(it.x, it.y)) || this.isJunk(it);
       if (junk) {
         writes.push(() => this.board.deleteItem(it.id));
         this.shadow.delete(it.id);
         deleted++;
       }
     }
-    await pool(writes.map((w) => () => w().catch((e: Error) => this.log(`reset write failed: ${e.message.split("\n")[0]}`))), this.concurrency);
+    await pool(writes.map((w) => () => w().catch((e: Error) => this.log(`reset write failed: ${errMsg(e)}`))), this.concurrency);
+    for (const id of [...this.shadow.keys()]) if (!this.idCell.has(id) && !fixtureIds.has(id)) this.shadow.delete(id);
     this.inboxCard.clear();
     this.feedback.clear();
     this.stickies = [];
     this.written = {};
+    this.replacedCards.clear();
+    this.persistIds();
     await this.updateBoards("🔥 WILDFIRE · waiting for the referee");
     this.seen = new Set((await this.board.listItems()).map((i) => i.id));
     return { repainted, deleted };
   }
 
-  /** Light the fire (from the lobby). A game already live or over is left as it is. */
+  /** Start the fire spreading (from the lobby). A game already live or over is left as it is. */
   async start(): Promise<void> {
     const lit = startGame(this.state, this.rules, this.now());
     this.lastAdvanceAt = this.now();
     if (!lit.length) return;
     this.log("the fire is loose");
-    await pool(lit.map((l) => () => this.writeCell(l)), this.concurrency);
+    this.writesThisTick = 0;
+    await this.execute(this.cellOps(new Set(lit)), Infinity);
     await this.updateBoards();
   }
 
@@ -295,22 +487,34 @@ export class Referee {
   }
 
   // ---------- the loop ----------
+  private fastPath(): boolean {
+    return !!this.board.listGridItems && !this.fastOff && this.frameIds.length === 9 && this.frameIds.every(Boolean);
+  }
+
   /** Squares are always fresh; `full` says whether the rest of the board is in `items` too. */
   private async readBoard(): Promise<{ items: BoardItem[]; full: boolean; since: number }> {
-    if (!this.board.listGridItems || !this.frameIds.length) return { items: await this.board.listItems(), full: true, since: Infinity };
+    if (!this.fastPath()) return { items: await this.board.listItems(), full: true, since: Infinity };
     if (!this.sweep) {
       this.sweepStartedAt = this.now();
       this.sweep = this.board
         .listItems()
         .then((r) => (this.sweepResult = r))
         .catch((e: Error) => {
-          this.log(`sweep failed: ${e.message}`);
+          this.log(`sweep failed: ${errMsg(e)}`);
           this.sweep = null;
         });
     }
-    const cells = await this.board.listGridItems();
+    let cells: BoardItem[];
+    try {
+      cells = await this.board.listGridItems!();
+    } catch (e) {
+      // A grid frame was deleted (404) or Miro hiccuped: one slow full read instead, which also repairs frames.
+      this.log(`fast read failed (${errMsg(e)}); reading the whole board`);
+      return { items: await this.board.listItems(), full: true, since: Infinity };
+    }
     if (!this.sweepResult) return { items: cells, full: false, since: 0 };
-    const rest = this.sweepResult.filter((i) => !this.idCell.has(i.id) && !this.frameIds.includes(i.parentId ?? ""));
+    const gridIds = new Set(cells.map((c) => c.id));
+    const rest = this.sweepResult.filter((i) => !gridIds.has(i.id) && !this.idCell.has(i.id) && !this.frameIds.includes(i.parentId ?? ""));
     const since = this.sweepStartedAt;
     this.sweepResult = null;
     this.sweep = null;
@@ -328,203 +532,561 @@ export class Referee {
       if (it.type !== "sticky_note") continue;
       const team = ordersTeamAt(it.x, it.y);
       if (!team || this.staticIds.has(it.id)) continue;
-      const text = stripHtml(it.content);
+      // A giant sticky costs nothing: only its start is read.
+      const text = stripHtml(String(it.content ?? "").slice(0, STICKY_TEXT_MAX * 4)).slice(0, STICKY_TEXT_MAX).split("\n").map((l) => l.slice(0, 200)).slice(0, 20).join("\n");
       out.push({ id: it.id, team, text, ...this.stickyPeople(team, text, it) });
     }
     return out;
   }
 
   /**
-   * Rehearsal: the creator is the boss of the team that would post this sticky (the named team for HELP),
-   * and once it carries a YES/NO line the answerer is another member of the frame's team.
+   * Rehearsal: the creator is the boss of the frame's team (who asks the question), and once the sticky
+   * carries a YES/NO line the answerer is another member of that team.
    */
   private stickyPeople(team: Team, text: string, it: BoardItem): { createdBy: string; modifiedBy: string } {
     if (!this.rehearsal) return { createdBy: it.createdBy, modifiedBy: it.modifiedBy };
-    const first = text.split("\n")[0]!.trim();
-    const help = /^HELP\s+(.+)/i.exec(first);
-    const poster = (help ? teamByName(help[1]!) : null) ?? team;
-    const posters = this.teamPlayers(poster);
+    const posters = this.teamPlayers(team);
     const createdBy = posters.find((u) => this.state.players[u]?.role === "boss") ?? posters[0] ?? it.createdBy;
     const answered = text.split("\n").slice(1).some((l) => /^(YES|NO)$/i.test(l.trim()));
     const answerer = this.teamPlayers(team).find((u) => u !== createdBy);
     return { createdBy, modifiedBy: answered && answerer ? answerer : createdBy };
   }
 
-  /** Bring one square on the board in line with the engine (fill + readable label color). */
-  private async writeCell(label: string): Promise<void> {
-    const id = this.cellId.get(label);
-    const sh = id && this.shadow.get(id);
-    if (!id || !sh) return;
-    const st = this.state.cells[label]!;
-    sh.fill = STATE_COLOR[st];
-    await this.board.updateShape(id, { fill: sh.fill, textColor: textColorFor(st) });
+  /** One penalty per change (id + modification time), however many ticks its repair takes. */
+  private penalize(tampers: TamperEvent[], userId: string, what: TamperEvent["what"], target: string, key: string, at: number) {
+    if (!userId || this.isSelf(userId)) return;
+    const k = `${key}@${at}`;
+    if (this.penalized.has(k)) return;
+    this.penalized.add(k);
+    tampers.push({ userId, what, target, at });
   }
 
-  async tick(): Promise<{ paints: number; tampers: number; joins: number; fire: number; changed: number }> {
+  async tick(): Promise<TickResult> {
+    this.tickNo++;
+    this.writesThisTick = 0;
+    this.placing.clear();
+    try {
+      return await this.tickInner();
+    } catch (e) {
+      // Last line of defence: a bug or a board shape nobody foresaw must not stop the game.
+      this.log(`tick error (the game goes on): ${errMsg(e)}`);
+      return { paints: 0, tampers: 0, joins: 0, fire: this.burning(), changed: 0, writes: this.writesThisTick, deferred: 0, error: errMsg(e) };
+    } finally {
+      this.lastWrites = this.writesThisTick;
+      this.persistIds();
+    }
+  }
+
+  private burning(): number {
+    return Object.values(this.state.cells).filter((s) => s === "fire").length;
+  }
+
+  private async tickInner(): Promise<TickResult> {
     const state = this.state;
-    const { items, full, since } = await this.readBoard();
+    let read: { items: BoardItem[]; full: boolean; since: number };
+    try {
+      read = await this.readBoard();
+    } catch (e) {
+      // Miro is down or rate limiting: judge nothing, write nothing; game time waits (capped catch-up next tick).
+      this.log(`board read failed (${errMsg(e)}); trying again next tick`);
+      return { paints: 0, tampers: 0, joins: 0, fire: this.burning(), changed: 0, writes: 0, deferred: 0, skipped: true };
+    }
+    const { items, full, since } = read;
+    const now = this.now();
+    this.learnSelf(items);
     // Squares are always fresh. Anything else only when the sweep began after we last touched that aspect of it.
     const fresh = (m: Map<string, number>, id: string) => this.idCell.has(id) || (full && (m.get(id) ?? -Infinity) < since);
-    const byId = new Map(items.map((i) => [i.id, i]));
-    const paints: PaintEvent[] = [];
+    const byId = new Map<string, BoardItem>();
+    for (const i of items) if (i && typeof i.id === "string") byId.set(i.id, i);
+    const paints: (PaintEvent & { stale?: boolean })[] = [];
     const tampers: TamperEvent[] = [];
-    const now = this.now();
+    const ops: Op[] = [];
     let joins = 0;
-    const writes = new Map<string, () => Promise<unknown>>(); // one write per item, last one wins
     const fixtureKeyOf = (id: string) => FIXTURE_KEYS.find((k) => this.game.fixtureIds[k] === id);
+    const cardOwnerOf = (id: string) => [...this.inboxCard].find(([, cid]) => cid === id)?.[0];
 
-    // 1. deleted tracked items
-    for (const [id, sh] of [...this.shadow]) {
-      if (byId.has(id) || !fresh(this.knownAt, id)) continue;
+    // 0. frames (full reads): grid bands and Orders frames moved, resized or deleted
+    const framesOff = full ? await this.guardFrames(tampers, since) : new Set<string>();
+
+    // 1. tracked items that vanished (confirmed on a second read: a partial page is not a delete)
+    for (const [id] of [...this.shadow]) {
+      if (byId.has(id)) {
+        this.missing.delete(id);
+        continue;
+      }
+      if (!fresh(this.knownAt, id)) continue;
+      const n = (this.missing.get(id) ?? 0) + 1;
+      this.missing.set(id, n);
+      if (n < MISSING_READS) continue;
+      this.missing.delete(id);
+      this.shadow.delete(id);
       const lab = this.idCell.get(id);
       if (lab) {
-        const cell = this.cells.get(lab)!;
-        await this.board.deleteItem(id).catch(() => {}); // it may still exist outside its frame
-        let newId: string | undefined;
-        try {
-          [newId] = await this.board.createShapes([this.cellShape(cell, this.fillOf(lab))]);
-        } catch (e) {
-          this.log(`rebuild ${lab} failed: ${(e as Error).message.split("\n")[0]}`);
-          continue;
-        }
-        this.cellId.set(lab, newId!);
         this.idCell.delete(id);
-        this.idCell.set(newId!, lab);
-        this.shadow.delete(id);
-        this.setCellShadow(lab, this.fillOf(lab));
-        this.seen.add(newId!);
+        this.cellId.delete(lab); // rebuilt below, in batches
         tampers.push({ userId: "unknown", what: "deleted", target: lab, at: now });
         continue;
       }
       const fxKey = fixtureKeyOf(id);
       if (fxKey) {
-        let newId: string | undefined;
-        try {
-          [newId] = await this.board.createShapes([this.fixtureShape(fxKey, sh.content)]);
-        } catch (e) {
-          this.log(`rebuild ${fxKey} failed: ${(e as Error).message.split("\n")[0]}`);
-          continue;
-        }
-        this.game.fixtureIds[fxKey] = newId!;
-        this.shadow.delete(id);
-        this.shadow.set(newId!, sh);
-        this.touch(newId!, true);
-        this.knownAt.set(newId!, now);
-        this.seen.add(newId!);
+        delete this.game.fixtureIds[fxKey]; // recreated below
         this.written[fxKey] = undefined;
         tampers.push({ userId: "unknown", what: "deleted", target: `the ${fxKey}`, at: now });
         continue;
       }
-      for (const [u, cid] of this.inboxCard) if (cid === id) this.inboxCard.delete(u);
-      this.shadow.delete(id);
+      const owner = cardOwnerOf(id);
+      if (owner) {
+        this.inboxCard.delete(owner);
+        // A player's card is recreated so the reasons keep showing; their own next card replaces it.
+        if (state.players[owner]) this.replacedCards.add(owner);
+      }
     }
 
     // 2. squares + fixtures + inbox cards: diff against the shadow
-    for (const [id, sh] of this.shadow) {
+    for (const [id, sh] of [...this.shadow]) {
       const it = byId.get(id);
       if (!it) continue;
       const lab = this.idCell.get(id);
-      // The banner is rewritten every tick, so its text is rarely judgeable; its position always is.
-      const geomOff = fresh(this.geomWriteAt, id) && (Math.abs(it.x - sh.x) > TOL || Math.abs(it.y - sh.y) > TOL || Math.abs(it.w - sh.w) > TOL || Math.abs(it.h - sh.h) > TOL);
-      const textFresh = fresh(this.lastWriteAt, id);
-      const contentOff = textFresh && stripHtml(it.content) !== sh.content;
-      const fillOff = textFresh && sh.fill !== undefined && (it.fill ?? "").toLowerCase() !== sh.fill.toLowerCase();
       if (lab) {
-        if (geomOff || contentOff) {
-          tampers.push({ userId: it.modifiedBy, what: contentOff ? "edited" : Math.abs(it.w - sh.w) > TOL || Math.abs(it.h - sh.h) > TOL ? "resized" : "moved", target: lab, at: it.modifiedAt });
-          // Replace a moved/edited square rather than moving it back (Miro refuses moves out of a frame).
-          writes.set(id, () => this.board.deleteItem(id));
-        } else if (fillOff) {
-          paints.push({ label: lab, fill: (it.fill ?? "").toLowerCase(), userId: this.painterOf(lab, it.modifiedBy), at: it.modifiedAt });
+        const cell = this.cells.get(lab)!;
+        const bandOff = it.parentId ? framesOff.has(it.parentId) : framesOff.has(this.frameIds[frameOfRow(cell.row)] ?? "");
+        const sizeOff = Math.abs(it.w - sh.w) > TOL || Math.abs(it.h - sh.h) > TOL;
+        const moved = !bandOff && (Math.abs(it.x - sh.x) > TOL || Math.abs(it.y - sh.y) > TOL);
+        const rotated = !!it.rotation && Math.abs(it.rotation % 360) > 0.5;
+        const contentOff = norm(it.content) !== lab;
+        if (moved || sizeOff || rotated || contentOff) {
+          // Replace rather than move back (Miro refuses moves out of a frame); the old one is deleted.
+          const what = contentOff ? "edited" : sizeOff ? "resized" : rotated ? "rotated" : "moved";
+          this.penalize(tampers, it.modifiedBy, what, lab, id, this.when(it.modifiedAt, now));
+          this.retireCell(lab, id, ops);
+          continue;
         }
+        const bf = (it.fill ?? "").toLowerCase();
+        if (bf === (sh.fill ?? "").toLowerCase()) continue;
+        sh.fill = bf; // what the board shows now; reconciliation below brings it back to the engine
+        if (bf === this.fillOf(lab) || this.isSelf(it.modifiedBy)) continue; // already right, or our own write echoed back
+        const staleAt = this.stale.get(id);
+        paints.push({ label: lab, fill: bf, userId: this.painterOf(lab, it.modifiedBy), at: this.when(it.modifiedAt, now), stale: staleAt !== undefined && staleAt === it.modifiedAt });
         continue;
       }
-      if (geomOff || contentOff || fillOff) {
-        const fxKey = fixtureKeyOf(id);
-        tampers.push({ userId: it.modifiedBy, what: contentOff ? "edited" : geomOff ? "moved" : "edited", target: fxKey ? `the ${fxKey}` : "an inbox card", at: it.modifiedAt });
-        writes.set(id, () => this.board.updateShape(id, { content: sh.content, fill: sh.fill, x: sh.x, y: sh.y, w: sh.w, h: sh.h }));
-        this.touch(id, true);
+      const fxKey = fixtureKeyOf(id);
+      const owner = fxKey ? undefined : cardOwnerOf(id);
+      if (!fxKey && !owner) continue;
+      const geomOff =
+        fresh(this.geomWriteAt, id) && (Math.abs(it.x - sh.x) > TOL || Math.abs(it.y - sh.y) > TOL || Math.abs(it.w - sh.w) > TOL || Math.abs(it.h - sh.h) > TOL || !!it.rotation);
+      const textFresh = fresh(this.lastWriteAt, id);
+      const contentOff = textFresh && norm(it.content) !== sh.content;
+      const fillOff = textFresh && sh.fill !== undefined && (it.fill ?? "").toLowerCase() !== sh.fill.toLowerCase();
+      if (!geomOff && !contentOff && !fillOff) continue;
+      if (contentOff) {
+        sh.content = norm(it.content); // what is there now; the refresh below writes the right text back
+        if (fxKey) this.written[fxKey] = undefined;
+      }
+      if (this.isSelf(it.modifiedBy) && !geomOff && !fillOff) continue; // Miro reformatted our own text: the refresh settles it
+      const target = fxKey ? `the ${fxKey}` : owner && owner !== it.modifiedBy ? "someone else's inbox card" : "your inbox card";
+      this.penalize(tampers, it.modifiedBy, contentOff ? "edited" : geomOff ? (it.rotation ? "rotated" : "moved") : "edited", target, id, this.when(it.modifiedAt, now));
+      if (geomOff || fillOff) {
+        ops.push({
+          key: `restore:${id}`,
+          prio: 1,
+          run: () => this.board.updateShape(id, { fill: sh.fill, x: sh.x, y: sh.y, w: sh.w, h: sh.h, ...(it.rotation ? { rotation: 0 } : {}) }),
+          ok: () => this.touch(id, true),
+          fail: (_e, n) => fxKey && n >= STUCK_AFTER && this.retireFixture(fxKey, id),
+        });
       }
     }
 
-    // 3. new items: inbox cards (= joins), junk on the arena (full reads only)
-    for (const it of full ? items : []) {
-      if (this.seen.has(it.id)) continue;
-      this.seen.add(it.id);
-      if (this.isInboxCard(it)) {
-        const owner = this.cardOwner(it);
-        if (this.inboxCard.has(owner)) {
-          writes.set(it.id, () => this.board.deleteItem(it.id));
-          this.pushFeedback(owner, "ℹ️ You already have an inbox card; the extra one was removed.");
+    // 3. everything else on a full read: new inbox cards (= joins), junk on the forest, static items
+    if (full) {
+      for (const it of items) {
+        if (this.idCell.has(it.id) || this.shadow.has(it.id)) continue;
+        const firstSight = !this.seen.has(it.id);
+        this.seen.add(it.id);
+        if (this.staticIds.has(it.id)) continue;
+        if (firstSight && this.isInboxCard(it) && !this.stuck.has(it.id)) {
+          joins += await this.newCard(it, ops);
           continue;
         }
-        this.inboxCard.set(owner, it.id);
-        const slot = inboxSlot(this.inboxCard.size - 1);
-        const c = center(slot);
-        if (!state.players[owner]) {
-          joins++;
-          await this.join(it);
+        if (!this.isJunk(it)) continue;
+        // Junk on the forest or the fixtures: removed (retried with backoff while it is locked).
+        if (!this.stuck.has(it.id) && !this.createdIds.has(it.id)) {
+          const who = parseLabel(norm(it.content)) && it.w < 2 * GRID.pitch ? it.modifiedBy : it.createdBy;
+          this.penalize(tampers, who, "added", "an item on the forest", it.id, this.when(it.createdAt, now));
         }
-        const content = this.cardContent(owner);
-        const sticky = it.type === "sticky_note";
-        writes.set(it.id, () => this.board.updateShape(it.id, sticky ? { content, x: c.x, y: c.y } : { content, x: c.x, y: c.y, w: slot.w, h: slot.h, fill: "#ffffff" }));
-        this.touch(it.id, true);
-        this.knownAt.set(it.id, now);
-        this.shadow.set(it.id, sticky ? { content: stripHtml(content), x: c.x, y: c.y, w: it.w, h: it.h } : { content: stripHtml(content), fill: "#ffffff", x: c.x, y: c.y, w: slot.w, h: slot.h });
-        this.dirty.delete(owner);
-        continue;
+        ops.push({ key: `junk:${it.id}`, prio: 4, run: () => this.board.deleteItem(it.id), ok: () => this.stuck.delete(it.id) });
       }
-      if ((inside(GRID_BOX, it.x, it.y) && it.w <= 400 && it.h <= 400) || FIXTURE_KEYS.some((k) => inside(FIXTURES[k], it.x, it.y))) {
-        tampers.push({ userId: it.createdBy, what: "added", target: "an item on the forest", at: it.createdAt });
-        writes.set(it.id, () => this.board.deleteItem(it.id));
-      }
+      this.guardStatics(byId, fresh, tampers, ops, now);
     }
 
     // 4. approvals: sticky notes in the Orders frames (full reads only)
     if (full) {
       this.stickies = this.readStickies(items);
-      for (const s of this.stickies) for (const n of judgeSticky(state, this.rules, this.cells, s)) this.pushFeedback(n.userId, n.line);
+      for (const s of this.stickies) {
+        try {
+          for (const n of judgeSticky(state, this.rules, s)) this.pushFeedback(n.userId, n.line);
+        } catch (e) {
+          this.log(`sticky ${s.id} skipped: ${errMsg(e)}`);
+        }
+      }
     }
 
-    // 5. paints
+    // 5. paints, in time order (many paints by one player in one poll: the first counts, the rest wait the cooldown)
     paints.sort((a, b) => a.at - b.at);
     for (const ev of paints) {
-      const id = this.cellId.get(ev.label)!;
-      if (!this.shadow.get(id)) continue;
-      if (ev.at < this.watchingSince) {
-        writes.set(id, () => this.writeCell(ev.label));
-        this.pushFeedback(ev.userId, `⏸ ${ev.label} reverted: no referee was watching.`);
+      if (ev.stale) {
+        this.stale.delete(this.cellId.get(ev.label) ?? "");
+        this.pushFeedback(ev.userId, `⏸ ${ev.label} undone: no referee was watching.`);
         continue;
       }
-      const before = state.cells[ev.label]!;
       const d = decidePaint(state, this.rules, this.cells, ev);
       if (d.accept) {
-        this.shadow.get(id)!.fill = this.fillOf(ev.label);
-        // The player's paint is already on the board; only fix the label color if it would vanish.
-        const after = state.cells[ev.label]!;
-        if (textColorFor(after) !== textColorFor(before)) writes.set(id, () => this.board.updateShape(id, { textColor: textColorFor(after) }));
-        else writes.delete(id);
-      } else writes.set(id, () => this.writeCell(ev.label));
+        const sh = this.shadow.get(this.cellId.get(ev.label) ?? "");
+        if (sh) sh.fill = ev.fill; // the player's paint is already on the board
+      }
+      this.onPaint?.(ev, d);
       if (d.feedback) this.pushFeedback(ev.userId, d.feedback);
     }
-    for (const t of tampers) this.pushFeedback(t.userId, decideTamper(state, this.rules, t).feedback);
+    this.stale.clear(); // only the first look after a restart can tell an unwatched paint
+    for (const t of tampers) {
+      if (t.userId === "unknown") {
+        this.log(`\nput back: ${t.target} (${t.what})`);
+        continue;
+      }
+      this.pushFeedback(t.userId, decideTamper(state, this.rules, t).feedback);
+    }
 
-    // 6. the fire: game time moves on (spread, burn-out, drying, wind, lightning, the end)
+    // 6. the fire: game time moves on (spread, burn-out, wind, lightning, OUTSIDE time, the end)
     const dt = this.lastAdvanceAt === null ? 0 : Math.min(MAX_STEP_MS, Math.max(0, now - this.lastAdvanceAt));
     this.lastAdvanceAt = now;
     const adv = advance(state, this.rules, this.cellList, this.byPos, this.rng, dt, now);
-    for (const lab of adv.changed) {
-      const id = this.cellId.get(lab);
-      if (id && this.shadow.get(id)?.fill !== this.fillOf(lab)) writes.set(id, () => this.writeCell(lab));
-    }
     for (const e of adv.events) this.log(`\n${e}`);
+    for (const g of adv.ended) {
+      for (const u of this.teamPlayers(g.team)) this.pushFeedback(u, `⌛ Time is up in ${teamName(g.to)}'s area: paint only in your team's area again.`);
+    }
 
-    // 7. write everything back, in parallel; one refused write must never stall the game
-    await pool([...writes.values()].map((w) => () => w().catch((e: Error) => this.log(`write failed: ${e.message.split("\n")[0]}`))), this.concurrency);
-    await this.flushFeedback();
-    await this.updateBoards();
-    const fire = Object.values(state.cells).filter((s) => s === "fire").length;
-    return { paints: paints.length, tampers: tampers.length, joins, fire, changed: adv.changed.length };
+    // 7. plan every write (board vs engine) and run what fits in this tick; one refused write never stalls the game
+    ops.push(...this.cellOps(new Set(adv.changed)), ...this.rebuildOps(), ...this.fixtureOps(), ...this.cardOps());
+    const { deferred } = await this.execute(ops);
+    this.prevReadAt = now;
+    return { paints: paints.length, tampers: tampers.length, joins, fire: this.burning(), changed: adv.changed.length, writes: this.writesThisTick, deferred };
+  }
+
+  /** Something that does not belong where it is: on the forest or over a fixture. */
+  private isJunk(it: BoardItem): boolean {
+    if (this.idCell.has(it.id) || this.staticIds.has(it.id) || Object.values(this.game.fixtureIds).includes(it.id)) return false;
+    if ([...this.inboxCard.values()].includes(it.id)) return false;
+    if (it.type === "sticky_note" && ordersTeamAt(it.x, it.y)) return false;
+    const w = Math.max(0, it.w || 0);
+    const h = Math.max(0, it.h || 0);
+    const onGrid = intersects({ x: it.x, y: it.y, w, h }, GRID_BOX);
+    const onFixture = FIXTURE_KEYS.some((k) => intersects({ x: it.x, y: it.y, w, h }, FIXTURES[k]));
+    if (this.stuck.has(it.id)) return true;
+    // An untracked copy of a square (dragged out of its frame, a vandal's fake) goes wherever it is.
+    if (it.type === "shape" && parseLabel(norm(it.content)) && w < 2 * GRID.pitch && h < 2 * GRID.pitch) return true;
+    if (!onGrid && !onFixture) return false;
+    // A big item that was already there when the referee started may be the board's own decoration (a
+    // backdrop, an area band); anything small, anything new, or any untracked copy of a square goes.
+    const small = w <= 400 && h <= 400;
+    return small || !this.baseline.has(it.id);
+  }
+
+  /** Static items (panels, title, rules, headers): edits and moves are put back; deletes are logged (rebuild between games). */
+  private guardStatics(byId: Map<string, BoardItem>, fresh: (m: Map<string, number>, id: string) => boolean, tampers: TamperEvent[], ops: Op[], now: number) {
+    for (const [id, snap] of this.staticSnap) {
+      const it = byId.get(id);
+      if (!it) {
+        if (!this.reported.has(`static:${id}`)) {
+          this.reported.add(`static:${id}`);
+          this.log(`\nstatic ${snap.type} ${id} ("${snap.content.slice(0, 30)}") was deleted; it can't be rebuilt mid-game without covering the forest. Rebuild the board between games.`);
+        }
+        continue;
+      }
+      const geomOff = fresh(this.geomWriteAt, id) && (Math.abs(it.x - snap.x) > TOL || Math.abs(it.y - snap.y) > TOL || Math.abs(it.w - snap.w) > TOL || (snap.type !== "text" && Math.abs(it.h - snap.h) > TOL) || !!it.rotation);
+      const textOff = fresh(this.lastWriteAt, id) && (norm(it.content) !== snap.content || (snap.type === "shape" && (it.fill ?? "") !== (snap.fill ?? "")));
+      if (!geomOff && !textOff) continue;
+      if (this.isSelf(it.modifiedBy)) continue;
+      this.penalize(tampers, it.modifiedBy, textOff ? "edited" : "moved", "a board panel", id, this.when(it.modifiedAt, now));
+      ops.push({
+        key: `static:${id}`,
+        prio: 4,
+        run: () =>
+          this.board.updateShape(id, {
+            ...(textOff ? { content: snap.raw, ...(snap.type === "shape" && snap.fill ? { fill: snap.fill } : {}) } : {}),
+            x: snap.x,
+            y: snap.y,
+            ...(snap.type === "text" ? {} : { w: snap.w, h: snap.h }),
+            ...(it.rotation ? { rotation: 0 } : {}),
+          }),
+        ok: () => this.touch(id, true),
+      });
+    }
+  }
+
+  /** Grid bands and Orders frames: moved/resized are put back (their squares move with them), deleted are recreated. */
+  private async guardFrames(tampers: TamperEvent[], since: number): Promise<Set<string>> {
+    const off = new Set<string>();
+    if (!this.board.listFrames) return off;
+    let frames: BoardItem[];
+    try {
+      frames = await this.board.listFrames();
+    } catch {
+      return off;
+    }
+    const byId = new Map(frames.map((f) => [f.id, f]));
+    const guarded: { key: string; box: Box; fill: string; title: string; get: () => string | undefined; set: (id: string) => void }[] = [
+      ...frameBoxes().map((box, i) => ({ key: `band${i}`, box, fill: COLORS.frame, title: "", get: () => this.frameIds[i], set: (id: string) => (this.frameIds[i] = id) })),
+      ...TEAMS.map((t) => ({ key: `orders:${t}`, box: ORDERS[t], fill: COLORS.panel, title: ordersTitle(t), get: () => this.ordersIds[t], set: (id: string) => (this.ordersIds[t] = id) })),
+    ];
+    if (!guarded.some((g) => g.get())) return off; // a board without guarded frames (tests, an old board)
+    const ops: Op[] = [];
+    let gridChanged = false;
+    for (const g of guarded) {
+      const id = g.get();
+      const f = id ? byId.get(id) : undefined;
+      const c = center(g.box);
+      if (!f) {
+        if (!id) continue;
+        const n = (this.missing.get(`frame:${g.key}`) ?? 0) + 1;
+        this.missing.set(`frame:${g.key}`, n);
+        if (n < MISSING_READS) continue;
+        if (!this.board.createFrame) {
+          if (!this.reported.has(`frame:${g.key}`)) this.log(`\nframe ${g.key} was deleted and this board adapter can't recreate frames: reading the whole board from now on`);
+          this.reported.add(`frame:${g.key}`);
+          this.fastOff = true;
+          continue;
+        }
+        ops.push({
+          key: `frame:${g.key}`,
+          prio: -1,
+          run: async () => {
+            const nid = await this.board.createFrame!(g.box, g.fill, g.title);
+            g.set(nid);
+            this.createdIds.add(nid);
+            this.baseline.add(nid);
+            this.missing.delete(`frame:${g.key}`);
+            if (g.key.startsWith("band")) gridChanged = true;
+          },
+        });
+        if (n === MISSING_READS) tampers.push({ userId: "unknown", what: "deleted", target: g.key.startsWith("band") ? "a row of the forest" : "an Orders frame", at: this.now() });
+        continue;
+      }
+      this.missing.delete(`frame:${g.key}`);
+      const bad = Math.abs(f.x - c.x) > 4 || Math.abs(f.y - c.y) > 4 || Math.abs(f.w - g.box.w) > 4 || Math.abs(f.h - g.box.h) > 4;
+      // Not judged on a sweep older than our own last move of it (fast reads).
+      if (!bad || (this.geomWriteAt.get(f.id) ?? -Infinity) >= since) continue;
+      off.add(f.id);
+      if (!this.board.updateFrame) continue;
+      this.penalize(tampers, f.modifiedBy, "moved", g.key.startsWith("band") ? "a row of the forest" : "an Orders frame", f.id, f.modifiedAt);
+      ops.push({ key: `frame:${g.key}`, prio: -1, run: () => this.board.updateFrame!(f.id, { x: c.x, y: c.y, w: g.box.w, h: g.box.h }), ok: () => this.touch(f.id, true) });
+    }
+    // A frame a vandal drew over the forest or a fixture (it can swallow squares): removed.
+    const mine = new Set(guarded.map((g) => g.get()).filter(Boolean));
+    for (const f of frames) {
+      if (mine.has(f.id) || this.staticIds.has(f.id) || this.baseline.has(f.id)) continue;
+      if (!intersects(f, GRID_BOX) && !FIXTURE_KEYS.some((k) => intersects(f, FIXTURES[k]))) continue;
+      this.penalize(tampers, f.createdBy, "added", "a frame on the forest", f.id, f.createdAt);
+      ops.push({ key: `junk:${f.id}`, prio: 4, run: () => this.board.deleteItem(f.id) });
+    }
+    if (ops.length) await this.execute(ops);
+    if (gridChanged) this.board.setGridFrames?.(this.frameIds);
+    return off;
+  }
+
+  /** A square moved/edited/locked: forget it (deleted when Miro lets us) and build a fresh one. */
+  private retireCell(lab: string, id: string, ops: Op[]) {
+    this.idCell.delete(id);
+    this.cellId.delete(lab);
+    this.shadow.delete(id);
+    this.missing.delete(id);
+    this.stuck.add(id); // until the delete succeeds
+    ops.push({ key: `junk:${id}`, prio: 2, run: () => this.board.deleteItem(id), ok: () => this.stuck.delete(id) });
+  }
+
+  private retireFixture(key: FixtureKey, id: string) {
+    if (this.game.fixtureIds[key] !== id) return;
+    this.log(`\nthe ${key} refuses writes (locked?): putting a new one on top. Unlock ${id} in Miro.`);
+    this.stuck.add(id);
+    this.shadow.delete(id);
+    delete this.game.fixtureIds[key];
+    this.written[key] = undefined;
+  }
+
+  /** Squares whose board fill differs from the engine: one write each, the fire's changes first. */
+  private cellOps(fireChanged: Set<string>): Op[] {
+    const ops: Op[] = [];
+    for (const [lab, id] of this.cellId) {
+      const sh = this.shadow.get(id);
+      if (!sh) continue;
+      const want = this.fillOf(lab);
+      if ((sh.fill ?? "").toLowerCase() === want) continue;
+      const st = this.state.cells[lab]!;
+      ops.push({
+        key: `cell:${lab}`,
+        prio: fireChanged.has(lab) ? 0 : 1,
+        run: () => this.board.updateShape(id, { fill: want, textColor: textColorFor(st) }),
+        ok: () => {
+          const s = this.shadow.get(id);
+          if (s) s.fill = want;
+        },
+        fail: (_e, n) => {
+          if (n < STUCK_AFTER || this.cellId.get(lab) !== id) return;
+          this.log(`\n${lab} refuses writes (locked?): putting a new square on top`);
+          this.idCell.delete(id);
+          this.cellId.delete(lab);
+          this.shadow.delete(id);
+          this.stuck.add(id);
+        },
+      });
+    }
+    return ops;
+  }
+
+  /** Missing squares, recreated 20 per call, into their band frame when it exists. */
+  private rebuildOps(): Op[] {
+    const lost = this.cellList.filter((c) => !this.cellId.has(c.label));
+    const ops: Op[] = [];
+    for (let i = 0; i < lost.length; i += 20) {
+      const batch = lost.slice(i, i + 20);
+      const shapes = batch.map((c) => this.cellShape(c, this.fillOf(c.label)));
+      ops.push({
+        key: `build:${batch[0]!.label}`,
+        prio: 2,
+        run: async () => {
+          const ids = await this.board.createShapes(shapes);
+          batch.forEach((c, k) => {
+            const id = ids[k];
+            if (!id || this.cellId.has(c.label)) return;
+            this.cellId.set(c.label, id);
+            this.idCell.set(id, c.label);
+            this.setCellShadow(c.label, shapes[k]!.fill);
+            this.seen.add(id);
+            this.createdIds.add(id);
+          });
+        },
+      });
+    }
+    return ops;
+  }
+
+  /** Fixtures: recreate a missing one, rewrite the text that changed. */
+  private fixtureOps(): Op[] {
+    const ops: Op[] = [];
+    for (const key of FIXTURE_KEYS) {
+      const html = this.fixtureHtml(key);
+      const id = this.game.fixtureIds[key];
+      if (!id) {
+        ops.push({
+          key: `mkfx:${key}`,
+          prio: 1,
+          run: async () => {
+            const [nid] = await this.board.createShapes([this.fixtureShape(key, html)]);
+            this.game.fixtureIds[key] = nid!;
+            const box = FIXTURES[key];
+            this.shadow.set(nid!, { content: norm(html), fill: FIXTURE_STYLE[key].fill, ...center(box), w: box.w, h: box.h });
+            this.written[key] = html;
+            this.touch(nid!, true);
+            this.knownAt.set(nid!, this.now());
+            this.seen.add(nid!);
+            this.createdIds.add(nid!);
+          },
+        });
+        continue;
+      }
+      const sh = this.shadow.get(id);
+      if (this.written[key] === html && sh?.content === norm(html)) continue;
+      ops.push({
+        key: `fx:${key}`,
+        prio: 1,
+        run: () => this.board.updateShape(id, { content: html }),
+        ok: () => {
+          this.written[key] = html;
+          this.touch(id);
+          const s = this.shadow.get(id);
+          if (s) s.content = norm(html);
+        },
+        fail: (_e, n) => n >= STUCK_AFTER && this.retireFixture(key, id),
+      });
+    }
+    return ops;
+  }
+
+  /** Inbox cards: recreate a deleted player's card, rewrite cards whose text changed. */
+  private cardOps(): Op[] {
+    const ops: Op[] = [];
+    for (const owner of this.replacedCards) {
+      if (this.inboxCard.has(owner) || !this.state.players[owner]) continue;
+      const slot = this.cardBox(owner);
+      const html = this.cardContent(owner);
+      ops.push({
+        key: `mkcard:${owner}`,
+        prio: 3,
+        run: async () => {
+          const [id] = await this.board.createShapes([{ content: html, fill: CARD_FILL, ...center(slot), w: slot.w, h: slot.h, textColor: COLORS.text, fontSize: 14, textAlign: "left", textAlignVertical: "top" }]);
+          this.inboxCard.set(owner, id!);
+          this.shadow.set(id!, { content: norm(html), fill: CARD_FILL, ...center(slot), w: slot.w, h: slot.h });
+          this.touch(id!, true);
+          this.knownAt.set(id!, this.now());
+          this.seen.add(id!);
+          this.createdIds.add(id!);
+        },
+      });
+    }
+    for (const [owner, id] of this.inboxCard) {
+      const sh = this.shadow.get(id);
+      if (!sh || this.placing.has(id)) continue;
+      const html = this.cardContent(owner);
+      if (sh.content === norm(html)) continue;
+      ops.push({
+        key: `card:${id}`,
+        prio: 3,
+        run: () => this.board.updateShape(id, { content: html }),
+        ok: () => {
+          this.touch(id);
+          const s = this.shadow.get(id);
+          if (s) s.content = norm(html);
+        },
+      });
+    }
+    return ops;
+  }
+
+  /** Run planned writes: one per key, by priority, within this tick's budget; failures back off per key. */
+  private async execute(ops: Op[], budget = this.maxWritesPerTick): Promise<{ deferred: number }> {
+    const byKey = new Map<string, Op>();
+    for (const op of ops) byKey.set(op.key, op);
+    const ready = [...byKey.values()].filter((op) => (this.failures.get(op.key)?.next ?? 0) <= this.tickNo).sort((a, b) => a.prio - b.prio);
+    const run: Op[] = [];
+    let deferred = 0;
+    for (const op of ready) {
+      const c = op.calls ?? 1;
+      if (this.writesThisTick + c > budget) {
+        deferred++;
+        continue;
+      }
+      this.writesThisTick += c;
+      run.push(op);
+    }
+    await pool(
+      run.map((op) => async () => {
+        try {
+          await op.run();
+          this.failures.delete(op.key);
+          op.ok?.();
+        } catch (e) {
+          const n = (this.failures.get(op.key)?.n ?? 0) + 1;
+          // Retry next tick, then back off (2, 4, ... 16 ticks): a locked item must not cost a write every poll.
+          this.failures.set(op.key, { n, next: this.tickNo + (n < STUCK_AFTER ? 1 : Math.min(16, 2 ** (n - STUCK_AFTER + 1))) });
+          if (n === 1 || n === STUCK_AFTER) this.log(`write ${op.key} failed (${errMsg(e)})${n >= STUCK_AFTER ? `; ${n} times in a row` : ""}`);
+          try {
+            op.fail?.(e as Error, n);
+          } catch (e2) {
+            this.log(`repair of ${op.key} failed: ${errMsg(e2)}`);
+          }
+        }
+      }),
+      this.concurrency,
+    );
+    return { deferred };
   }
 
   private welcome(name: string, team: Team, role: "boss" | "worker"): string {
@@ -532,9 +1094,9 @@ export class Referee {
     const frame = ordersTitle(team);
     const job =
       role === "boss"
-        ? `You are the BOSS: post a PLAN sticky in ${frame} (a teammate answers YES), then one ORDER per worker.`
-        : `You are a WORKER: follow your ORDER sticky in ${frame}. Nothing counts until your team's PLAN is approved.`;
-    return `👋 ${name}: team ${t.name} (${team}), sector ${sectorText(team)}, border ${t.color}. ${job}`;
+        ? `You are the BOSS: in ${frame}, keep one sticky per worker like "Ana: paint N9 N10", and paint too.`
+        : `You are a WORKER: paint the squares on your sticky in ${frame} (your name: paint ...).`;
+    return `👋 ${esc(name)}: you are on ${t.name} (${team}). Your area: ${sectorText(team)} (edge ${t.color}). Paint blue ${STATE_COLOR.water} on green or orange squares there. ${job}`;
   }
 
   private isInboxCard(it: BoardItem): boolean {
@@ -549,14 +1111,69 @@ export class Referee {
     );
   }
 
+  /** A new card in the Inbox: a join, an extra card (removed), or a player's own card replacing the referee's copy. */
+  private async newCard(it: BoardItem, ops: Op[]): Promise<number> {
+    const owner = this.cardOwner(it);
+    const current = this.inboxCard.get(owner);
+    if (current && !this.replacedCards.has(owner)) {
+      ops.push({ key: `junk:${it.id}`, prio: 3, run: () => this.board.deleteItem(it.id) });
+      this.pushFeedback(owner, "ℹ️ You already have an inbox card; the extra one was removed.");
+      return 0;
+    }
+    if (current) {
+      // The player made a new card after theirs was deleted: theirs wins, the referee's copy goes.
+      ops.push({ key: `junk:${current}`, prio: 3, run: () => this.board.deleteItem(current) });
+      this.shadow.delete(current);
+    }
+    this.replacedCards.delete(owner);
+    this.inboxCard.set(owner, it.id);
+    let joined = 0;
+    if (!this.state.players[owner]) {
+      if (this.state.phase === "over") {
+        this.pushFeedback(owner, "🏁 The game is over: wait for the next one.");
+      } else {
+        await this.join(it);
+        joined = 1;
+      }
+    }
+    const slot = this.cardBox(owner);
+    const c = center(slot);
+    const content = this.cardContent(owner);
+    const sticky = it.type === "sticky_note";
+    const sh: Shadow = sticky ? { content: norm(it.content), x: c.x, y: c.y, w: it.w, h: it.h } : { content: norm(it.content), fill: CARD_FILL, x: c.x, y: c.y, w: slot.w, h: slot.h };
+    this.shadow.set(it.id, sh);
+    this.knownAt.set(it.id, this.now());
+    this.placing.add(it.id);
+    ops.push({
+      key: `place:${it.id}`,
+      prio: 3,
+      run: () => this.board.updateShape(it.id, sticky ? { content, x: c.x, y: c.y } : { content, x: c.x, y: c.y, w: slot.w, h: slot.h, fill: CARD_FILL, textColor: COLORS.text }),
+      ok: () => {
+        this.touch(it.id, true);
+        sh.content = norm(content);
+      },
+    });
+    return joined;
+  }
+
+  /** A stable place in the Inbox panel per player (72 fit; more overlap slightly, never leave the panel). */
+  private cardBox(owner: string): Box {
+    const slots = (this.game.slots ??= {});
+    if (slots[owner] === undefined) slots[owner] = Object.keys(slots).length;
+    const i = slots[owner]!;
+    const per = 72;
+    const b = inboxSlot(i % per);
+    const k = Math.floor(i / per) % 5;
+    return { ...b, x: b.x + k * 16, y: b.y + k * 16 };
+  }
+
   /** A new inbox card is a join: its text is "Inbox · NAME". */
   private async join(it: BoardItem) {
-    const name = stripHtml(it.content).replace(/^inbox\s*[·:-]?\s*/i, "");
+    const name = norm(it.content).replace(/^inbox\s*[·:-]?\s*/i, "");
     const owner = this.cardOwner(it);
-    const { player } = applyJoin(this.state, { userId: owner, name, at: it.createdAt }, await this.presetFor(it.createdBy, name));
+    const { player } = applyJoin(this.state, { userId: owner, name, at: this.when(it.createdAt, this.now()) }, await this.presetFor(it.createdBy, name));
     this.log(`\njoin: ${player.name} -> ${player.team} ${player.role} (${owner})`);
     this.pushFeedback(owner, this.welcome(player.name, player.team, player.role));
-    if (this.state.plan[player.team]) this.pushFeedback(owner, `✅ ${teamName(player.team)} already has an approved PLAN: you may paint.`);
   }
 
   private async presetFor(userId: string, name: string): Promise<Team | undefined> {
@@ -569,36 +1186,20 @@ export class Referee {
   }
 
   private pushFeedback(userId: string, line: string) {
+    if (!userId) return;
     const arr = this.feedback.get(userId) ?? [];
     arr.push(line);
     while (arr.length > FEEDBACK_LINES) arr.shift();
     this.feedback.set(userId, arr);
-    this.dirty.add(userId);
   }
 
   private cardContent(userId: string): string {
     const p = this.state.players[userId];
     const ps = this.state.stats.byPlayer[userId];
-    const paints = ps ? ps.water + ps.firebreak + ps.burnt : 0;
-    const head = p ? `<b>${p.name} · Team ${TEAM_INFO[p.team].name.toUpperCase()} · ${p.role.toUpperCase()} · ${paints} paints</b>` : "<b>Inbox</b>";
+    const paints = ps ? ps.water : 0;
+    const head = p ? `<b>${esc(p.name)} · ${TEAM_INFO[p.team].name.toUpperCase()} · ${p.role.toUpperCase()} · ${paints} paints</b>` : "<b>Inbox</b>";
     const lines = this.feedback.get(userId) ?? [];
     return [head, ...lines].map((l) => `<p>${l}</p>`).join("");
-  }
-
-  private async flushFeedback() {
-    const writes: (() => Promise<unknown>)[] = [];
-    for (const userId of this.dirty) {
-      const id = this.inboxCard.get(userId);
-      if (!id) continue;
-      const content = this.cardContent(userId);
-      const sh = this.shadow.get(id);
-      if (sh && sh.content === stripHtml(content)) continue;
-      if (sh) sh.content = stripHtml(content);
-      this.touch(id);
-      writes.push(() => this.board.updateShape(id, { content }).catch((e: Error) => this.log(`card write failed: ${e.message.split("\n")[0]}`)));
-    }
-    this.dirty.clear();
-    await pool(writes, this.concurrency);
   }
 
   private async writeFixture(key: FixtureKey, html: string) {
@@ -608,48 +1209,53 @@ export class Referee {
     try {
       await this.board.updateShape(id, { content: html });
     } catch (e) {
-      this.log(`${key} write failed: ${(e as Error).message.split("\n")[0]}`);
+      this.log(`${key} write failed: ${errMsg(e)}`);
       return;
     }
     this.written[key] = html;
     const sh = this.shadow.get(id);
-    if (sh) sh.content = stripHtml(html);
+    if (sh) sh.content = norm(html);
+  }
+
+  private bannerOverride?: string;
+  private fixtureHtml(key: FixtureKey): string {
+    if (key === "banner") return this.bannerOverride ? `<p>${this.bannerOverride}</p>` : this.bannerHtml();
+    return key === "scoreboard" ? this.scoreboardHtml() : this.leaderboardHtml();
   }
 
   private async updateBoards(banner?: string) {
-    await pool(
-      [
-        () => this.writeFixture("banner", banner ? `<p>${banner}</p>` : this.bannerHtml()),
-        () => this.writeFixture("scoreboard", this.scoreboardHtml()),
-        () => this.writeFixture("leaderboard", this.leaderboardHtml()),
-      ],
-      3,
-    );
+    this.bannerOverride = banner;
+    try {
+      await pool(FIXTURE_KEYS.map((k) => () => this.writeFixture(k, this.fixtureHtml(k))), 3);
+    } finally {
+      this.bannerOverride = undefined;
+    }
   }
 
   // ---------- what the projector shows ----------
   bannerHtml(): string {
     const s = this.state;
     const r = this.rules;
-    const mmss = (ms: number) => `${Math.floor(Math.max(0, ms) / 60_000)}:${String(Math.floor((Math.max(0, ms) % 60_000) / 1000)).padStart(2, "0")}`;
     const w = WIND[s.wind]!;
     const p = (a: string, b: string) => `<p><b>${a}</b></p><p>${b}</p>`;
-    if (s.phase === "lobby") return p("🔥 WILDFIRE · /join now · the fire starts soon", `WIND ${w.arrow} blowing ${w.word} · 💧 ${s.water} water for everyone · teams: post your PLAN`);
+    if (s.phase === "lobby") return p(`🔥 WILDFIRE · /join now · the fire starts soon · wind ${w.arrow} ${w.name} · 💧 ${s.water} water`, `paint blue ${STATE_COLOR.water} on green or orange squares in your team's area`);
     if (s.phase === "over") {
       const sc = scores(s, this.cellList);
       const why = s.endReason === "out" ? "the fire is out" : s.endReason === "time" ? "time is up" : "stopped";
       return p(`🏁 GAME OVER (${why}) · 🏆 ${TEAM_INFO[s.winner!].name.toUpperCase()} saved ${sc[s.winner!].pct}%`, TEAMS.map((t) => `${TEAM_INFO[t].name} ${sc[t].pct}%`).join(" · "));
     }
     const left = r.gameMinutes * 60_000 - s.elapsed;
-    const spreadIn = Math.ceil((s.nextSpreadAt - s.elapsed) / 1000);
-    const burning = Object.values(s.cells).filter((c) => c === "fire").length;
-    const line1 = `🔥 LIVE · ${mmss(left)} left · WIND ${w.arrow} ${w.name} · next spread ${spreadIn}s · 💧 ${s.water}/${r.waterTotal}`;
+    const spreadIn = Math.max(0, Math.ceil((s.nextSpreadAt - s.elapsed) / 1000));
+    const line1 = `🔥 LIVE · ${mmss(left)} left · wind ${w.arrow} ${w.name} · next spread ${spreadIn}s · 💧 ${s.water} water`;
     const nextBolt = s.lightningDone < r.lightningAt.length ? r.lightningAt[s.lightningDone]! * 60_000 - s.elapsed : Infinity;
+    const windIn = s.windTurned ? Infinity : r.windMinutes * 60_000 - s.elapsed;
     const recent = s.events.filter((e) => s.elapsed - e.at < 25_000).at(-1);
+    const burning = Object.values(s.cells).filter((c) => c === "fire").length;
     let line2: string;
-    if (nextBolt <= 90_000) line2 = `⚡ LIGHTNING WARNING · a strike in ${mmss(nextBolt)}, far from the fire`;
-    else if (recent) line2 = recent.text;
-    else line2 = `🌬️ wind turns in ${mmss(s.nextWindAt - s.elapsed)} · ${burning} squares burning${s.water <= 40 ? ` · 🚱 water running low!` : ""}`;
+    if (recent) line2 = recent.text;
+    else if (nextBolt <= 60_000) line2 = `⚡ Lightning in ${mmss(nextBolt)}: a new fire somewhere far away`;
+    else if (windIn <= 60_000) line2 = `🌬️ The wind turns in ${mmss(windIn)}`;
+    else line2 = `${burning} squares on fire${s.water <= r.waterTotal / 5 ? " · 🚱 water running low!" : ""}`;
     return p(line1, line2);
   }
 
@@ -668,18 +1274,17 @@ export class Referee {
     const lines: string[] = [`<b>🏆 LEADERBOARD · forest saved</b>`];
     const order = TEAMS.slice().sort((a, b) => sc[b].pct - sc[a].pct);
     for (const t of order) {
-      const players = Object.entries(s.stats.byPlayer).filter(([, p]) => p.team === t);
-      const tot = players.reduce((a, [, p]) => ({ w: a.w + p.water, f: a.f + p.firebreak, b: a.b + p.burnt }), { w: 0, f: 0, b: 0 });
-      const boss = players.find(([, p]) => p.role === "boss")?.[1].name ?? "-";
-      const top = players.map(([, p]) => p).sort((a, b) => b.water + b.firebreak + b.burnt - (a.water + a.firebreak + a.burnt)).slice(0, 3);
-      const help = s.grants.filter((g) => g.helper === t).map((g) => `🤝 helping ${TEAM_INFO[g.to].name}`);
+      const players = Object.values(s.stats.byPlayer).filter((p) => p.team === t);
+      const water = players.reduce((a, p) => a + p.water, 0);
+      const boss = players.find((p) => p.role === "boss")?.name ?? "-";
       lines.push("");
-      lines.push(`<b>${TEAM_INFO[t].emoji} ${TEAM_INFO[t].name.toUpperCase()} ${sc[t].pct}% · ${players.length} players · plan ${s.plan[t] ? "✅" : "⏳"}</b>`);
-      lines.push(`boss ${boss} · 💧${tot.w} 🪓${tot.f} ⬛${tot.b}${top.length ? ` · top: ${top.map((p) => `${p.name} ${p.water + p.firebreak + p.burnt}`).join(", ")}` : ""}`);
-      const crew = players.filter(([, p]) => p.role === "worker").map(([, p]) => p.name);
+      lines.push(`<b>${TEAM_INFO[t].emoji} ${TEAM_INFO[t].name.toUpperCase()} ${sc[t].pct}% · ${players.length} players · 💧 ${water} paints</b>`);
+      lines.push(`boss ${esc(boss)}`);
+      const crew = players.filter((p) => p.role === "worker").map((p) => esc(p.name));
       if (crew.length) lines.push(`crew: ${crew.join(", ")}`);
-      const waiting = pending[t].map((x) => `⏳ ${x} waits for a YES`);
-      if (waiting.length || help.length) lines.push([...help, ...waiting].slice(0, 2).join(" · "));
+      const out = s.outside.filter((g) => g.team === t && s.phase === "live").map((g) => `🤝 spraying water in ${TEAM_INFO[g.to].name}'s area (${mmss(g.until - s.elapsed)} left)`);
+      const waiting = pending[t].map((x) => `⏳ waiting for a YES: ${x}`);
+      if (out.length || waiting.length) lines.push([...out, ...waiting].slice(0, 2).join(" · "));
     }
     return lines.map((l) => `<p>${l}</p>`).join("");
   }
@@ -687,14 +1292,16 @@ export class Referee {
   private fixtureShape(key: FixtureKey, content: string): NewShape {
     const box = FIXTURES[key];
     const st = FIXTURE_STYLE[key];
-    return { content, fill: st.fill!, ...center(box), w: box.w, h: box.h, fontSize: st.fontSize, textAlign: st.textAlign, textAlignVertical: st.textAlignVertical, textColor: st.textColor, borderColor: "#1a1a1a", borderWidth: 2 };
+    return { content, fill: st.fill!, ...center(box), w: box.w, h: box.h, fontSize: st.fontSize, textAlign: st.textAlign, textAlignVertical: st.textAlignVertical, textColor: st.textColor, borderColor: COLORS.panelBorder, borderWidth: 2 };
   }
 
   cellShape(cell: CellDef, fill: string): NewShape {
     const c = center(cellBox(cell));
     const st = cellStroke(cell);
-    const state = this.state.cells[cell.label] ?? cell.kind;
-    return { content: cell.label, fill, ...c, w: GRID.cell, h: GRID.cell, borderColor: st.color, borderWidth: st.width, textColor: textColorFor(state), fontSize: CELL_FONT, parentId: this.frameIds[frameOfRow(cell.row)] };
+    const state: CellState = this.state.cells[cell.label] ?? startState(cell);
+    // Into its band frame when that frame is known; otherwise on the canvas (and reads stop using the fast path).
+    const parentId = this.fastPath() || (this.frameIds.length === 9 && this.frameIds.every(Boolean)) ? this.frameIds[frameOfRow(cell.row)] : undefined;
+    return { content: cell.label, fill, ...c, w: GRID.cell, h: GRID.cell, borderColor: st.color, borderWidth: st.width, textColor: textColorFor(state), fontSize: CELL_FONT, parentId };
   }
 
   // ---------- results ----------
@@ -702,18 +1309,21 @@ export class Referee {
     const s = this.state;
     const sc = scores(s, this.cellList);
     const mins = Math.round(s.elapsed / 6000) / 10;
+    const approved = Object.values(s.approvals).filter((a) => a.status === "approved");
     const out: string[] = [
       s.phase === "over" ? `🏆 ${TEAM_INFO[s.winner!].name.toUpperCase()} WINS (${s.endReason === "out" ? "the fire went out" : s.endReason === "time" ? "time is up" : "stopped"})` : `phase: ${s.phase}`,
       `forest saved: ${TEAMS.map((t) => `${TEAM_INFO[t].name} ${sc[t].pct}%`).join(" · ")} · ${mins} min of fire`,
-      `paints ${s.stats.accepted} · water left ${s.water} · ignitions ${s.stats.ignitions} (embers ${s.stats.embers}) · burnt out ${s.stats.burntOut} · lightning ${s.stats.strikes.join(" ") || "-"} · cabins lost ${s.stats.cabinsLost.join(" ") || "none"}`,
-      `approvals: ${Object.values(s.approvals).filter((a) => a.status === "approved").map((a) => a.kind).join(" ") || "none"}`,
-      `refused: ${Object.entries(s.stats.illegal).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(" · ") || "none"}`,
+      `paints ${s.stats.accepted} · water left ${s.water}/${this.rules.waterTotal} · ignitions ${s.stats.ignitions} · burnt out ${s.stats.burntOut} · lightning ${s.stats.strikes.join(" ") || "-"}`,
+      `spray outside approved: ${approved.map((a) => `${a.team}→${a.to}`).join(" ") || "none"} · refused by a human: ${Object.values(s.approvals).filter((a) => a.status === "refused").length}`,
+      `paints undone: ${Object.entries(s.stats.illegal).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(" · ") || "none"}`,
       "",
     ];
     for (const t of TEAMS) {
-      const ps = Object.values(s.stats.byPlayer).filter((p) => p.team === t).sort((a, b) => b.water + b.firebreak + b.burnt - (a.water + a.firebreak + a.burnt));
-      out.push(`${TEAM_INFO[t].name}: ${ps.map((p) => `${p.name}${p.role === "boss" ? " (boss)" : ""} 💧${p.water} 🪓${p.firebreak} ⬛${p.burnt}`).join(", ") || "no players"}`);
+      const ps = Object.values(s.stats.byPlayer).filter((p) => p.team === t).sort((a, b) => b.water - a.water);
+      out.push(`${TEAM_INFO[t].name}: ${ps.map((p) => `${p.name}${p.role === "boss" ? " (boss)" : ""} 💧${p.water}${p.outside ? ` (${p.outside} outside)` : ""}`).join(", ") || "no players"}`);
     }
     return out.join("\n");
   }
 }
+
+const mmss = (ms: number) => `${Math.floor(Math.max(0, ms) / 60_000)}:${String(Math.floor((Math.max(0, ms) % 60_000) / 1000)).padStart(2, "0")}`;

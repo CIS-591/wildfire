@@ -1,34 +1,41 @@
 import { describe, expect, it } from "vitest";
-import { STATE_COLOR, buildCells, type CellState } from "../src/layout.js";
+import { STATE_COLOR, buildCells, startFill, type CellState } from "../src/layout.js";
 import {
-  advance, applyJoin, createState, decidePaint, judgeSticky, mulberry32, parseBackburn, pendingStickies, scores, spread, startGame, strike, type GameState, type RuleSet,
+  advance, applyJoin, createState, decidePaint, judgeSticky, mulberry32, pendingStickies, questionTarget, scores, spread, startGame, stickyKind, strike, type GameState, type RuleSet,
 } from "../src/rules.js";
 
 const base: RuleSet = {
-  spreadSeconds: 20, pSide: 0.3, pDiag: 0.08, downwindMult: 2, upwindMult: 0.3, pEmber: 0.03, burnTicks: 3, windMinutes: 5, lightningAt: [10, 18], lightningMinDistance: 6,
-  wetSeconds: 90, waterTotal: 400, cooldownSeconds: 5, timeoutSeconds: 5, backburnMax: 20, helpMinutes: 3, helpPlayers: 2, gameMinutes: 30, quietSpreads: 2,
+  spreadSeconds: 20, pSide: 0.3, pDiag: 0.08, downwindMult: 2, upwindMult: 0.3, burnTicks: 3, windMinutes: 5, lightningAt: [5], lightningMinDistance: 6,
+  waterTotal: 400, cooldownSeconds: 5, timeoutSeconds: 5, outsideMinutes: 2, gameMinutes: 10,
 };
+const calm = { ...base, pSide: 0, pDiag: 0 };
 const list = buildCells();
 const cells = new Map(list.map((c) => [c.label, c]));
 const byPos = new Map(list.map((c) => [`${c.col},${c.row}`, c]));
 const C = STATE_COLOR;
 const T0 = 1_000_000;
 
-/** A live game with 2 players per team (first = boss) and every team's PLAN approved. */
+/** A live game with 2 players per team (first = boss). */
 function live(rules = base, seed = 1) {
   const rng = mulberry32(seed);
   const s = createState(list, rules, rng);
   for (const [u, name] of [["r1", "Rita"], ["p1", "Pat"], ["c1", "Cy"], ["b1", "Bea"], ["r2", "Rob"], ["p2", "Pia"], ["c2", "Cal"], ["b2", "Ben"]] as const) applyJoin(s, { userId: u, name, at: T0 }, undefined);
   startGame(s, rules, T0);
-  for (const t of ["ridge", "pine", "cedar", "birch"] as const) s.plan[t] = `plan-${t}`;
   return { s, rng };
 }
 const paint = (s: GameState, userId: string, label: string, fill: string, at = T0 + 60_000, rules = base) => decidePaint(s, rules, cells, { label, fill, userId, at });
 const set = (s: GameState, label: string, st: CellState) => (s.cells[label] = st);
 const sticky = (s: GameState, id: string, team: "ridge" | "pine" | "cedar" | "birch", text: string, createdBy: string, modifiedBy: string, rules = base) =>
-  judgeSticky(s, rules, cells, { id, team, text, createdBy, modifiedBy });
+  judgeSticky(s, rules, { id, team, text, createdBy, modifiedBy });
 
-describe("joining", () => {
+describe("start", () => {
+  it("all green except the four centre squares on fire", () => {
+    const fills = new Set(list.filter((c) => !["R17", "S17", "R18", "S18"].includes(c.label)).map(startFill));
+    expect([...fills]).toEqual([C.forest]);
+    expect(["R17", "S17", "R18", "S18"].map((l) => startFill(cells.get(l)!))).toEqual([C.fire, C.fire, C.fire, C.fire]);
+    const { s } = live();
+    expect(s.cells.R17).toBe("fire");
+  });
   it("fills 4 balanced teams; the first player on a team is its boss", () => {
     const { s } = live();
     expect(s.players.r1).toMatchObject({ team: "ridge", role: "boss" });
@@ -47,8 +54,8 @@ describe("fire", () => {
     expect(run(7)).toBe(run(7));
     expect(run(7)).not.toBe(run(8));
   });
-  it("downwind always catches, upwind never (with p = 1 and 0), and a square burns burnTicks spreads", () => {
-    const rules = { ...base, pSide: 0.5, downwindMult: 2, upwindMult: 0, pDiag: 0, pEmber: 0 };
+  it("downwind always catches, upwind never (p = 1 and 0), and a square burns burnTicks spreads", () => {
+    const rules = { ...base, pSide: 0.5, downwindMult: 2, upwindMult: 0, pDiag: 0 };
     const s = createState(list, rules, mulberry32(1));
     s.phase = "live";
     s.wind = 2; // blowing east
@@ -62,34 +69,37 @@ describe("fire", () => {
     spread(s, rules, list, byPos, mulberry32(5));
     expect(s.cells.F10).toBe("burnt");
   });
-  it("embers jump a 1-wide firebreak 2 squares downwind; water, firebreak, river never ignite", () => {
-    const rules = { ...base, pSide: 1, pDiag: 1, downwindMult: 1, upwindMult: 1, pEmber: 1 };
+  it("blue and black never burn", () => {
+    const rules = { ...base, pSide: 1, pDiag: 1, downwindMult: 1, upwindMult: 1 };
     const s = createState(list, rules, mulberry32(1));
-    s.wind = 2;
     s.cells.C3 = "fire";
     s.burnLeft.C3 = 3;
-    for (const l of ["D2", "D3", "D4"]) s.cells[l] = "firebreak";
-    s.cells.B3 = "water";
-    s.cells.C2 = "river";
+    for (const l of ["B2", "C2", "D2", "B3", "D3"]) s.cells[l] = "water";
+    for (const l of ["B4", "C4", "D4"]) s.cells[l] = "burnt";
     spread(s, rules, list, byPos, mulberry32(2));
-    expect(s.cells.E3).toBe("fire");
-    expect([s.cells.D3, s.cells.B3, s.cells.C2]).toEqual(["firebreak", "water", "river"]);
-    expect(s.cells.C4).toBe("fire");
+    expect(["B2", "C2", "D2", "B3", "D3"].map((l) => s.cells[l])).toEqual(Array(5).fill("water"));
+    expect(["B4", "C4", "D4"].map((l) => s.cells[l])).toEqual(Array(3).fill("burnt"));
   });
-  it("advance: spreads every spreadSeconds, the wind turns 45°, lightning strikes far from the fire", () => {
-    const { s, rng } = live();
+  it("advance: spreads every spreadSeconds; at minute 5 the wind turns 45° once and lightning strikes once", () => {
+    const { s, rng } = live({ ...base, gameMinutes: 30 });
+    const r = { ...base, gameMinutes: 30 };
     const wind = s.wind;
-    advance(s, base, list, byPos, rng, 19_000);
+    advance(s, r, list, byPos, rng, 19_000);
     expect(s.spreads).toBe(0);
-    advance(s, base, list, byPos, rng, 1_000);
+    advance(s, r, list, byPos, rng, 1_000);
     expect(s.spreads).toBe(1);
-    for (let i = 0; i < 17; i++) advance(s, base, list, byPos, rng, 20_000); // to 6:00
-    expect([1, 7]).toContain((s.wind - wind + 8) % 8);
+    for (let i = 0; i < 13; i++) advance(s, r, list, byPos, rng, 20_000); // to 4:40
+    expect(s.wind).toBe(wind);
     expect(s.stats.strikes).toHaveLength(0);
-    for (let i = 0; i < 13; i++) advance(s, base, list, byPos, rng, 20_000); // to 10:20
+    advance(s, r, list, byPos, rng, 20_000); // 5:00
+    expect([1, 7]).toContain((s.wind - wind + 8) % 8);
+    expect(s.stats.strikes).toHaveLength(1);
+    const after = s.wind;
+    for (let i = 0; i < 30; i++) advance(s, r, list, byPos, rng, 20_000); // to 15:00
+    expect(s.wind).toBe(after);
     expect(s.stats.strikes).toHaveLength(1);
   });
-  it("lightning picks a forest square at least 6 squares from every fire", () => {
+  it("lightning picks a green square at least lightningMinDistance from every fire", () => {
     const { s } = live();
     for (let i = 0; i < 20; i++) {
       const hit = cells.get(strike(s, base, list, mulberry32(i))!)!;
@@ -97,148 +107,149 @@ describe("fire", () => {
       s.cells[hit.label] = "forest";
     }
   });
-  it("water dries back to what it was after wetSeconds", () => {
-    const { s, rng } = live();
-    set(s, "E5", "cabin");
-    expect(paint(s, "r1", "E5", C.water).accept).toBe(true);
-    expect(paint(s, "r2", "B2", C.water).accept).toBe(true);
-    advance(s, { ...base, pSide: 0, pDiag: 0, pEmber: 0 }, list, byPos, rng, 89_000);
-    expect(s.cells.E5).toBe("water");
-    advance(s, { ...base, pSide: 0, pDiag: 0, pEmber: 0 }, list, byPos, rng, 2_000);
-    expect([s.cells.E5, s.cells.B2]).toEqual(["cabin", "forest"]);
-  });
-  it("the game ends at gameMinutes, or when nothing burns for 2 spreads after the last lightning", () => {
-    const { s, rng } = live({ ...base, gameMinutes: 1 });
-    advance(s, { ...base, gameMinutes: 1 }, list, byPos, rng, 61_000);
+});
+
+describe("end", () => {
+  it("ends at gameMinutes: highest % wins", () => {
+    const slow = { ...calm, burnTicks: 1000 }; // the fire never goes out by itself
+    const { s, rng } = live(slow);
+    for (const l of ["A1", "A2", "A3"]) set(s, l, "burnt");
+    advance(s, slow, list, byPos, rng, 599_000);
+    expect(s.phase).toBe("live");
+    advance(s, slow, list, byPos, rng, 2_000);
     expect(s).toMatchObject({ phase: "over", endReason: "time" });
-    const g = live().s;
-    for (const l of Object.keys(g.cells)) if (g.cells[l] === "fire") g.cells[l] = "burnt";
-    advance(g, { ...base, lightningAt: [] }, list, byPos, mulberry32(1), 40_000);
+    expect(s.winner).not.toBe("ridge");
+  });
+  it("ends when no fire is left and the lightning has struck; not before the lightning", () => {
+    const { s, rng } = live();
+    for (const l of ["R17", "S17", "R18", "S18"]) set(s, l, "water");
+    advance(s, calm, list, byPos, rng, 60_000);
+    expect(s.phase).toBe("live"); // lightning still to come at minute 5
+    const g = live({ ...base, lightningAt: [] }).s;
+    for (const l of ["R17", "S17", "R18", "S18"]) set(g, l, "water");
+    advance(g, { ...calm, lightningAt: [] }, list, byPos, mulberry32(1), 20_000);
     expect(g).toMatchObject({ phase: "over", endReason: "out" });
   });
 });
 
 describe("paints", () => {
-  it("accepts exactly the SPEC transitions", () => {
+  it("accepts blue on green or orange in your team's area; the square turns to water", () => {
     const { s } = live();
-    let at = T0 + 60_000;
-    const ok = (u: string, l: string, fill: string) => paint(s, u, l, fill, (at += 6000)).accept;
     set(s, "C3", "fire");
-    expect(ok("r1", "C3", C.water)).toBe(true); // water on fire
-    expect(ok("r1", "C4", C.water)).toBe(true); // water on forest
-    expect(ok("r1", "E5", C.water)).toBe(true); // water on cabin
-    expect(ok("r1", "C6", C.firebreak)).toBe(true); // firebreak on forest
-    s.backburn.ridge = ["C8"];
-    expect(ok("r1", "C8", C.burnt)).toBe(true); // burnt in an approved backburn
-    expect(s.cells).toMatchObject({ C3: "water", C4: "water", E5: "water", C6: "firebreak", C8: "burnt" });
+    expect(paint(s, "r1", "C3", C.water, T0 + 60_000)).toMatchObject({ accept: true, feedback: expect.stringContaining("C3 fire put out") });
+    expect(paint(s, "r1", "C4", C.water, T0 + 66_000)).toMatchObject({ accept: true, feedback: expect.stringContaining("C4 is now water") });
+    expect([s.cells.C3, s.cells.C4]).toEqual(["water", "water"]);
+    expect(s.burnLeft.C3).toBeUndefined();
   });
-  it("refuses every other transition", () => {
+  it("refuses other colors, blue on blue or black, and paints outside the team's area", () => {
     const { s } = live();
     let at = T0 + 60_000;
-    const rule = (l: string, fill: string) => paint(s, "r1", l, fill, (at += 6000)).rule;
-    set(s, "C3", "fire");
-    expect(rule("J5", C.water)).toBe("color"); // river
-    set(s, "C5", "burnt");
-    expect(rule("C5", C.water)).toBe("color");
-    expect(rule("C3", C.firebreak)).toBe("color"); // firebreak on fire
-    expect(rule("C9", C.burnt)).toBe("backburn"); // no backburn
-    expect(rule("C3", C.burnt)).toBe("color");
-    expect(rule("C10", C.fire)).toBe("color"); // players never paint fire
+    const rule = (l: string, fill: string, u = "r1") => paint(s, u, l, fill, (at += 6000)).rule;
+    expect(rule("C10", C.fire)).toBe("color");
     expect(rule("C10", C.forest)).toBe("color");
+    expect(rule("C10", C.burnt)).toBe("color");
     expect(rule("C10", "#123456")).toBe("color");
+    set(s, "C5", "burnt");
+    expect(rule("C5", C.water)).toBe("square");
+    set(s, "C6", "water");
+    expect(rule("C6", C.water)).toBe("square");
+    const d = paint(s, "r1", "Z4", C.water, (at += 6000));
+    expect(d.rule).toBe("area");
+    expect(d.feedback).toContain("Team 2's area");
+    expect(d.feedback).not.toMatch(/sector/i);
   });
-  it("PLAN gate, sector, cooldown, unjoined", () => {
-    const { s } = live();
-    delete s.plan.ridge;
-    expect(paint(s, "r1", "C4", C.water).rule).toBe("plan");
-    s.plan.ridge = "x";
-    expect(paint(s, "r1", "Z4", C.water).rule).toBe("sector");
+  it("lobby, over, unjoined, cooldown", () => {
+    const s = createState(list, base, mulberry32(1));
+    applyJoin(s, { userId: "r1", name: "Rita", at: T0 }, "ridge");
+    expect(paint(s, "r1", "C4", C.water).rule).toBe("lobby");
+    startGame(s, base, T0);
+    expect(paint(s, "zed", "C4", C.water).rule).toBe("unjoined");
     expect(paint(s, "r1", "C4", C.water, T0 + 60_000).accept).toBe(true);
     expect(paint(s, "r1", "C5", C.water, T0 + 63_000).rule).toBe("cooldown");
-    expect(paint(s, "zed", "C5", C.water).rule).toBe("unjoined");
+    expect(paint(s, "r1", "C5", C.water, T0 + 65_000).accept).toBe(true);
+    s.phase = "over";
+    expect(paint(s, "r1", "C6", C.water, T0 + 99_000).rule).toBe("over");
   });
-  it("one shared water pool: each water paint uses 1, at 0 water is refused (firebreaks still work)", () => {
+  it("one shared water pool: each blue paint uses 1; at 0 blue is refused", () => {
     const { s } = live({ ...base, waterTotal: 2 });
     expect(paint(s, "r1", "C4", C.water).accept).toBe(true);
     expect(paint(s, "p1", "Z4", C.water).accept).toBe(true);
     expect(s.water).toBe(0);
     expect(paint(s, "c1", "C30", C.water).rule).toBe("water");
-    expect(paint(s, "c1", "C30", C.firebreak).accept).toBe(true);
+    expect(s.cells.C30).toBe("forest");
   });
 });
 
-describe("approvals", () => {
-  it("PLAN: a YES from the creator doesn't count; a teammate's YES does, and is remembered", () => {
-    const { s } = live();
-    delete s.plan.ridge;
-    const notes = sticky(s, "st1", "ridge", "PLAN\nhold the river\nYES", "r1", "r1");
-    expect(s.plan.ridge).toBeUndefined();
-    expect(notes[0]?.line).toContain("did not post it");
-    sticky(s, "st1", "ridge", "PLAN\nhold the river\nYES", "r1", "p1"); // wrong team
-    expect(s.plan.ridge).toBeUndefined();
-    const ok = sticky(s, "st1", "ridge", "PLAN\nhold the river\nYES", "r1", "r2");
-    expect(s.plan.ridge).toBe("st1");
-    expect(ok.map((n) => n.userId).sort()).toEqual(["r1", "r2"]);
-    sticky(s, "st1", "ridge", "PLAN\nhold the river\nNO", "r1", "r2");
-    expect(s.approvals.st1?.status).toBe("approved");
+describe("spray water in a neighbour's area (the human decision)", () => {
+  it("reads the question in plain words, with or without 's, area and ?", () => {
+    for (const q of ["Spray water in Team 2's area?", "spray water in pine valley area", "SPRAY WATER IN PINE VALLEY", "Spray water in Pine’s area?", "Spray water in Team 2's area?\nTheir fire is crossing"]) {
+      expect(stickyKind(q)).toBe("QUESTION");
+      expect(questionTarget(q)).toBe("pine");
+    }
+    expect(questionTarget("Spray water in Team 3's area")).toBe("cedar");
+    expect(stickyKind("Ana: paint N9 N10 N11")).toBe("ORDER");
+    expect(stickyKind("hello")).toBeNull();
   });
-  it("BACKBURN: parses runs and lists, refuses outside the sector or over the limit; approved squares may go burnt", () => {
-    expect(parseBackburn("P6-P15", "ridge", cells, 20)).toEqual({ labels: ["P6", "P7", "P8", "P9", "P10", "P11", "P12", "P13", "P14", "P15"] });
-    expect(parseBackburn("C3 D3, E3", "ridge", cells, 20)).toEqual({ labels: ["C3", "D3", "E3"] });
-    expect(parseBackburn("A1-C3", "ridge", cells, 20)).toHaveProperty("error");
-    expect(parseBackburn("R5-T5", "ridge", cells, 20)).toHaveProperty("error");
-    expect(parseBackburn("A1-A17 B1-B4", "ridge", cells, 20)).toHaveProperty("error");
-    const { s } = live();
-    sticky(s, "bb", "ridge", "BACKBURN P6-P8\nYES", "r1", "r1");
-    expect(s.backburn.ridge).toEqual([]);
-    sticky(s, "bb", "ridge", "BACKBURN P6-P8\nYES", "r1", "r2");
-    expect(s.backburn.ridge).toEqual(["P6", "P7", "P8"]);
-    expect(paint(s, "r2", "P7", C.burnt).accept).toBe(true);
-    expect(paint(s, "p1", "P8", C.burnt).rule).toBe("sector");
+  it("the asker's YES doesn't count; a teammate's YES opens the neighbour's area for outsideMinutes", () => {
+    const { s, rng } = live();
+    const q = "Spray water in Team 2's area?\nYES";
+    expect(paint(s, "r2", "Z4", C.water, T0 + 10_000).rule).toBe("area");
+    const own = sticky(s, "q1", "ridge", q, "r1", "r1");
+    expect(own[0]?.line).toContain("did not post it");
+    expect(s.outside).toHaveLength(0);
+    sticky(s, "q1", "ridge", q, "r1", "p1"); // answered by another team: no
+    expect(s.outside).toHaveLength(0);
+    const ok = sticky(s, "q1", "ridge", q, "r1", "r2");
+    expect(s.outside).toMatchObject([{ team: "ridge", to: "pine", until: 120_000 }]);
+    expect(ok.find((n) => n.userId === "r1")?.line).toContain("you may paint blue in Team 2's area");
+    expect(ok.find((n) => n.userId === "p1")?.line).toContain("Team 1 is spraying water in your area");
+    expect(paint(s, "r2", "Z4", C.water, T0 + 20_000).accept).toBe(true);
+    expect(s.stats.byPlayer.r2?.outside).toBe(1);
+    expect(paint(s, "r2", "C30", C.water, T0 + 30_000).rule).toBe("area"); // Cedar is not opened
+    expect(paint(s, "c1", "Z5", C.water, T0 + 30_000).rule).toBe("area"); // only Ridge may
+    // Remembered once seen: a later NO doesn't take it back.
+    sticky(s, "q1", "ridge", "Spray water in Team 2's area?\nNO", "r1", "r2");
+    expect(s.approvals.q1?.status).toBe("approved");
+    // Expiry after outsideMinutes.
+    const adv = advance(s, calm, list, byPos, rng, 121_000);
+    expect(adv.ended).toMatchObject([{ team: "ridge", to: "pine" }]);
+    expect(s.outside).toHaveLength(0);
+    expect(paint(s, "r2", "Z6", C.water, T0 + 200_000).rule).toBe("area");
   });
-  it("NO refuses (and can be overturned by a later YES)", () => {
+  it("only neighbours, only in the team's own Orders", () => {
     const { s } = live();
-    sticky(s, "bb", "ridge", "BACKBURN P6-P8\nNO", "r1", "r2");
-    expect(s.approvals.bb?.status).toBe("refused");
-    sticky(s, "bb", "ridge", "BACKBURN P6-P8\nNO\nYES", "r1", "r2");
-    expect(s.backburn.ridge).toHaveLength(3);
+    expect(sticky(s, "q", "ridge", "Spray water in Team 4's area?\nYES", "r1", "r2")[0]?.line).toContain("Ask about a neighbour");
+    expect(sticky(s, "q2", "pine", "Spray water in Team 3's area?\nYES", "r1", "p1")[0]?.line).toContain("your own team's Orders");
+    expect(s.outside).toHaveLength(0);
   });
-  it("waiting list: skips non-players' examples; a refused sticky rewritten without NO waits again", () => {
+  it("NO refuses (and a later YES overturns it)", () => {
     const { s } = live();
-    const ex = { id: "ex", team: "ridge" as const, text: "PLAN · example: hold the river", createdBy: "instructor", modifiedBy: "instructor" };
-    sticky(s, "bb", "ridge", "BACKBURN P6-P8\nNO", "r1", "r2");
-    expect(pendingStickies(s, [ex, { id: "bb", team: "ridge", text: "BACKBURN P6-P8\nNO", createdBy: "r1", modifiedBy: "r2" }]).ridge).toEqual([]);
-    expect(pendingStickies(s, [{ id: "bb", team: "ridge", text: "BACKBURN P6-P9", createdBy: "r1", modifiedBy: "r1" }]).ridge).toEqual(["BACKBURN by Rita"]);
+    const notes = sticky(s, "q", "cedar", "Spray water in Team 4 area?\nNO", "c1", "c2");
+    expect(s.approvals.q?.status).toBe("refused");
+    expect(notes[0]?.line).toContain("Cal said NO");
+    sticky(s, "q", "cedar", "Spray water in Team 4 area?\nNO\nYES", "c1", "c2");
+    expect(s.outside).toMatchObject([{ team: "cedar", to: "birch" }]);
   });
-  it("HELP: approved by the helper team; the first 2 helpers may paint in the asker's sector for 3 minutes", () => {
-    const rules = { ...base, waterTotal: 100 };
-    const { s, rng } = live(rules);
-    applyJoin(s, { userId: "p3", name: "Pax", at: T0 }, "pine");
-    sticky(s, "h", "pine", "HELP Ridge\nYES", "r1", "r2"); // answered by the asker's own team: no
-    expect(s.grants).toHaveLength(0);
-    sticky(s, "h", "pine", "HELP Ridge\nYES", "r1", "p2");
-    expect(s.grants).toMatchObject([{ helper: "pine", to: "ridge", players: [] }]);
-    expect(paint(s, "p1", "C4", C.water, T0 + 60_000).accept).toBe(true);
-    expect(paint(s, "p2", "C5", C.water, T0 + 60_000).accept).toBe(true);
-    expect(paint(s, "p3", "C6", C.water, T0 + 60_000).rule).toBe("sector"); // third helper
-    expect(paint(s, "c1", "C7", C.water, T0 + 60_000).rule).toBe("sector"); // not the helper team
-    advance(s, { ...rules, pSide: 0, pDiag: 0, pEmber: 0 }, list, byPos, rng, 181_000);
-    expect(paint(s, "p1", "C8", C.water, T0 + 400_000).rule).toBe("sector");
+  it("waiting list in plain words; skips non-players' examples; a refused question rewritten without NO waits again", () => {
+    const { s } = live();
+    const ex = { id: "ex", team: "ridge" as const, text: "Spray water in Team 2's area?", createdBy: "instructor", modifiedBy: "instructor" };
+    sticky(s, "q", "ridge", "Spray water in Team 2's area?\nNO", "r1", "r2");
+    expect(pendingStickies(s, [ex, { id: "q", team: "ridge", text: "Spray water in Team 2's area?\nNO", createdBy: "r1", modifiedBy: "r2" }]).ridge).toEqual([]);
+    expect(pendingStickies(s, [{ id: "q", team: "ridge", text: "Spray water in Team 2's area?", createdBy: "r1", modifiedBy: "r1" }]).ridge).toEqual(["spray water in Team 2's area"]);
   });
 });
 
 describe("score", () => {
-  it("forest + water + 10 per standing cabin, as % of the start", () => {
+  it("green + blue squares in the team's area, as % of it", () => {
     const { s } = live();
-    const start = scores(s, list);
-    expect(s.startScore.ridge).toBe(295 + 20);
-    expect(start.ridge.points).toBe(314); // R17 is burning
+    expect(s.startScore.ridge).toBe(306);
+    expect(scores(s, list).ridge.points).toBe(305); // R17 is burning
     s.cells.C4 = "water";
-    s.cells.C5 = "firebreak";
-    s.cells.E5 = "burnt"; // a cabin
+    s.cells.C5 = "burnt";
+    s.cells.C6 = "fire";
     const sc = scores(s, list);
-    expect(sc.ridge.points).toBe(314 - 1 - 10);
-    expect(sc.ridge.pct).toBe(Math.round((100 * 303) / 315));
-    expect(sc.ridge.fire).toBe(1);
+    expect(sc.ridge.points).toBe(303);
+    expect(sc.ridge.pct).toBe(Math.round((100 * 303) / 306));
+    expect(sc.ridge.fire).toBe(2);
   });
 });

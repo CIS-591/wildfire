@@ -1,13 +1,14 @@
 #!/usr/bin/env tsx
 // Instructor CLI. Every command that touches Miro needs MIRO_ACCESS_TOKEN + MIRO_BOARD_ID (.env).
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pool } from "./board.js";
 import { GAME_FILE, ROOT, loadEnv, loadGame, loadLayoutIds, loadRules, loadTeams, saveGame } from "./config.js";
 import {
   BACKDROP, CELL_FONT, COLORS, FIXTURES, GRID, ORDERS, PANELS, STATE_COLOR, TEAMS, TEAM_INFO, buildCells, cellStroke, center, colName, frameBoxes, frameOfRow, ordersTitle,
-  sectorText, startFill, textColorFor, type Box, type CellState,
+  sectorText, startFill, startState, textColorFor, type Box, type CellState,
 } from "./layout.js";
+import { acquireLock, lockOwner as lockPid, releaseLock } from "./lock.js";
 import { MiroRest } from "./miro-rest.js";
 import { Referee } from "./referee.js";
 import { mulberry32, scores, type RuleSet } from "./rules.js";
@@ -56,8 +57,23 @@ async function makeReferee(board: MiroRest) {
   }
   const rehearsal = args.includes("--rehearsal");
   if (rehearsal) console.log("REHEARSAL: one Miro account plays every seat (each inbox card is a player). Not for class.");
-  const ref = new Referee(board, game, rules, { staticIds: new Set(layout?.static), presets, frameIds: frames, rng: seed ? mulberry32(Number(seed)) : undefined, rehearsal });
+  // The token's own user id: the referee's own writes echoed back are never judged as a player's move.
+  const selfId = rehearsal ? undefined : await board.tokenContext().then((c) => c.userId).catch(() => undefined);
+  const ref = new Referee(board, game, rules, { staticIds: new Set(layout?.static), presets, frameIds: frames, ordersIds: layout?.orders, rng: seed ? mulberry32(Number(seed)) : undefined, rehearsal, selfId });
   return { ref, game };
+}
+
+/** Discover the board, retrying while Miro is down or rate limiting (a restart mid-game must come back). */
+async function discoverWithRetry(ref: Referee) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await ref.discover();
+    } catch (e) {
+      if (attempt >= 8) throw e;
+      console.error(`reading the board failed (${(e as Error).message.split("\n")[0]}); retrying in ${attempt * 3}s`);
+      await new Promise((res) => setTimeout(res, attempt * 3000));
+    }
+  }
 }
 
 // One referee at a time: two of them double the Miro reads and fight over game.json (REFLECTION §3).
@@ -66,31 +82,16 @@ const LOCK = path.join(ROOT, "state/referee.lock");
 const STOP_FLAG = path.join(ROOT, "state/stop");
 
 function lockOwner(): number | null {
-  try {
-    const pid = Number(readFileSync(LOCK, "utf8"));
-    if (!pid || pid === process.pid) return null;
-    process.kill(pid, 0); // throws when that process is gone
-    return pid;
-  } catch {
-    return null;
-  }
+  return lockPid(LOCK);
 }
 
 function takeLock() {
-  const pid = lockOwner();
-  if (pid) {
-    console.error(`another referee is running (pid ${pid}). Only one may run: Ctrl-C it first.`);
+  const got = acquireLock(LOCK);
+  if (!got.ok) {
+    console.error(`another referee is running (pid ${got.owner}). Only one may run: Ctrl-C it first.`);
     process.exit(1);
   }
-  mkdirSync(path.dirname(LOCK), { recursive: true });
-  writeFileSync(LOCK, String(process.pid));
-  process.on("exit", () => {
-    try {
-      if (readFileSync(LOCK, "utf8") === String(process.pid)) unlinkSync(LOCK);
-    } catch {
-      /* already gone */
-    }
-  });
+  process.on("exit", () => releaseLock(LOCK));
 }
 
 /** Poll the board until `done()` or Ctrl-C. Ctrl-C pauses: the game is saved and `run` resumes it. */
@@ -118,7 +119,11 @@ async function loop(ref: Referee, game: ReturnType<typeof loadGame>, done: () =>
     } catch (e) {
       console.error(`\ntick failed: ${(e as Error).message}`);
     }
-    saveGame(game);
+    try {
+      saveGame(game);
+    } catch (e) {
+      console.error(`\nsaving the game failed: ${(e as Error).message}`);
+    }
     await new Promise((res) => setTimeout(res, Math.max(0, pollMs - (Date.now() - t0))));
   }
   return stopping;
@@ -127,11 +132,11 @@ async function loop(ref: Referee, game: ReturnType<typeof loadGame>, done: () =>
 /** The rules panel, from the numbers the referee actually plays with (config/rules.json). */
 const rulesHtml = (r: RuleSet) => [
   "<b>🔥 HOW WILDFIRE WORKS</b>",
-  `Every ${r.spreadSeconds} s the fire spreads to neighbouring forest, faster downwind (the WIND arrow on the banner). Embers jump 2 squares downwind. A square burns ${r.burnTicks} spreads, then it's ash.`,
-  "<b>Your team protects its sector</b> (colored borders). Score = forest + water squares + 10 per standing cabin, as % of the start.",
-  `<b>Paint only in your sector, one paint per ${r.cooldownSeconds} s:</b> 💧 water on fire/forest/cabin (dries in ${r.wetSeconds} s, ONE shared pool of ${r.waterTotal}) · 🪓 firebreak on forest (never burns) · ⬛ burnt on forest in your approved BACKBURN.`,
-  `<b>Humans approve</b> with a YES line on the sticky (in ORDERS): PLAN before anyone paints · BACKBURN ≤ ${r.backburnMax} squares · HELP lets ${r.helpPlayers} helpers paint in your sector for ${r.helpMinutes} min. Whoever posted it can't approve it.`,
-  `⚡ Lightning at minutes ${r.lightningAt.join(", ")}. The wind turns every ${r.windMinutes} min. The game ends at ${r.gameMinutes} min or when the fire is out. Anything else you touch is undone.`,
+  `Every ${r.spreadSeconds} s the fire 🟧 spreads to green trees 🟩 next to it, faster with the wind (arrow on the banner). A square burns ${r.burnTicks} spreads, then it is gone ⬛.`,
+  `<b>Paint only blue</b> 🟦 on green or orange squares in your team's area (colored borders). Blue stops the fire and stays. One paint every ${r.cooldownSeconds} s. ONE water pool of ${r.waterTotal} for the whole class.`,
+  `<b>Score</b> = green + blue squares left in your area. The game lasts ${r.gameMinutes} min. At minute ${r.windMinutes} the wind turns${r.lightningAt.length ? ` and lightning starts a new fire (minute ${r.lightningAt.join(", ")})` : ""}.`,
+  `<b>The human call:</b> the boss asks in your Orders: <b>Spray water in Team 2's area?</b> A teammate who didn't ask answers with a line <b>YES</b> or <b>NO</b>. On YES your team may paint blue there for ${r.outsideMinutes} min.`,
+  "Anything else you touch is put back.",
 ];
 
 async function build() {
@@ -145,47 +150,47 @@ async function build() {
   for (const id of [...board.seenFrames.keys()]) await board.deleteItem(id).catch(() => {});
   const staticIds: string[] = [];
   const shape = (b: Box, fill: string, content = "", fontSize = 14, extra: Record<string, unknown> = {}) => ({ content, fill, ...center(b), w: b.w, h: b.h, borderColor: fill, borderWidth: 1, fontSize, shape: "round_rectangle" as const, ...extra });
-  const dark = "#2b2f3a";
+  const dark = COLORS.panel; // palette: config/colors.json
   // Backdrop + panels first (they sit behind everything made later).
   staticIds.push(
     ...(await board.createShapes([
       shape(BACKDROP, COLORS.backdrop),
-      shape(PANELS.rules, "#fff6e0"),
+      shape(PANELS.rules, COLORS.panel),
       shape(PANELS.leaderboard, dark),
-      shape(PANELS.inbox, "#eef1f6"),
+      shape(PANELS.inbox, COLORS.panel),
       { ...shape(PANELS.compass, dark, "", 14), shape: "circle" as const },
     ])),
   );
   // Team-colored header bars on top of each Orders frame.
-  const ordersFrames = await board.createFrames(TEAMS.map((t) => ({ ...ORDERS[t], title: ordersTitle(t) })), "#f7f3ea");
+  const ordersFrames = await board.createFrames(TEAMS.map((t) => ({ ...ORDERS[t], title: ordersTitle(t) })), COLORS.panel);
   staticIds.push(
     ...(await board.createShapes(
-      TEAMS.map((t) => ({ ...shape({ x: ORDERS[t].x + 16, y: ORDERS[t].y + 12, w: ORDERS[t].w - 32, h: 44 }, TEAM_INFO[t].color, `<b>${ordersTitle(t)} · ${sectorText(t)}</b>`, 20), borderColor: COLORS.ink, borderWidth: 2 })),
+      TEAMS.map((t) => ({ ...shape({ x: ORDERS[t].x + 16, y: ORDERS[t].y + 12, w: ORDERS[t].w - 32, h: 44 }, TEAM_INFO[t].color, `<b>${ordersTitle(t)} · ${sectorText(t)}</b>`, 20), borderColor: COLORS.panelBorder, borderWidth: 2 })),
     )),
   );
   // Legend swatches along the bottom of the rules panel.
-  const legend: [CellState, string][] = [["forest", "forest"], ["cabin", "cabin ×10"], ["river", "river"], ["fire", "FIRE"], ["water", "water"], ["firebreak", "firebreak"], ["burnt", "burnt"]];
+  const legend: [CellState, string][] = [["forest", "tree"], ["fire", "FIRE"], ["water", "water"], ["burnt", "burnt"]];
   staticIds.push(
     ...(await board.createShapes(
       legend.map(([st, name], i) => ({ content: `<b>${name}</b>`, fill: STATE_COLOR[st], ...center({ x: PANELS.rules.x + 16 + i * 104, y: PANELS.rules.y + 520, w: 96, h: 64 }), w: 96, h: 64, borderColor: COLORS.ink, borderWidth: 2, fontSize: 13, textColor: textColorFor(st) })),
     )),
   );
   const fx = await board.createShapes([
-    { ...shape(FIXTURES.banner, dark, "<p><b>🔥 WILDFIRE · waiting for the referee</b></p>", 28, { textColor: "#ffffff" }), shape: "rectangle" as const, borderColor: COLORS.ink, borderWidth: 2 },
-    { ...shape(FIXTURES.scoreboard, "#fff6e0", "<p><b>RIDGE 100% · PINE VALLEY 100%</b></p><p><b>CEDAR CREEK 100% · BIRCH HOLLOW 100%</b></p>", 30), shape: "rectangle" as const, borderColor: COLORS.ink, borderWidth: 2 },
-    { ...shape(FIXTURES.leaderboard, "#ffffff", "<p><b>🏆 LEADERBOARD</b></p>", 16, { textAlign: "left", textAlignVertical: "top" }), shape: "rectangle" as const },
+    { ...shape(FIXTURES.banner, dark, "<p><b>🔥 WILDFIRE · waiting for the referee</b></p>", 28, { textColor: COLORS.text }), shape: "rectangle" as const, borderColor: COLORS.panelBorder, borderWidth: 2 },
+    { ...shape(FIXTURES.scoreboard, dark, "<p><b>TEAM 1 100% · TEAM 2 100%</b></p><p><b>TEAM 3 100% · TEAM 4 100%</b></p>", 30, { textColor: COLORS.text }), shape: "rectangle" as const, borderColor: COLORS.panelBorder, borderWidth: 2 },
+    { ...shape(FIXTURES.leaderboard, dark, "<p><b>🏆 LEADERBOARD</b></p>", 16, { textAlign: "left", textAlignVertical: "top", textColor: COLORS.text }), shape: "rectangle" as const },
   ]);
-  const white = "#ffffff";
+  const white = COLORS.text;
   const texts = [
-    { content: "<b>🔥 WILDFIRE</b>", x: PANELS.title.x, y: PANELS.title.y + 45, w: PANELS.title.w, fontSize: 72, color: "#ff6a00" },
-    { content: "<b>LEADERBOARD · live</b>", x: PANELS.leaderboard.x + 24, y: PANELS.leaderboard.y + 40, w: 600, fontSize: 30, color: white },
-    { content: "<b>INBOX · one card per player · read only your own</b>", x: PANELS.inbox.x + 40, y: PANELS.inbox.y + 50, w: 1600, fontSize: 36 },
-    { content: rulesHtml(loadRules()).map((l) => `<p>${l}</p>`).join(""), x: PANELS.rules.x + 24, y: PANELS.rules.y + 250, w: PANELS.rules.w - 48, fontSize: 17 },
+    { content: "<b>🔥 WILDFIRE</b>", x: PANELS.title.x, y: PANELS.title.y + 45, w: PANELS.title.w, fontSize: 72, color: COLORS.heading },
+    { content: "<b>LEADERBOARD · live</b>", x: PANELS.leaderboard.x + 24, y: PANELS.leaderboard.y + 40, w: 600, fontSize: 30, color: COLORS.heading },
+    { content: "<b>INBOX · one card per player · read only your own</b>", x: PANELS.inbox.x + 40, y: PANELS.inbox.y + 50, w: 1600, fontSize: 36, color: COLORS.heading },
+    { content: rulesHtml(loadRules()).map((l) => `<p>${l}</p>`).join(""), x: PANELS.rules.x + 24, y: PANELS.rules.y + 250, w: PANELS.rules.w - 48, fontSize: 17, color: COLORS.text },
     { content: "<b>N</b>", x: PANELS.compass.x + 80, y: PANELS.compass.y + 22, w: 40, fontSize: 26, color: white, align: "center" as const },
     { content: "<b>S</b>", x: PANELS.compass.x + 80, y: PANELS.compass.y + 178, w: 40, fontSize: 26, color: white, align: "center" as const },
     { content: "<b>W</b>", x: PANELS.compass.x + 4, y: PANELS.compass.y + 100, w: 40, fontSize: 26, color: white, align: "center" as const },
     { content: "<b>E</b>", x: PANELS.compass.x + 156, y: PANELS.compass.y + 100, w: 40, fontSize: 26, color: white, align: "center" as const },
-    { content: "🧭", x: PANELS.compass.x + 60, y: PANELS.compass.y + 100, w: 80, fontSize: 40, align: "center" as const },
+    { content: "🧭", x: PANELS.compass.x + 60, y: PANELS.compass.y + 100, w: 80, fontSize: 40, color: white, align: "center" as const },
     ...Array.from({ length: GRID.cols }, (_, c) => ({ content: `<b>${colName(c)}</b>`, x: c * GRID.pitch, y: -36, w: GRID.cell, fontSize: 24, color: TEAM_INFO[c < 18 ? "ridge" : "pine"].color, align: "center" as const })),
     ...Array.from({ length: GRID.rows }, (_, r) => ({ content: `<b>${r + 1}</b>`, x: -84, y: r * GRID.pitch + 30, w: 70, fontSize: 24, color: TEAM_INFO[r < 17 ? "ridge" : "cedar"].color, align: "right" as const })),
   ];
@@ -195,7 +200,7 @@ async function build() {
   const ids = await board.createShapes(
     cells.map((c) => {
       const st = cellStroke(c);
-      return { content: c.label, fill: startFill(c), x: c.x + GRID.cell / 2, y: c.y + GRID.cell / 2, w: GRID.cell, h: GRID.cell, borderColor: st.color, borderWidth: st.width, textColor: textColorFor(c.kind), fontSize: CELL_FONT, parentId: frames[frameOfRow(c.row)] };
+      return { content: c.label, fill: startFill(c), x: c.x + GRID.cell / 2, y: c.y + GRID.cell / 2, w: GRID.cell, h: GRID.cell, borderColor: st.color, borderWidth: st.width, textColor: textColorFor(startState(c)), fontSize: CELL_FONT, parentId: frames[frameOfRow(c.row)] };
     }),
   );
   const layout = {
@@ -219,7 +224,7 @@ async function main() {
     case "sim": {
       const seeds = opt("seeds") ? Array.from({ length: Number(opt("seeds")) }, (_, i) => i + 1) : [Number(opt("seed", "1"))];
       for (const seed of seeds) {
-        const res = await runSimulation(loadRules(), { players: Number(opt("players", "28")), seed, turnSec: Number(opt("turn", "15")), mistakeRate: opt("mistakes") ? Number(opt("mistakes")) : undefined });
+        const res = await runSimulation(loadRules(), { players: Number(opt("players", "28")), seed, paceSec: Number(opt("pace", "45")), mistakeRate: opt("mistakes") ? Number(opt("mistakes")) : undefined });
         console.log(formatSim(res, seeds.length === 1));
       }
       return;
@@ -238,7 +243,7 @@ async function main() {
         await board.updateShape(id, { fill });
         const back = (await board.listItems()).find((i) => i.id === id)?.fill;
         const ok = back?.toLowerCase() === fill;
-        console.log(`  ${name.padEnd(9)} ${fill} -> read back ${back} ${ok ? "OK" : `MISMATCH${name === "firebreak" ? " (set firebreak to #808080 in config/colors.json and kit/board.json)" : ""}`}`);
+        console.log(`  ${name.padEnd(9)} ${fill} -> read back ${back} ${ok ? "OK" : "MISMATCH"}`);
       }
       await board.updateShape(id, { fill: STATE_COLOR.forest });
       return;
@@ -254,27 +259,27 @@ async function main() {
       return;
     }
     case "lobby": {
-      // Before the fire: students /join (an inbox card each), teams + roles assigned, PLANs approved, paints undone.
+      // Before the fire: students /join (an inbox card each), teams + roles assigned, paints undone.
       takeLock();
       const { ref, game } = await makeReferee(miro());
-      await ref.discover();
+      await discoverWithRetry(ref);
       await ref.rebuildMissing();
       if (ref.state.phase !== "lobby") {
         console.error(`the game is ${ref.state.phase}; run \`reset\` for a new game, or \`run\` to resume it.`);
         process.exit(1);
       }
-      console.log("LOBBY open: students /join now and bosses post their PLAN. Ctrl-C when everyone is in, then `npm run referee run`.");
+      console.log("LOBBY open: students /join now. Ctrl-C when everyone is in, then `npm run referee run`.");
       await loop(ref, game, () => false, pollMs);
       await ref.pause();
       saveGame(game);
       return;
     }
     case "run": {
-      // The fire. Lights it from the lobby, or resumes a paused game. Ends at 30 min or when the fire is out.
+      // The fire. Starts it from the lobby, or resumes a paused game. Ends at gameMinutes (10) or when the fire is out.
       takeLock();
       if (existsSync(STOP_FLAG)) unlinkSync(STOP_FLAG); // an old request must not end this game
       const { ref, game } = await makeReferee(miro());
-      await ref.discover();
+      await discoverWithRetry(ref);
       await ref.rebuildMissing();
       if (ref.state.phase === "over") {
         console.log(ref.resultsText());
@@ -282,7 +287,7 @@ async function main() {
         return;
       }
       await ref.start();
-      console.log("🔥 LIVE. Ctrl-C pauses (resume with `run`); `stop` ends it now.");
+      console.log(`🔥 LIVE for ${ref.rules.gameMinutes} min. Ctrl-C pauses (resume with \`run\`); \`stop\` ends it now.`);
       const paused = await loop(ref, game, () => ref.state.phase === "over", pollMs);
       if (paused) await ref.pause();
       saveGame(game);
@@ -303,7 +308,7 @@ async function main() {
       }
       takeLock();
       const { ref, game } = await makeReferee(miro());
-      await ref.discover();
+      await discoverWithRetry(ref);
       await ref.stop();
       saveGame(game);
       console.log(ref.resultsText());
@@ -317,12 +322,12 @@ async function main() {
     }
     default:
       console.log(`wildfire referee
-  npm run sim [-- --players 28 --turn 15 --seed 1 | --seeds 3]   offline game with bots (tuning)
+  npm run sim [-- --players 28 --seed 1 | --seeds 3 --pace 45]   offline game with bots (tuning)
   npm run referee build      WIPE the board and build it (SPEC.md geometry): grid, panels, Orders frames
   npm run referee verify     token + board + color check
   npm run referee reset      new game: starting colors, empty Inbox and Orders
-  npm run referee lobby      students join, bosses post PLANs (Ctrl-C when everyone is in)
-  npm run referee run        light the fire and referee it (Ctrl-C pauses; run again resumes)
+  npm run referee lobby      students join (Ctrl-C when everyone is in)
+  npm run referee run        start the fire and referee the 10-minute game (Ctrl-C pauses; run again resumes)
   npm run referee stop       end now: highest % wins
   npm run referee results    print the result
   options: --poll 3 (seconds between board reads), --seed N (repeatable fire), --minutes N (shorter game),

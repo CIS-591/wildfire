@@ -22,20 +22,16 @@
     }
   },
   "colors": {
-    "forest": "#93d275",
-    "cabin": "#f5d128",
-    "river": "#414bb2",
-    "fire": "#ff9d48",
-    "water": "#23bfe7",
-    "firebreak": "#8b5a2b",
-    "burnt": "#1a1a1a",
-    "firebreakFallback": "#808080",
-    "frame": "#3d4250"
+    "tree": "#3fa66b",
+    "fire": "#ff5a1f",
+    "water": "#3aa7ff",
+    "burnt": "#2a2420",
+    "frame": "#0e1311"
   },
   "teams": {
     "ridge": {
-      "name": "Ridge",
-      "color": "#b384bb",
+      "name": "Team 1",
+      "color": "#a78bfa",
       "columns": "A-R",
       "rows": "1-17",
       "sector": {
@@ -50,20 +46,21 @@
         "w": 1344,
         "h": 1280
       },
-      "cabins": [
-        "E5",
-        "M13"
-      ],
-      "river": "J4-J12",
       "firstFire": "R17",
+      "startScan": {
+        "x": 768,
+        "y": 704,
+        "w": 384,
+        "h": 384
+      },
       "neighbours": [
         "pine",
         "cedar"
       ]
     },
     "pine": {
-      "name": "Pine Valley",
-      "color": "#ea94bb",
+      "name": "Team 2",
+      "color": "#f472b6",
       "columns": "S-AJ",
       "rows": "1-17",
       "sector": {
@@ -78,20 +75,21 @@
         "w": 1344,
         "h": 1280
       },
-      "cabins": [
-        "AF5",
-        "X13"
-      ],
-      "river": "AA4-AA12",
       "firstFire": "S17",
+      "startScan": {
+        "x": 1152,
+        "y": 704,
+        "w": 384,
+        "h": 384
+      },
       "neighbours": [
         "ridge",
         "birch"
       ]
     },
     "cedar": {
-      "name": "Cedar Creek",
-      "color": "#7b92ff",
+      "name": "Team 3",
+      "color": "#fde047",
       "columns": "A-R",
       "rows": "18-34",
       "sector": {
@@ -106,20 +104,21 @@
         "w": 1344,
         "h": 1280
       },
-      "cabins": [
-        "E30",
-        "M22"
-      ],
-      "river": "J23-J31",
       "firstFire": "R18",
+      "startScan": {
+        "x": 768,
+        "y": 1088,
+        "w": 384,
+        "h": 384
+      },
       "neighbours": [
         "ridge",
         "birch"
       ]
     },
     "birch": {
-      "name": "Birch Hollow",
-      "color": "#ffffff",
+      "name": "Team 4",
+      "color": "#e2e8f0",
       "columns": "S-AJ",
       "rows": "18-34",
       "sector": {
@@ -134,12 +133,13 @@
         "w": 1344,
         "h": 1280
       },
-      "cabins": [
-        "AF30",
-        "X22"
-      ],
-      "river": "AA23-AA31",
       "firstFire": "S18",
+      "startScan": {
+        "x": 1152,
+        "y": 1088,
+        "w": 384,
+        "h": 384
+      },
       "neighbours": [
         "pine",
         "cedar"
@@ -202,7 +202,7 @@
   },
   "orders": {
     "ridge": {
-      "title": "ORDERS \u00b7 RIDGE",
+      "title": "ORDERS · TEAM 1",
       "x": 2440,
       "y": 340,
       "w": 760,
@@ -210,7 +210,7 @@
       "id": "3458764690210204118"
     },
     "pine": {
-      "title": "ORDERS \u00b7 PINE VALLEY",
+      "title": "ORDERS · TEAM 2",
       "x": 3240,
       "y": 340,
       "w": 760,
@@ -218,7 +218,7 @@
       "id": "3458764690210204119"
     },
     "cedar": {
-      "title": "ORDERS \u00b7 CEDAR CREEK",
+      "title": "ORDERS · TEAM 3",
       "x": 2440,
       "y": 1300,
       "w": 760,
@@ -226,7 +226,7 @@
       "id": "3458764690210204120"
     },
     "birch": {
-      "title": "ORDERS \u00b7 BIRCH HOLLOW",
+      "title": "ORDERS · TEAM 4",
       "x": 3240,
       "y": 1300,
       "w": 760,
@@ -235,18 +235,16 @@
     }
   },
   "stickySlots": {
-    "note": "Positions are RELATIVE to the Orders frame's top-left. Sticky size 128x147, a 5x5 grid (x 24/168/312/456/600, y 70/234/398/562/726). Each new PLAN/BACKBURN/HELP request is a NEW sticky in the first free slot of its kind (the referee never re-reads an approved sticky). STATUS: start at slot (number of letters in your name) mod 7, then the next free one. Never move a sticky that is already there. Slot (600,726) holds the instructor EXAMPLE sticky: never use it.",
+    "note": "Positions are RELATIVE to the Orders frame's top-left. Sticky size 128x147 on a 5x5 grid (x 24/168/312/456/600, y 70/234/398/562/726). question: the boss's 'Spray water in <team>'s area?' stickies, each a NEW sticky in the first free one, never edited after posting. order: one '<name>: paint ...' sticky per worker; a worker without one creates it starting at index (letters in its name) mod 20, then the next free one. Never move a sticky that is already there. Slot (600,726) holds the instructor EXAMPLE sticky: never use it.",
     "size": {
       "w": 128,
       "h": 147
     },
-    "plan": [
+    "question": [
       {
         "x": 24,
         "y": 70
-      }
-    ],
-    "backburn": [
+      },
       {
         "x": 168,
         "y": 70
@@ -258,33 +256,31 @@
       {
         "x": 456,
         "y": 70
-      },
-      {
-        "x": 600,
-        "y": 70
-      }
-    ],
-    "help": [
-      {
-        "x": 24,
-        "y": 234
-      },
-      {
-        "x": 168,
-        "y": 234
-      },
-      {
-        "x": 312,
-        "y": 234
-      },
-      {
-        "x": 456,
-        "y": 234
       }
     ],
     "order": [
       {
         "x": 600,
+        "y": 70
+      },
+      {
+        "x": 24,
+        "y": 234
+      },
+      {
+        "x": 168,
+        "y": 234
+      },
+      {
+        "x": 312,
+        "y": 234
+      },
+      {
+        "x": 456,
+        "y": 234
+      },
+      {
+        "x": 600,
         "y": 234
       },
       {
@@ -314,9 +310,7 @@
       {
         "x": 168,
         "y": 562
-      }
-    ],
-    "status": [
+      },
       {
         "x": 312,
         "y": 562
@@ -346,12 +340,15 @@
         "y": 726
       }
     ],
+    "reserved": {
+      "example": {
+        "x": 600,
+        "y": 726
+      }
+    },
     "colors": {
-      "PLAN": "light_green",
-      "ORDER": "yellow",
-      "BACKBURN": "orange",
-      "HELP": "red",
-      "STATUS": "light_blue"
+      "order": "yellow",
+      "question": "red"
     }
   },
   "inboxCard": {
@@ -363,6 +360,17 @@
       "w": 3500,
       "h": 1300
     }
+  },
+  "legend": [
+    "🟩 green #3fa66b = tree, protect these",
+    "🟧 orange #ff5a1f = fire, spreads by itself (only the referee paints it)",
+    "🟦 blue #3aa7ff = water, you paint it, fire can't cross it",
+    "⬛ black #2a2420 = burnt, gone"
+  ],
+  "maxScan": {
+    "w": 384,
+    "h": 384,
+    "note": "Never scan a box bigger than 6x6 squares (384x384) in one call: bigger scans break the MCP output limit. To look at specific squares, peek them by id from `cells`."
   },
   "cells": {
     "A1": "3458764690210318709",

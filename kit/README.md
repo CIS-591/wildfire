@@ -1,109 +1,62 @@
 # 🔥 Wildfire (CIS 591, Module 4)
 
-One class, one Miro board, one forest fire. Four teams each protect a corner of the forest. Your
-Claude agent does the fast work: it reads the board, posts orders and paints squares. **You** make the
-big calls. A referee program spreads the fire every 20 s, checks every paint and keeps the score.
+A forest is on fire. There are four teams, Team 1 to Team 4. Your team protects one corner of
+it: your team's area. Your Claude paints water.
 
-```
-          A ............ R | S ............ AJ
-       1 +-----------------+-----------------+
-         | RIDGE           | PINE VALLEY     |
-         | cabins E5  M13  | cabins X13 AF5  |
-         | river  J4-J12   | river AA4-AA12  |
-      17 |             R17 * S17             |
-         +---------------- * ----------------+   * = first fire
-      18 |             R18 * S18             |
-         | CEDAR CREEK     | BIRCH HOLLOW    |
-         | cabins E30 M22  | cabins X22 AF30 |
-         | river  J23-J31  | river AA23-AA31 |
-      34 +-----------------+-----------------+
-```
+- 🟩 **green** = tree, protect these
+- 🟧 **orange** = fire, spreads by itself
+- 🟦 **blue** = water, you paint it, fire can't cross it
+- ⬛ **black** = burnt, gone
 
-The fire starts in the middle, touching all four sectors. Wind pushes it; it turns every 5 minutes;
-lightning strikes four times (minutes 5, 10, 15, 20). Highest % of forest (and cabins) left after 30 minutes wins.
+1. Type `/join Your Name`, then `/play`.
+2. Your Claude may ask you one YES/NO question. Answer it.
+3. Most green left in your team's area after 10 minutes wins.
 
-| Square | Color | |
-|---|---|---|
-| 🌲 Forest | green `#93d275` | what you protect |
-| 🏠 Cabin | yellow `#f5d128` | worth 10 squares |
-| 🌊 River | dark blue `#414bb2` | never burns |
-| 🔥 Fire | orange `#ff9d48` | the referee paints it |
-| 💧 Water | cyan `#23bfe7` | you: stops a square for 90 s, uses the class's shared pool |
-| 🪓 Firebreak | brown `#8b5a2b` | you: permanent, fire can't cross (embers can jump one) |
-| ⬛ Burnt | black `#1a1a1a` | gone; you may burn only an approved BACKBURN |
+That's it. Watch the board, not the terminal.
 
-## Setup (5 steps, about 5 minutes)
+---
 
-```
- clone kit ──▶ join Miro team ──▶ connect Miro MCP ──▶ /join Your Name ──▶ /play
-                                                                 │
-                                   second terminal: /approve ◀───┘  (when your boss asks)
-```
+## Setup (once, about 5 minutes)
 
-1. **Get the kit**
+1. **Get the kit**: `git clone --branch module-4 https://github.com/CIS-591/class-examples.git wildfire`,
+   then `cd wildfire`.
+2. **Join the Miro team**: accept the invite in your ASU email, then open the board (link in
+   `board.json` → `boardUrl`). You must be able to **edit**.
+3. **Connect Miro**: start `claude` in the `wildfire` folder and type
+   `/plugin install miro@claude-plugins-official`, then `/reload-plugins`, then `/mcp` → **miro** →
+   **Authenticate** → pick the **CIS 591** team. When Claude asks to use a Miro tool, choose
+   "Yes, and don't ask again".
+4. `/join Ana K` (first name + last initial). Within a minute your card on the board shows your
+   team ("Team 1".."Team 4") and role.
+5. `/play` when your instructor says go.
 
-   ```bash
-   git clone --branch module-4 https://github.com/CIS-591/class-examples.git wildfire
-   cd wildfire
-   ```
+## What happens during the game
 
-2. **Join the Miro team.** Accept the invite from your instructor (check your ASU email), then open
-   the board (link in `board.json` → `boardUrl`, also on the class page). You must be able to **edit**.
-3. **Connect the Miro MCP in Claude Code.** Start `claude` in the `wildfire` folder and type:
-
-   ```text
-   /plugin install miro@claude-plugins-official
-   /reload-plugins
-   /mcp
-   ```
-
-   In `/mcp` pick **miro** → **Authenticate**, log in, and choose the **CIS 591** team. (If the
-   install fails: `/plugin marketplace add miroapp/miro-ai`, then `/plugin install miro@miro-ai`.)
-   When Claude asks to use a Miro tool, choose "Yes, and don't ask again".
-4. **Join**: `/join Ana K` (first name + last initial). Your inbox card appears in the Inbox area; within
-   a minute the referee writes your **team** and your **role** on it.
-5. **Play** when your instructor says go: `/play`. Watch the board, not the terminal.
-
-## Roles
-
-- **Boss** (first player on each team): the orchestrator. Posts the team PLAN, gives each worker one
-  ORDER sticky ("FIREBREAK N9 N10 N11"), asks for BACKBURNs and HELP.
-- **Workers** (everyone else): read their own ORDER, paint one square about every 15 s, post a STATUS.
-
-Everything goes through the **Orders frame** of your team on the board. Agents never talk directly.
-
-## The three human decisions
-
-Your agent never says YES for you. In a second terminal run `/approve` (or type `YES` / `NO` as a new
-line on the sticky in Miro). You can't approve a sticky you posted yourself.
-
-1. **PLAN**: until a teammate approves the boss's plan, **no paint from your team counts**. Be quick.
-2. **BACKBURN**: burn a strip of your own forest on purpose so the fire has nothing to eat. You lose
-   those trees for sure; you may save many more.
-3. **HELP**: another team is losing and asks your team for 2 painters for 3 minutes. Your sector gets
-   less attention; theirs may survive. Water is one pool for the whole class, so helping is real.
+- One player per team is the **boss**: their Claude finds the fire and writes notes like
+  `Ana: paint N9 N10 N11` for the others. Everyone's Claude paints blue.
+- The YES/NO question is like: "Spray water in Team 2's area?" (always a neighbour: Team 1 borders
+  Teams 2 and 3, Team 4 borders Teams 2 and 3). YES lets your team paint there for
+  2 minutes. It helps both teams, but uses water the whole class shares.
 
 ## What you will learn
 
-1. **Orchestrator and workers**: one agent plans, the others execute.
-2. **Coordination through shared state**: agents never talk directly; everything goes through the board.
-3. **Human-in-the-loop**: agents do the fast, small work; risky moves wait for a human YES, and waiting
-   costs time.
-4. **Shared resources**: one water pool for everyone.
-5. **Cooperation and trust between teams.**
-6. **Agents make mistakes**; rules and a referee catch them.
+1. One agent plans, the others do the work.
+2. Agents never talk directly: they only read and write the board.
+3. Agents do the fast work; the risky move waits for a human YES, and waiting costs time.
+4. One water supply shared by everyone.
+5. Helping a neighbour can help you too.
+6. Agents make mistakes; a referee catches them.
 
 ## If something goes wrong
 
 | You see | Do this |
 |---|---|
 | "not authorized" / board not found | `/mcp` → miro → clear authentication, sign in again, pick **CIS 591** |
-| "rate limit" or "daily limit" from Miro | Tell your instructor; pair up with a teammate |
-| Your agent stopped | Type `/play` again; it picks up where it left off |
-| No team on your card after a minute | Tell your instructor, then `/join` again (it won't make a second card) |
-| Paints keep getting reverted | Read your inbox card; usually the PLAN isn't approved yet: run `/approve` |
-| Your agent wants to move or delete something | Say no. Only square colors and your team's stickies may change |
+| "rate limit" or "daily limit" from Miro | Tell your instructor |
+| Your Claude stopped | Type `/play` again |
+| No team on your card after a minute | Tell your instructor, then `/join` again |
+| Your Claude wants to move or delete something | Say no |
 
-Fair play: let your agent paint, don't edit squares by hand, don't read other players' inbox cards.
+Fair play: let your Claude paint, don't edit squares by hand.
 
-(Instructor check: `node scripts/check-board.mjs` verifies `board.json` geometry offline.)
+(Instructor check: `node scripts/check-board.mjs` verifies `board.json` offline.)
