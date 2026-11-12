@@ -60,6 +60,8 @@ interface Shadow {
 interface StaticSnap extends Shadow {
   raw: string;
   type: string;
+  /** Degrees as built (the area labels stand at 90/270): put back as it was, never flattened. */
+  rotation?: number;
 }
 
 /** One planned board write. */
@@ -456,7 +458,7 @@ export class Referee {
     }
     for (const id of this.staticIds) {
       const it = items.find((i) => i.id === id);
-      if (it) this.staticSnap.set(id, { content: norm(it.content), raw: it.content, type: it.type, fill: it.fill, x: it.x, y: it.y, w: it.w, h: it.h });
+      if (it) this.staticSnap.set(id, { content: norm(it.content), raw: it.content, type: it.type, fill: it.fill, x: it.x, y: it.y, w: it.w, h: it.h, rotation: it.rotation });
     }
     this.stickies = this.readStickies(items);
     this.learnSelf(items);
@@ -1147,7 +1149,7 @@ export class Referee {
         }
         continue;
       }
-      const geomOff = fresh(this.geomWriteAt, id) && (Math.abs(it.x - snap.x) > TOL || Math.abs(it.y - snap.y) > TOL || Math.abs(it.w - snap.w) > TOL || (snap.type !== "text" && Math.abs(it.h - snap.h) > TOL) || !!it.rotation);
+      const geomOff = fresh(this.geomWriteAt, id) && (Math.abs(it.x - snap.x) > TOL || Math.abs(it.y - snap.y) > TOL || Math.abs(it.w - snap.w) > TOL || (snap.type !== "text" && Math.abs(it.h - snap.h) > TOL) || Math.abs((it.rotation ?? 0) - (snap.rotation ?? 0)) > 0.5);
       const textOff = fresh(this.lastWriteAt, id) && (norm(it.content) !== snap.content || (snap.type === "shape" && (it.fill ?? "") !== (snap.fill ?? "")));
       if (!geomOff && !textOff) continue;
       if (this.isSelf(it.modifiedBy)) continue;
@@ -1167,8 +1169,9 @@ export class Referee {
             ...(textOff ? { content: snap.raw, ...(snap.type === "shape" && snap.fill ? { fill: snap.fill } : {}) } : {}),
             x: snap.x,
             y: snap.y,
-            ...(snap.type === "text" ? {} : { w: snap.w, h: snap.h }),
-            ...(it.rotation ? { rotation: 0 } : {}),
+            // A text's rotation travels with its width (Miro geometry); always sent so a rotated label stays rotated.
+            ...(snap.type === "text" ? { w: snap.w } : { w: snap.w, h: snap.h }),
+            rotation: snap.rotation ?? 0,
           }),
         ok: () => this.touch(id, true),
       });
@@ -1925,7 +1928,7 @@ export class Referee {
     const painted = players.reduce((a, p) => a + paintsOf(p), 0);
     const lines = [
       `<b>${name} · Boss ${boss ? clamp(boss) : "-"} · MVP ${paintsOf(mvp) ? `${clamp(mvp.name)} (${paintsOf(mvp)})` : "-"}</b>`,
-      `Water left ${s.water[t]} · Squares painted ${painted} · Fires set ${s.stats.lit?.[t] ?? 0} · Trees burned ${s.stats.burnedOthers?.[t] ?? 0}`,
+      `Water ${s.water[t]}/${this.rules.waterPerTeam} · Attacks left ${Math.max(0, this.rules.attacksPerTeam - (s.attacksUsed?.[t] ?? 0))}/${this.rules.attacksPerTeam} · Painted ${painted}`,
       `Crew: ${crew.length ? crew.join(", ") : "-"}`,
     ];
     const attack = s.attacks.find((g) => g.team === t && g.left > 0 && s.phase === "live");

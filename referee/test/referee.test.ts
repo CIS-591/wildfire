@@ -100,7 +100,7 @@ describe("the game", () => {
     await tick();
     expect(fake.cell("Z4").fill).toBe(C.fire);
     expect(fx("banner")).toContain("TEAM 1 SET FIRE TO TEAM 2'S AREA!");
-    expect(fx("leaderboard")).toContain("Fires set 1 · Trees burned 0");
+    expect(fx("leaderboard")).toContain("Attacks left 1/2");
     expect(fx("leaderboard")).toContain("ATTACK ON TEAM 2: 2 fires left");
     for (let i = 0; i < 41; i++) await tick(); // 2 min later
     expect(text(cards.r2!)).toContain("Your attack on Team 2's area is over");

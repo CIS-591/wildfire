@@ -686,6 +686,21 @@ describe("Miro misbehaving, restarts, clocks", () => {
     expect(g2.fake.items.has(meme.id)).toBe(false);
     expectConverged(g2);
   });
+  it(T("A131", "a rotated area label (static text at 270°) is left alone, and put back rotated when a vandal moves or flattens it"), async () => {
+    const fake = FakeBoard.seeded(() => 0);
+    const label = fake.add({ type: "text", content: "<p>TEAM 1'S AREA</p>", x: -100, y: 540, w: 1168, h: 50, rotation: 270 }, "referee");
+    fake.staticIds.push(label.id);
+    const g = await setup({ fake, live: true, statics: true });
+    const u0 = g.fake.calls.update;
+    await g.ticks(5);
+    expect(g.fake.items.get(label.id)!.rotation).toBe(270);
+    const writesWhileQuiet = g.fake.calls.update - u0;
+    g.fake.playerEdit("c1", label.id, { x: 400, rotation: 0 });
+    await g.ticks(3);
+    const it = g.fake.items.get(label.id)!;
+    expect([it.x, it.rotation]).toEqual([-100, 270]);
+    expect(writesWhileQuiet).toBeLessThan(40); // the untouched label is not rewritten every tick
+  });
   it(T("A97", "game.json cut short by a kill: the previous save is loaded"), () => {
     const dir = mkdtempSync(path.join(tmpdir(), "wf-"));
     const file = path.join(dir, "game.json");
@@ -926,12 +941,12 @@ describe("fire attack, per-team water, batches, the fire model", () => {
     expect(g.card("r2")).toContain("has lit its 3 squares");
     const violet = TEAM_INFO.ridge.color;
     expect(border(g, "Z4")).toEqual({ color: violet, width: 8 });
-    expect(g.fx("leaderboard")).toContain("Fires set 3 · Trees burned 0");
+    expect(g.ref.state.stats.lit.ridge).toBe(3);
+    expect(g.fx("leaderboard")).toContain("Attacks left 1/2");
     await g.ticks(25); // 75 s: 3 spreads, Z4 burns out and keeps a thinner border in Team 1's color
     expect(g.fill("Z4")).toBe(C.burnt);
     expect(border(g, "Z4")).toEqual({ color: violet, width: 6 });
     expect(g.ref.state.stats.burnedOthers.ridge).toBe(3);
-    expect(g.fx("leaderboard")).toContain("Fires set 3 · Trees burned 3");
     expect(border(g, "R17").width ?? 2).not.toBe(6); // wild fire: normal border
     expect(g.ref.state.water.ridge).toBe(400); // orange costs no water
     expectConverged(g);
@@ -1038,7 +1053,7 @@ describe("fire attack, per-team water, batches, the fire model", () => {
     expect([g.fill("C6"), g.fill("Z4")]).toEqual([C.forest, C.water]);
     expect(g.card("r2")).toContain("Team 1's water is empty");
     expect(g.fx("banner")).toContain("WATER T1 0 · T2 1 · T3 2 · T4 2");
-    expect(g.fx("leaderboard")).toMatch(/TEAM 1 · Boss[^]*Water left 0 /);
+    expect(g.fx("leaderboard")).toMatch(/TEAM 1 · Boss[^]*Water 0\//);
   });
 });
 
