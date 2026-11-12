@@ -1269,8 +1269,8 @@ describe("tester fixes (human test, 12 Nov)", () => {
     const g = await setup({ live: true });
     // Rob (r2, Team 1) writes his OWN name in Team 2's Orders: still another team's frame.
     const named = g.fake.playerSticky("r2", "pine", "Rob: paint A1 A2 A3");
-    // Hong never joined (not a player): his sticky in Team 1's Orders goes too.
-    const guest = g.fake.playerSticky("hong", "ridge", "Hong: paint A1 A2 A3");
+    // A guest never joined (not a player): their sticky in Team 1's Orders goes too.
+    const guest = g.fake.playerSticky("guest", "ridge", "Guest: paint A1 A2 A3");
     const mine = g.fake.playerSticky("referee", "ridge", "Rita: paint C4");
     const own = g.fake.playerSticky("r1", "ridge", "Rob: paint C4 C5");
     await g.ticks(2);
@@ -1279,7 +1279,7 @@ describe("tester fixes (human test, 12 Nov)", () => {
     expect(g.fake.items.has(guest.id)).toBe(false);
     expect(g.fake.items.has(mine.id)).toBe(true);
     expect(g.fake.items.has(own.id)).toBe(true);
-    g.fake.playerEditSticky("hong", own.id, "Hong: paint A1 A2 A3");
+    g.fake.playerEditSticky("guest", own.id, "Guest: paint A1 A2 A3");
     await g.ticks(2);
     expect(stripHtml(g.fake.items.get(own.id)!.content)).toContain("Rob: paint C4 C5");
   });
