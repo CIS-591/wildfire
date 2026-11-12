@@ -1,11 +1,11 @@
 # Wildfire referee (instructor only)
 
-The game engine for **Wildfire**, CIS 591 Module 4 (contract: [`../SPEC.md`](../SPEC.md)). Four teams,
+The game engine for **Wildfire**, CIS 591 Module 4 (contract: [`../SPEC.md`](../SPEC.md)). Up to four teams,
 one Miro board, one 10-minute forest fire; each student's Claude agent paints through Miro's MCP server.
 This program watches the board through the Miro REST API and is the only thing that moves the fire:
-it spreads it, burns squares out, strikes lightning in each area once, undoes illegal paints and junk,
-reads the "Start a fire in <neighbour>'s area?" stickies, and keeps the banner, scoreboard,
-leaderboard and inbox cards live. **It never paints water for anyone.**
+it spreads it, burns squares out, strikes lightning in each playing team's area once, undoes illegal paints and junk,
+reads the "Start a fire in <neighbour>'s area?" stickies, draws the teams at random when the game starts,
+and keeps the banner, scoreboard, leaderboard (4 ranked team rows with score badges and icons) and inbox cards live. **It never paints water for anyone.**
 
 Started as a copy of the Color Wars referee; [REFLECTION.md](REFLECTION.md) has last class's lessons.
 Run day: [RUNBOOK.md](RUNBOOK.md).
@@ -26,13 +26,14 @@ Run day: [RUNBOOK.md](RUNBOOK.md).
 | `npm run referee verify` | Token + board + color check |
 | `npm run referee reset` | New game: all green, the 4 centre squares orange, empty Inbox and Orders |
 | `npm run referee lobby` | Students `/join`. Ctrl-C when all are in |
-| `npm run referee run` | Starts the 10-minute fire and referees it. Ctrl-C pauses; `run` resumes |
+| `npm run referee run` | Draws the teams, starts the 10-minute fire and referees it. Ctrl-C pauses; `run` resumes |
 | `npm run referee stop` | End now: highest % wins |
 | `npm run referee results` | Winner, % per team, paints, approvals, refusals |
 | `npm test` · `npm run typecheck` · `npm run lint` | Checks (incl. every attack in `test/ATTACKS.md` and a 30-bot vandal stress game) |
 
 Options: `--poll 3` (seconds between reads), `--seed N` (repeatable fire), `--minutes N` (shorter game),
-`--rehearsal` (test with ONE Miro account: every inbox card is its own player, a paint counts for the
+`--teams N` (1–4 teams play, Team 1 first; default 4), `--team-size N` (players per team), `--no-draw`
+(place players as they join instead of the draw), `--rehearsal` (test with ONE Miro account: every inbox card is its own player, a paint counts for the
 square's team member who painted least recently, a question sticky's creator is the team's boss and its
 YES/NO comes from another member; never in class). The game is saved to `state/game.json` every
 poll, so a crashed or paused referee resumes; only one referee runs at a time (`state/referee.lock`).
@@ -40,15 +41,37 @@ Whenever a fixture or square gets a new id (and on `reset`), the referee writes 
 `state/live-ids.json`; run `python3 ../board/build/sync_ids.py` to merge them into `board/board.json`,
 `kit/board.json` and `config/layout.json`, so agents never peek at a replaced id.
 
+## Teams: the draw
+
+With `drawTeams: true` (default in every rules file) a `/join` only registers the player: the card says
+`👋 Ana: you're in! 🎲 Teams are drawn when the game starts…`. When `run` starts the game, every player is
+drawn into a random team (presets in `config/teams.json` keep theirs); the first one drawn into a team is
+its boss. The card then gets `🎲 The draw: Ana: you are on Team 1 (ridge). … You are the BOSS: …` and the
+header `Ana · TEAM 1 · 👑 BOSS · 0 squares`. The flags matter on `run`, where the draw happens:
+
+```
+npm run referee run -- --team-size 4      # 14 players -> teams of 4, 4, 3, 3
+npm run referee run -- --teams 3          # 3 teams, Team 4's area is empty
+npm run referee run -- --no-draw          # old way: placed as they join, balanced
+```
+
+`--team-size` uses only as many teams as it needs (8 players, size 3: teams of 3, 3, 2, Team 4 not
+playing); more players than teams × size are spread evenly. Someone joining after the start gets a team
+at once (a random smallest team in play; when all are full at `--team-size`, the next team opened by `--teams` starts playing). A team with no players is **not playing**: its area gets no
+start fire and no lightning, nobody may attack it, the scoreboard says `TEAM 3 not playing`, and the
+banner's water list shows only teams in play. Fire can still spread into it from the centre.
+
 ## Rules (numbers in `config/rules.json`, colors in `config/colors.json`)
 
 - 4 colors: green `#3fa66b` tree, orange `#ff5a1f` fire, blue `#3aa7ff` water, black `#2a2420` burnt, on a
-  light board (backdrop `#f5f6f8`, white square borders and band frames, panels `#ffffff`, all in `config/colors.json`).
+  light board (backdrop `#f5f6f8`, white band frames, panels `#ffffff`, all in `config/colors.json`). Every square has a
+  width-4 border in its team's color (`square.teamBorderWidth`): Team 1 violet `#7c3aed`, Team 2 pink `#db2777`,
+  Team 3 gold `#ca8a04`, Team 4 slate `#334155`.
 - Students only ever see "Team 1".."Team 4" (ids `ridge`, `pine`, `cedar`, `birch` stay internal).
 - Fire: every `spreadSeconds` each burning square may ignite each green neighbour, `pSide` up/down/left/right
   and `pDiag` diagonally, the same in every direction. A square burns `burnTicks` spreads, then turns
-  black. Blue and black never burn. It starts in the centre plus a 2-square fire in every area (`startFires`,
-  mirrored); lightning at `lightningAt` hits each team's area once (shuffled), ≥ `lightningMinDistance` from fire.
+  black. Blue and black never burn. It starts in the centre plus a 2-square fire in every playing team's area (`startFires`,
+  mirrored); lightning at `lightningAt` hits each playing team's area once (shuffled), ≥ `lightningMinDistance` from fire.
 - Wind is switched off (`wind.enabled: false`) but kept: switched on, `wind.pDown`/`wind.pUp` apply with
   and against it, it turns 45° once at `wind.turnAt` with a 30 s warning on the banner.
 - Water: one bucket per team (`waterPerTeam`); each accepted blue square uses 1 from the painter's team.
@@ -68,12 +91,21 @@ Whenever a fixture or square gets a new id (and on `reset`), the referee writes 
   type-filtered listing and deleted; shapes/texts dropped on the forest, a panel, a fixture or an Orders
   frame too. The poster is frozen 5 s, then 30 s, then 2 min per item. This runs in every phase, the
   post-game guard included.
-- Fixtures (banner, scoreboard, leaderboard) are read by id every poll; a deleted one is recreated in
+- Fixtures: banner, scoreboard, and a game-style leaderboard: 4 rows `rank_1`..`rank_4` (slot 1 = first place;
+  720 × 118 pills at x 3260, y −252 + (N−1) × 128, filled with the team's color, white text) and 4 score badges
+  `rank_1_score`..`rank_4_score` (white 130 × 80 boxes at each row's right end: `87%`). Rows reorder as teams
+  overtake. Row text, plain, no emoji: `TEAM 2 · Boss Ana` / `Water 62 · Fires set 3 · Trees burned 23 · MVP Ben (23)` /
+  `Crew: Ben, Cy` / optional `Waiting for a YES: start a fire in Team 4's area` or
+  `ATTACK ON TEAM 4: 2 fires left (1:20)`. Lobby: rows in team order, `TEAM 2` / `Waiting for the draw`; a team not
+  playing: grey `TEAM 3 · not playing`, badge `-`. Icons (images, not fixtures): a medal per slot (gold, silver,
+  bronze, 4th) and each team's mascot (Team 1 owl, Team 2 fox, Team 3 lion, Team 4 wolf), Microsoft Fluent
+  Emoji 3D (MIT); the referee places them and guards them like fixtures (a moved icon is put back, a deleted one
+  placed again) and never deletes them as junk. The scoreboard marks the leader with `LEAD` (no emoji on the banner or scoreboard). Banner line 2 also announces lead changes (`TEAM 3 TAKES THE LEAD!`, `trackLead` in rules.ts, at most every 45 s), a close race (`… ARE NECK AND NECK`) and the `FINAL MINUTE!`; game over shows the winner's % and a podium. Fixtures are read by id every poll; a deleted one is recreated in
   **exactly the same box** it had (saved in `state/game.json` as `fixtureBoxes`), with a new id. Agents
-  that lose a fixture id should re-find it with a small read of that box (SPEC.md §1 panel boxes). All three
+  that lose a fixture id should re-find it with a small read of that box (SPEC.md §1 panel boxes). All of them
   are also rewritten for 2 polls when the game ends and every 5 polls (live and post-game), so a fake banner
   never stays up.
-- Speed: a tick's reads run in parallel (paged per-frame grid read, fixtures + 2 cards by id, the typed junk
+- Speed: a tick's reads run in parallel (paged per-frame grid read, fixtures + 2 inbox cards by id, the typed junk
   listing), each fire write's re-read (A119) runs in the write's own task, 24 calls in flight. With
   150–300 ms per Miro call: ~1 s ticks, ~2 s on spread ticks (~70 reads + ~65 writes), 8 or 30 players
   (`test/stress.test.ts` A124). Rehearsal 3 had 11–12 s ticks.

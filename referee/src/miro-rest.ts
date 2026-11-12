@@ -11,7 +11,7 @@
 //   GET    /v2/boards/{board_id}/members?limit=50&cursor=    (Level 1)
 //   GET    /v1/oauth-token                                   (token context: user id, team, scopes)
 // Global limit: 100,000 credits/min per user per app; 429 carries X-RateLimit-Reset.
-import { MiroHttpError, pool, type BoardAdapter, type BoardItem, type FrameBox, type NewShape, type ShapePatch } from "./board.js";
+import { MiroHttpError, pool, type BoardAdapter, type BoardItem, type FrameBox, type NewImage, type NewShape, type ShapePatch } from "./board.js";
 import { frameBoxes, type Box } from "./layout.js";
 
 const API = "https://api.miro.com";
@@ -85,11 +85,23 @@ export class MiroRest implements BoardAdapter {
   }
 
   /** Items of the given types anywhere (the `type` filter of GET /items): images, embeds, documents, previews... */
+  private badTypes = new Set<string>();
+
   async listByType(types: string[]): Promise<BoardItem[]> {
     const out: BoardItem[] = [];
     await pool(
       types.map((t) => async () => {
-        for (const r of await this.pages(`&type=${encodeURIComponent(t)}`)) {
+        let rows: RawItem[];
+        try {
+          rows = await this.pages(`&type=${encodeURIComponent(t)}`);
+        } catch (e) {
+          // One bad type must not blind the others; images (memes, icons) must be complete or the poll is skipped.
+          if (t === "image") throw e;
+          if (!this.badTypes.has(t)) this.log(`listing type ${t} failed: ${String((e as Error).message).slice(0, 120)}`);
+          this.badTypes.add(t);
+          return;
+        }
+        for (const r of rows) {
           const pid = r.parent?.id;
           out.push(this.toItem(r, pid ? (this.frames.get(pid) ?? this.seenFrames.get(pid)) : undefined));
         }
@@ -297,6 +309,20 @@ export class MiroRest implements BoardAdapter {
       shapes.slice(i, i + 20).forEach((s, k) => s.parentId && this.parentOf.set(r.data[k]!.id, s.parentId));
     }
     return ids;
+  }
+
+  async createImage(img: NewImage): Promise<string> {
+    const r = await this.req<{ id: string }>("POST", `/v2/boards/${encodeURIComponent(this.boardId)}/images`, { data: { url: img.url }, position: { x: img.x, y: img.y }, geometry: { width: img.w } });
+    this.typeOf.set(r.id, "image");
+    return r.id;
+  }
+
+  async updateImage(id: string, p: Partial<NewImage>): Promise<void> {
+    const body: Record<string, unknown> = {};
+    if (p.url !== undefined) body.data = { url: p.url };
+    if (p.x !== undefined && p.y !== undefined) body.position = { x: p.x, y: p.y };
+    if (p.w !== undefined) body.geometry = { width: p.w };
+    await this.req("PATCH", `/v2/boards/${encodeURIComponent(this.boardId)}/images/${id}`, body);
   }
 
   async members(): Promise<Record<string, string>> {

@@ -51,7 +51,7 @@ describe("stress", () => {
       else if (roll < 0.54) fake.vandalAdd(u, "image", { x: 1150, y: 1090, w: 2600, h: 2600 });
       else if (roll < 0.58) edit(u, g.game.fixtureIds.banner ?? sq.id, { content: "GAME OVER" });
       else if (roll < 0.6) {
-        const k = pick(["banner", "scoreboard", "leaderboard"] as const);
+        const k = pick(["banner", "scoreboard", "rank_1", "rank_2_score"] as const);
         if (g.game.fixtureIds[k]) fake.playerDelete(g.game.fixtureIds[k]!);
       } else if (roll < 0.62) fake.moveFrame(u, pick(fake.gridFrameIds), 200, 100);
       else if (roll < 0.63) fake.deleteFrame(pick(fake.gridFrameIds));

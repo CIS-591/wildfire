@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { STATE_COLOR, buildCells, startFill, type CellState, type Team } from "../src/layout.js";
 import {
-  advance, applyJoin, createState, decidePaint, judgeSticky, mulberry32, pendingStickies, questionTarget, scores, spread, startGame, stickyKind, strike, type GameState, type RuleSet,
+  advance, applyJoin, createState, decidePaint, drawTeams, judgeSticky, playingTeams, mulberry32, pendingStickies, questionTarget, scores, spread, startGame, stickyKind, strike, type GameState, type RuleSet,
 } from "../src/rules.js";
 
 const base: RuleSet = {
@@ -308,7 +308,7 @@ describe("attack: start a fire in a neighbour's area (the human decision)", () =
     expect(paint(s, "r1", "Z7", C.fire, (at += 6000)).rule).toBe("attack"); // the 3-square cap
     expect(["Z4", "Z5", "Z6"].map((l) => [s.cells[l], s.origin[l]])).toEqual(Array(3).fill(["fire", "ridge"]));
     expect(s.stats.lit.ridge).toBe(3);
-    expect(s.events.some((e) => e.text === "🔥 Team 1 set fire to Team 2's area!")).toBe(true);
+    expect(s.events.some((e) => e.text === "TEAM 1 SET FIRE TO TEAM 2'S AREA!")).toBe(true);
     expect(paint(s, "r2", "C30", C.fire, (at += 6000)).rule).toBe("area"); // Team 3 is not under attack
     expect(paint(s, "c1", "Z8", C.fire, (at += 6000)).rule).toBe("area"); // only Team 1 may
     // Remembered once seen: a later NO doesn't take it back. Ends after attackMinutes.
@@ -378,5 +378,78 @@ describe("score", () => {
     expect(sc.ridge.points).toBe(302);
     expect(sc.ridge.pct).toBe(Math.round((100 * 302) / 306));
     expect(sc.ridge.fire).toBe(2);
+  });
+});
+
+describe("team setup: --teams, --team-size, the draw", () => {
+  const join = (s: GameState, n: number, rules?: RuleSet) => {
+    for (let i = 0; i < n; i++) applyJoin(s, { userId: `u${i}`, name: `P${i}`, at: T0 + i }, undefined, rules);
+  };
+  const sizes = (s: GameState) => (["ridge", "pine", "cedar", "birch"] as Team[]).map((t) => Object.values(s.players).filter((p) => p.team === t).length);
+  const bosses = (s: GameState) => Object.values(s.players).filter((p) => p.role === "boss").map((p) => p.team).sort();
+
+  it("8 players, team size 3: three teams of 3, 3, 2; Team 4 does not play", () => {
+    const rules = { ...base, teamSize: 3, drawTeams: true };
+    const s = createState(list, rules, mulberry32(1));
+    join(s, 8, rules);
+    drawTeams(s, rules, mulberry32(5));
+    expect(sizes(s)).toEqual([3, 3, 2, 0]);
+    expect(bosses(s)).toEqual(["cedar", "pine", "ridge"]);
+    startGame(s, rules, T0);
+    expect(playingTeams(s)).toEqual(["ridge", "pine", "cedar"]);
+  });
+  it("--teams 2: everyone split between Team 1 and Team 2", () => {
+    const rules = { ...base, teams: 2, drawTeams: true };
+    const s = createState(list, rules, mulberry32(1));
+    join(s, 9, rules);
+    drawTeams(s, rules, mulberry32(2));
+    expect(sizes(s)).toEqual([5, 4, 0, 0]);
+  });
+  it("more players than teams x size: the extras are spread evenly", () => {
+    const rules = { ...base, teams: 2, teamSize: 3, drawTeams: true };
+    const s = createState(list, rules, mulberry32(1));
+    join(s, 8, rules);
+    drawTeams(s, rules, mulberry32(3));
+    expect(sizes(s)).toEqual([4, 4, 0, 0]);
+  });
+  it("the draw is random: different seeds put different players together, one boss per team", () => {
+    const rules = { ...base, drawTeams: true };
+    const teamsOf = (seed: number) => {
+      const s = createState(list, rules, mulberry32(1));
+      join(s, 12, rules);
+      drawTeams(s, rules, mulberry32(seed));
+      expect(bosses(s)).toEqual(["birch", "cedar", "pine", "ridge"]);
+      return Object.values(s.players).map((p) => p.team).join();
+    };
+    expect(new Set([1, 2, 3, 4, 5].map(teamsOf)).size).toBeGreaterThan(1);
+  });
+  it("presets keep their team in the draw", () => {
+    const rules = { ...base, drawTeams: true };
+    const s = createState(list, rules, mulberry32(1));
+    join(s, 8, rules);
+    drawTeams(s, rules, mulberry32(9), { u3: "birch", u5: "birch" });
+    expect(s.players.u3!.team).toBe("birch");
+    expect(s.players.u5!.team).toBe("birch");
+  });
+  it("a late joiner goes to one of the smallest teams in play, never to an empty area", () => {
+    const rules = { ...base, teams: 2 };
+    const s = createState(list, rules, mulberry32(1));
+    join(s, 3, rules);
+    startGame(s, rules, T0);
+    applyJoin(s, { userId: "late", name: "Late", at: T0 + 100 }, undefined, rules, mulberry32(4));
+    expect(s.players.late!.team).toBe("pine");
+    expect(s.players.late!.role).toBe("worker");
+  });
+  it("an area nobody plays gets no start fire and no lightning; attacking it is not a valid question", () => {
+    const rules = { ...base, teams: 2, startFires: ["F6", "AE6", "F28", "AE28"], startFiresAt: 0, lightningAt: [1, 2, 3, 4] };
+    const s = createState(list, rules, mulberry32(1));
+    join(s, 4, rules);
+    startGame(s, rules, T0);
+    expect([s.cells.F6, s.cells.AE6, s.cells.F28, s.cells.AE28]).toEqual(["fire", "fire", "forest", "forest"]);
+    const rng = mulberry32(7);
+    const hits = [1, 2, 3, 4].map(() => strike(s, rules, list, rng)!);
+    expect(hits.every((l) => ["ridge", "pine"].includes(cells.get(l)!.sector))).toBe(true);
+    const notes = sticky(s, "q", "ridge", "Start a fire in Team 3's area?", "u0", "u2", rules);
+    expect(notes[0]!.line).toMatch(/neighbour that is playing/);
   });
 });

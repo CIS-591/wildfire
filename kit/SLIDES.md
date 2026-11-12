@@ -1,13 +1,14 @@
 # Wildfire: slide outline (instructor, 6 slides)
 
-1. **Wildfire.** A forest is on fire. Four teams, Team 1 to Team 4, each protect one corner: your
-   team's area. Your Claude paints water. Save your forest from the fire, or set fire to your neighbour's —
+1. **Wildfire.** A forest is on fire. Up to four teams, Team 1 to Team 4, each protect one corner: your
+   team's area. Teams are drawn at random when the game starts. Your Claude paints water. Save your forest from the fire, or set fire to your neighbour's —
    and a human decides when to attack. Show the board on the projector: green forest, four orange squares in the middle.
 
 2. **Four colors.** 🟩 green = tree, protect these. 🟧 orange = fire, spreads by itself. 🟦 blue =
    water, you paint it in your area, fire can't cross it; each team has its own bucket of water. ⬛ black = burnt, gone.
-   Most green left in your team's area after 10 minutes wins. A thick team-colored border on fire
-   shows which team lit it.
+   Most green left in your team's area after 10 minutes wins. The leaderboard ranks the teams live,
+   first place on top: % saved, water left, fires set, trees burned, MVP. Each square has a border in its team's color;
+   a thicker one on fire shows which team lit it.
 
 3. **What you do.** Type `/join Your Name`, then `/play`. Your Claude may ask you one YES/NO question:
    answer it. That's all.

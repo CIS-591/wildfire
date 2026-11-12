@@ -1,5 +1,5 @@
 ---
-description: Join Wildfire once (your inbox card), then wait for your team and role
+description: Join Wildfire once (your inbox card); your team is drawn when the game starts
 argument-hint: Your first name and last initial
 ---
 
@@ -24,18 +24,24 @@ initial, then continue). Keep the name short; it goes on your order sticky (`Ana
 
    Save `{"name": "NAME", "inboxId": "<card id from result_svg>", "stickies": {}, "calls": 1}` to
    `player.json`.
-4. **Peek** at the card (`canvas_read_as_svg`, `widget_ids: [inboxId]`). The referee writes a welcome
-   like "👋 Ana: you are on Team 1 (ridge). … You are the BOSS: …" or "👋 Ben: you are on Team 3
-   (cedar). … You are a WORKER: …".
-   - Team: the internal id in parentheses or brackets (`ridge`, `pine`, `cedar`, `birch`) → save
-     `team` (the id, never the display name). No id there: map the team number instead (Team 1 →
-     `ridge`, Team 2 → `pine`, Team 3 → `cedar`, Team 4 → `birch`).
-   - Role: `You are the BOSS` → `"role": "boss"`; `You are a WORKER` → `"role": "worker"`.
-   - Save only when **both** team and role are there. Otherwise run `sleep 15` (its own command, never
-     longer, never chained) and peek again, at most 8 times. The referee moves the card into a neat
-     slot; the id stays the same.
-5. Tell the student in one line: "You are on Team N" (the display name, `board.json`
-   `teams[team].name`, never the id), their role, and "Run /play when your instructor says go."
-   Workers also get: "I may ask you one YES/NO question during the game (whether to start a fire in a neighbour's area): answer it."
-   No team after 8 peeks: "The referee isn't running yet; run /join again when the instructor says
+4. **Peek** at the card (`canvas_read_as_svg`, `widget_ids: [inboxId]`). The peek returns no item
+   with that id (the card was deleted, e.g. a new game): go to step 2 and make a new card. The name
+   on the card wins (a second "Ana K" becomes `Ana K 2`): save it as `name`. Two good answers (both there: the team wins):
+   - `👋 Ana: you're in! 🎲 Teams are drawn when the game starts…`: joined. Teams are drawn at random
+     when the game starts, so there is no team or role yet. Don't save any; go to step 5.
+   - A welcome with a team (late join, or no draw this game), like "👋 Ana: you are on Team 1 (ridge).
+     … You are the BOSS: …" or "👋 Ben: you are on Team 3 (cedar). … You are a WORKER: …":
+     - Team: the internal id in parentheses or brackets (`ridge`, `pine`, `cedar`, `birch`) → save
+       `team` (the id, never the display name). No id there: map the team number instead (Team 1 →
+       `ridge`, Team 2 → `pine`, Team 3 → `cedar`, Team 4 → `birch`).
+     - Role: `You are the BOSS` → `"role": "boss"`; `You are a WORKER` → `"role": "worker"`.
+   Neither yet: run `sleep 15` (its own command, never longer, never chained) and peek again, at most 8
+   times. The referee moves the card into a neat slot; the id stays the same.
+5. Tell the student in one line:
+   - `you're in`: "You're in! Teams are drawn when the game starts; run /play when your instructor says go."
+   - a team: "You are on Team N" (the display name, `board.json` `teams[team].name`, never the id),
+     their role, and "Run /play when your instructor says go."
+   Workers (and everyone before the draw) also get: "I may ask you one YES/NO question during the game
+   (whether to start a fire in a neighbour's area): answer it."
+   Nothing after 8 peeks: "The referee isn't running yet; run /join again when the instructor says
    go." Don't create a second card.

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { stripHtml } from "../src/board.js";
 import { FakeBoard } from "../src/fake-board.js";
-import { FIXTURES, PANELS, STATE_COLOR, center, inboxSlot, inside } from "../src/layout.js";
+import { FIXTURES, PANELS, STATE_COLOR, RANK_SLOTS, rankKey, center, inboxSlot, inside } from "../src/layout.js";
 import { Referee, emptyGame, type GameFile } from "../src/referee.js";
 import { mulberry32, type RuleSet } from "../src/rules.js";
 
@@ -27,7 +27,7 @@ async function setup(opts: { presets?: Record<string, "ridge" | "pine" | "cedar"
   };
   await tick();
   const text = (id: string) => stripHtml(fake.items.get(id)!.content);
-  const fx = (k: keyof GameFile["fixtureIds"]) => text(game.fixtureIds[k]!);
+  const fx = (k: keyof GameFile["fixtureIds"] | "leaderboard") => (k === "leaderboard" ? RANK_SLOTS.map((n) => text(game.fixtureIds[rankKey(n)]!)).join("\n") : text(game.fixtureIds[k]!));
   return { fake, ref, game, d, cards, tick, text, fx, advance: (ms: number) => (t += ms) };
 }
 
@@ -36,20 +36,20 @@ describe("discovery and joining", () => {
     const { d, game, fake } = await setup();
     expect(d.cells).toBe(1224);
     expect(d.missing).toEqual([]);
-    expect(d.fixtures.sort()).toEqual(["banner", "leaderboard", "scoreboard"]);
-    const lb = fake.items.get(game.fixtureIds.leaderboard!)!;
-    expect(inside(FIXTURES.leaderboard, lb.x, lb.y)).toBe(true);
+    expect(d.fixtures.sort()).toEqual(["banner", "rank_1", "rank_1_score", "rank_2", "rank_2_score", "rank_3", "rank_3_score", "rank_4", "rank_4_score", "scoreboard"]);
+    const lb = fake.items.get(game.fixtureIds.rank_1!)!;
+    expect(inside(FIXTURES.rank_1, lb.x, lb.y)).toBe(true);
   });
   it("an inbox card is a join: 4 teams, boss first, card slotted and welcomed", async () => {
     const { fake, ref, cards, text, fx } = await setup();
     expect(ref.state.players.r1).toMatchObject({ team: "ridge", role: "boss" });
     expect(ref.state.players.r2).toMatchObject({ team: "ridge", role: "worker" });
     expect(ref.state.players.b1?.team).toBe("birch");
-    expect(text(cards.r1!)).toContain("Rita · TEAM 1 · BOSS · 0 squares");
+    expect(text(cards.r1!)).toContain("Rita · TEAM 1 · 👑 BOSS · 0 squares");
     expect(text(cards.r2!)).toContain("You are a WORKER");
     const card = fake.items.get(cards.r1!)!;
     expect([card.x, card.y]).toEqual(Object.values(center(inboxSlot(0))));
-    expect(fx("leaderboard")).toContain("crew: Rob");
+    expect(fx("leaderboard")).toContain("Crew: Rob");
     expect(fx("banner")).toContain("/join now");
     expect(text(cards.r1!)).toContain("Your area: A–R, rows 1–17");
     for (const k of ["banner", "leaderboard", "scoreboard"] as const) expect(fx(k)).not.toMatch(/sector/i);
@@ -86,7 +86,7 @@ describe("the game", () => {
     expect(text(cards.r2!)).toContain("Z4 undone: it is Team 2's area");
     const q = fake.playerSticky("r1", "ridge", "Start a fire in Team 2's area?\nOur area is under control");
     await tick();
-    expect(fx("leaderboard")).toContain("⏳ waiting for a YES: start a fire in Team 2's area");
+    expect(fx("leaderboard")).toContain("Waiting for a YES: start a fire in Team 2's area");
     fake.playerEditSticky("r1", q.id, "Start a fire in Team 2's area?\nOur area is under control\nYES");
     await tick();
     expect(ref.state.attacks).toHaveLength(0);
@@ -95,13 +95,13 @@ describe("the game", () => {
     await tick();
     expect(text(cards.r2!)).toContain("Rob said YES: you may paint orange #ff5a1f on up to 3 green squares in Team 2's area");
     expect(text(cards.p1!)).toContain("Team 1 may set fire to your area");
-    expect(fx("leaderboard")).toMatch(/🔥 Team 1 may light 3 more fires in Team 2's area \(\d:\d\d left\)/);
+    expect(fx("leaderboard")).toMatch(/ATTACK ON TEAM 2: 3 fires left \(\d:\d\d\)/);
     fake.playerPaint("r2", "Z4", C.fire);
     await tick();
     expect(fake.cell("Z4").fill).toBe(C.fire);
-    expect(fx("banner")).toContain("🔥 Team 1 set fire to Team 2's area!");
-    expect(fx("leaderboard")).toContain("🔥 lit 1 · burned 0 trees of others");
-    expect(fx("leaderboard")).toContain("may light 2 more fires");
+    expect(fx("banner")).toContain("TEAM 1 SET FIRE TO TEAM 2'S AREA!");
+    expect(fx("leaderboard")).toContain("Fires set 1 · Trees burned 0");
+    expect(fx("leaderboard")).toContain("ATTACK ON TEAM 2: 2 fires left");
     for (let i = 0; i < 41; i++) await tick(); // 2 min later
     expect(text(cards.r2!)).toContain("Your attack on Team 2's area is over");
     fake.playerPaint("r2", "Z9", C.fire);
@@ -135,7 +135,7 @@ describe("the game", () => {
     expect([...fills].every((f) => [C.forest, C.fire, C.burnt].includes(f!))).toBe(true);
     expect(fake.cell("R17").fill).toBe(C.burnt);
     expect(ref.state.spreads).toBe(9);
-    expect(fx("banner")).toMatch(/🔥 LIVE · \d+:\d\d left · next spread \d+s · 💧 T1 400 · T2 400 · T3 400 · T4 400/);
+    expect(fx("banner")).toMatch(/LIVE · \d+:\d\d left · next spread \d+s · WATER T1 400 · T2 400 · T3 400 · T4 400/);
     expect(fx("banner")).not.toMatch(/wind/i);
     expect(fx("scoreboard")).toMatch(/TEAM 1 \d+%.*TEAM 2 \d+%.*\n.*TEAM 3 \d+%.*TEAM 4 \d+%/);
   });
@@ -171,7 +171,7 @@ describe("the game", () => {
     const { ref, fx } = await setup();
     await ref.start();
     await ref.stop();
-    expect(fx("banner")).toMatch(/GAME OVER \(stopped\) · 🏆 \S+/);
+    expect(fx("banner")).toMatch(/GAME OVER · TEAM \d WINS WITH \d+%\n.*stopped/);
   });
   it("fast reads: a deleted or moved banner is repaired even though a sweep is older than its last write", async () => {
     let t = 1_000_000;

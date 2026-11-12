@@ -121,7 +121,7 @@ ok("teams are Team 1..Team 4 with their team colors and Orders titles", () => {
   const want = {
     ridge: ["Team 1", "#7c3aed"],
     pine: ["Team 2", "#db2777"],
-    cedar: ["Team 3", "#4338ca"],
+    cedar: ["Team 3", "#ca8a04"],
     birch: ["Team 4", "#334155"],
   };
   assert.deepEqual(Object.keys(board.teams).sort(), Object.keys(want).sort());

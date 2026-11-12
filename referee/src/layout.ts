@@ -38,7 +38,9 @@ interface Palette {
   water: string;
   burnt: string;
   teams: Record<Team, string>;
-  square: { border: string; borderWidth: number; label: string; labelBurnt: string };
+  /** Light fill of each team's leaderboard card. */
+  teamTints?: Record<Team, string>;
+  square: { border: string; borderWidth: number; teamBorderWidth?: number; label: string; labelBurnt: string };
   frame: string;
   backdrop: string;
   panel: string;
@@ -49,6 +51,8 @@ interface Palette {
 }
 export const PALETTE = JSON.parse(readFileSync(colorFile, "utf8")) as Palette;
 export const STATE_COLOR: Record<CellState, string> = { forest: PALETTE.forest.toLowerCase(), fire: PALETTE.fire.toLowerCase(), water: PALETTE.water.toLowerCase(), burnt: PALETTE.burnt.toLowerCase() };
+
+export const TEAM_TINT = (t: Team): string => PALETTE.teamTints?.[t] ?? PALETTE.panel;
 
 export const COLORS = {
   ...STATE_COLOR,
@@ -152,9 +156,9 @@ export function textColorFor(state: CellState): string {
   return state === "burnt" ? PALETTE.square.labelBurnt : PALETTE.square.label;
 }
 
-/** Every square has the same thin dark border (team colors live only on the area edges and headers). */
-export function cellStroke(_cell: CellDef): { color: string; width: number } {
-  return { color: PALETTE.square.border, width: PALETTE.square.borderWidth };
+/** Every square has a border in its team's color, so the four areas stand apart (a team's fire draws a thicker one). */
+export function cellStroke(cell: CellDef): { color: string; width: number } {
+  return { color: TEAM_INFO[cell.sector].color, width: PALETTE.square.teamBorderWidth ?? PALETTE.square.borderWidth };
 }
 
 export const GRID_BOX: Box = { x: GRID.originX, y: GRID.originY, w: GRID.cols * GRID.pitch - (GRID.pitch - GRID.cell), h: GRID.rows * GRID.pitch - (GRID.pitch - GRID.cell) };
@@ -191,11 +195,64 @@ export const ORDERS: Record<Team, Box> = {
 };
 export const ordersTitle = (t: Team) => `ORDERS · ${TEAM_INFO[t].name.toUpperCase()}`; // "ORDERS · TEAM 1"
 
+/** Leaderboard row geometry (top-left boxes): a pill per rank slot, a white score badge inside its right end. */
+export const LB_ROW = { x: 3260, y0: -252, pitch: 128, w: 720, h: 118 };
+export const LB_BADGE = { w: 130, h: 80, right: 16 };
+export const lbRowBox = (n: number): Box => ({ x: LB_ROW.x, y: LB_ROW.y0 + (n - 1) * LB_ROW.pitch, w: LB_ROW.w, h: LB_ROW.h });
+export const lbBadgeBox = (n: number): Box => {
+  const r = lbRowBox(n);
+  return { x: r.x + r.w - LB_BADGE.w - LB_BADGE.right, y: r.y + (r.h - LB_BADGE.h) / 2, w: LB_BADGE.w, h: LB_BADGE.h };
+};
+function rankFixtures() {
+  const out = {} as Record<`rank_${1 | 2 | 3 | 4}` | `rank_${1 | 2 | 3 | 4}_score`, Box>;
+  for (const n of [1, 2, 3, 4] as const) {
+    out[`rank_${n}`] = lbRowBox(n);
+    out[`rank_${n}_score`] = lbBadgeBox(n);
+  }
+  return out;
+}
+
 export const FIXTURES = {
   banner: { x: 0, y: -220, w: 1100, h: 110 } as Box,
   scoreboard: { x: 1160, y: -220, w: 1140, h: 110 } as Box,
-  leaderboard: { x: 3260, y: -250, w: 720, h: 510 } as Box,
+  // The leaderboard: 4 rows sorted by rank (slot 1 = first place), each with a score badge on its right end.
+  ...rankFixtures(),
 };
+export const RANK_SLOTS = [1, 2, 3, 4] as const;
+export type RankSlot = (typeof RANK_SLOTS)[number];
+export const rankKey = (n: RankSlot) => `rank_${n}` as const;
+export const scoreKey = (n: RankSlot) => `rank_${n}_score` as const;
+
+// ---------- icons (images on the board, placed and guarded by the referee) ----------
+// Microsoft Fluent Emoji 3D (MIT licence), fetched by Miro from the jsDelivr CDN once when an icon is created.
+const FLUENT = "https://cdn.jsdelivr.net/gh/microsoft/fluentui-emoji@main/assets";
+export const ICON_URL = {
+  first: `${FLUENT}/1st%20place%20medal/3D/1st_place_medal_3d.png`,
+  second: `${FLUENT}/2nd%20place%20medal/3D/2nd_place_medal_3d.png`,
+  third: `${FLUENT}/3rd%20place%20medal/3D/3rd_place_medal_3d.png`,
+  fourth: `${FLUENT}/Sports%20medal/3D/sports_medal_3d.png`,
+  tree: `${FLUENT}/Evergreen%20tree/3D/evergreen_tree_3d.png`,
+  crown: `${FLUENT}/Crown/3D/crown_3d.png`,
+  mvp: `${FLUENT}/Firefighter/Default/3D/firefighter_3d_default.png`,
+  water: `${FLUENT}/Droplet/3D/droplet_3d.png`,
+  fire: `${FLUENT}/Fire/3D/fire_3d.png`,
+  crew: `${FLUENT}/Busts%20in%20silhouette/3D/busts_in_silhouette_3d.png`,
+  trophy: `${FLUENT}/Trophy/3D/trophy_3d.png`,
+  bolt: `${FLUENT}/High%20voltage/3D/high_voltage_3d.png`,
+  clock: `${FLUENT}/Stopwatch/3D/stopwatch_3d.png`,
+  owl: `${FLUENT}/Owl/3D/owl_3d.png`,
+  fox: `${FLUENT}/Fox/3D/fox_3d.png`,
+  lion: `${FLUENT}/Lion/3D/lion_3d.png`,
+  wolf: `${FLUENT}/Wolf/3D/wolf_3d.png`,
+} as const;
+export type IconName = keyof typeof ICON_URL;
+
+/** Team mascots (icons on the leaderboard rows): Team 1 owl, Team 2 fox, Team 3 lion, Team 4 wolf. */
+export const MASCOT: Record<Team, IconName> = { ridge: "owl", pine: "fox", cedar: "lion", birch: "wolf" };
+/** Row icons: a medal at the left (per slot), the team's mascot next to it; row text starts after LB_INDENT. */
+export const LB_ICONS = { medal: { size: 56, left: 16 }, mascot: { size: 70, left: 82 } };
+export const LB_INDENT = "&nbsp;".repeat(38);
+export const LB_FONT = 15;
 
 export const INBOX_CARD = { w: 380, h: 150, cols: 9, gapX: 50, gapY: 24, firstX: 40, firstY: 2400 };
 

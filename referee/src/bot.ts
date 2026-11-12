@@ -79,7 +79,7 @@ export class Bot {
     const text = await board.inbox(this.userId);
     const m = /\b(TEAM [1-4])\b/.exec(text);
     if (m) this.team = TEAM_BY_CAPS[m[1]!]!;
-    const r = /· (BOSS|WORKER) ·/.exec(text);
+    const r = /· (?:👑 )?(BOSS|WORKER) ·/.exec(text);
     if (r) this.role = r[1] === "BOSS" ? "boss" : "worker";
     for (const line of text.split("\n")) {
       if (this.seenLines.has(line)) continue;
@@ -96,10 +96,10 @@ export class Bot {
     return this.role === "boss" ? this.bossTurn(board, now) : this.workerTurn(board, now);
   }
 
-  /** The neighbour our running attack may still light squares in (leaderboard: "may light N more fires"). */
+  /** The neighbour our running attack may still light squares in (our leaderboard row: "ATTACK ON TEAM 2: 3 fires left"). */
   private attackTo(now: number, leaderboard: string): Team | null {
     if (!this.attack || now >= this.attack.until) return null;
-    const left = new RegExp(`🔥 ${TEAM_INFO[this.team!].name} may light (\\d+) more fires? in ${TEAM_INFO[this.attack.to].name}'s area`).exec(leaderboard);
+    const left = new RegExp(`ATTACK ON ${TEAM_INFO[this.attack.to].name}: (\\d+) fires? left`, "i").exec(rowOf(leaderboard, this.team!));
     return left && Number(left[1]) > 0 ? this.attack.to : null;
   }
 
@@ -122,7 +122,7 @@ export class Bot {
 
   /** How many squares our running attack may still light (from the leaderboard). */
   private attackLeft(leaderboard: string): number {
-    const m = new RegExp(`🔥 ${TEAM_INFO[this.team!].name} may light (\\d+) more`).exec(leaderboard);
+    const m = /ATTACK ON TEAM \d: (\d+) fires? left/i.exec(rowOf(leaderboard, this.team!));
     return m ? Number(m[1]) : 0;
   }
 
@@ -194,7 +194,7 @@ export class Bot {
     const away = this.attackTo(now, leaderboard);
     if (away) return this.light(board, cells, away, Math.min(this.batchSize(), this.attackLeft(leaderboard)));
     const total = this.opts.waterPerTeam ?? 150;
-    const waiting = new RegExp(`waiting for a YES: start a fire`).test(leaderboard.split("\n").slice(leaderboard.split("\n").findIndex((l) => l.includes(`${TEAM_INFO[team].name.toUpperCase()} `)), undefined).slice(0, 5).join("\n"));
+    const waiting = /waiting for a YES: start a fire/i.test(rowOf(leaderboard, team));
     if ((this.opts.attacks ?? true) && !this.attack && !waiting && this.asked < 2 && now - this.lastAskAt > 120_000 && waterOf(banner, team) > 0.3 * total) {
       const myFire = cells.filter((c) => c.sector === team && c.fill === C.fire && cells.some((g) => g.sector === team && g.fill === C.forest && cheb(g, c) <= 1)).length;
       const green = (n: Team) => cells.filter((c) => c.sector === n && c.fill === C.forest).length;
@@ -311,9 +311,11 @@ export function parseOrder(text: string): string[] {
 
 // ---------- reading the projector ----------
 
-/** A team's water from the banner ("💧 T1 62 · T2 40 · T3 71 · T4 55"). */
+/** A team's water from the banner ("WATER T1 62 · T2 40 · T3 71 · T4 55"). */
 export function waterOf(banner: string, team: Team): number {
-  const m = new RegExp(`T${TEAM_INFO[team].num} (\\d+)`).exec(banner.slice(banner.indexOf("💧")));
+  const at = banner.search(/\bWATER\b/i);
+  if (at < 0) return 0;
+  const m = new RegExp(`\\bT${TEAM_INFO[team].num} (\\d+)`).exec(banner.slice(at));
   return m ? Number(m[1]) : 0;
 }
 
@@ -326,11 +328,18 @@ export function percents(scoreboard: string): Partial<Record<Team, number>> {
   return out;
 }
 
-/** Worker names of a team, from the leaderboard ("crew: A, B, C" under the team's line). */
+/** A team's leaderboard row: from its line "TEAM 2 · Boss ..." to the next row's first line. */
+export function rowOf(leaderboard: string, team: Team): string {
+  const lines = leaderboard.split("\n").map((l) => l.replace(/\u00a0/g, " ").trim());
+  const head = (l: string) => /^TEAM [1-4]\b/.test(l);
+  const i = lines.findIndex((l) => l.startsWith(`${TEAM_INFO[team].name.toUpperCase()}`) && head(l));
+  if (i < 0) return "";
+  const end = lines.findIndex((l, k) => k > i && head(l));
+  return lines.slice(i, end < 0 ? undefined : end).join("\n");
+}
+
+/** Worker names of a team, from its leaderboard row ("Crew: A, B, C"). */
 export function crewOf(leaderboard: string, team: Team): string[] {
-  const lines = leaderboard.split("\n");
-  const i = lines.findIndex((l) => l.includes(`${TEAM_INFO[team].name.toUpperCase()} `) && l.includes("players"));
-  if (i < 0) return [];
-  const crew = lines.slice(i + 1, i + 4).find((l) => l.startsWith("crew: "));
-  return crew ? crew.slice(6).split(", ").filter(Boolean) : [];
+  const crew = rowOf(leaderboard, team).split("\n").find((l) => /^crew: /i.test(l));
+  return crew ? crew.slice(6).split(", ").filter((n) => n && n !== "-") : [];
 }

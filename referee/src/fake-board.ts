@@ -5,7 +5,7 @@
 // adapter's errors); a locked one answers 403. With `fullListReads` set, a full listing behaves like on the
 // real board (~1,400 items = ~28 cursor pages): it shows the board as it was when it began, and lands only
 // after that many fast per-frame reads, so whatever it says about non-square items is seconds old.
-import { MiroHttpError, type BoardAdapter, type BoardItem, type FrameBox, type NewShape, type ShapePatch } from "./board.js";
+import { MiroHttpError, type BoardAdapter, type BoardItem, type FrameBox, type NewImage, type NewShape, type ShapePatch } from "./board.js";
 import { BACKDROP, FIXTURES, ORDERS, PANELS, TEAMS, buildCells, cellBox, center, frameBoxes, frameOfRow, ordersTitle, startFill, type Box, type Team } from "./layout.js";
 import { mulberry32, type Rng } from "./rules.js";
 
@@ -297,6 +297,29 @@ export class FakeBoard implements BoardAdapter {
     shapes.forEach((s, k) => this.borders.set(ids[k]!, { color: s.borderColor, width: s.borderWidth }));
     if (ghost) throw miroErr(504, "POST items/bulk");
     return ids;
+  }
+
+  async createImage(img: NewImage): Promise<string> {
+    this.calls.create++;
+    await this.lag();
+    const ghost = this.writeFault("POST images");
+    const id = this.add({ type: "image", content: img.url, x: img.x, y: img.y, w: img.w, h: img.w }, REFEREE_USER).id;
+    if (ghost) throw miroErr(504, "POST images");
+    return id;
+  }
+
+  async updateImage(id: string, p: Partial<NewImage>): Promise<void> {
+    this.calls.update++;
+    await this.lag();
+    const it = this.items.get(id);
+    if (!it) throw (this.calls.failed++, miroErr(404, `PATCH images/${id}`, NOT_FOUND));
+    if (p.url !== undefined) it.content = p.url;
+    if (p.x !== undefined) it.x = p.x;
+    if (p.y !== undefined) it.y = p.y;
+    if (p.w !== undefined) {
+      it.w = p.w;
+      it.h = p.w;
+    }
   }
 
   async members(): Promise<Record<string, string>> {

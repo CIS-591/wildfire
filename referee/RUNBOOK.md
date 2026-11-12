@@ -5,12 +5,18 @@ The game itself lasts **10 minutes**.
 
 ## The day before
 
-- [ ] `.env` set (README), `npm run referee verify`: 1224/1224 squares, 3 fixtures, 4 colors OK.
+- [ ] `.env` set (README), `npm run referee verify`: 1224/1224 squares, 10 fixtures (banner, scoreboard,
+      4 leaderboard rows `rank_1`..`rank_4`, 4 score badges `rank_N_score`), 4 colors OK. A missing fixture is
+      created on the spot: then run `python3 ../board/build/sync_ids.py` and push `kit/board.json` so agents
+      get the row ids.
 - [ ] Board ids: `config/layout.json` is copied from `../board/board.json` by `python3 ../board/build/sync_ids.py`.
 - [ ] Board shared with the class team (students must be editors).
 - [ ] Lock the static items in the Miro UI (backdrop, title, rules panel, compass, Orders header bars,
-      Inbox panel). Do **not** lock squares, banner, scoreboard, leaderboard or the Orders frames.
-- [ ] Optional preset teams: copy `config/teams.example.json` to `config/teams.json`.
+      Inbox panel). Do **not** lock squares, banner, scoreboard, leaderboard rows, score badges, leaderboard icons or the Orders frames.
+- [ ] Decide the teams: they are drawn at random when `run` starts the game. Pick a size for the class,
+      e.g. `--team-size 4` (14 players: 4, 4, 3, 3; 8 players: two teams of 4, Teams 3 and 4 not playing),
+      or `--teams 3`. `--no-draw` = placed as they join. Optional preset teams: copy
+      `config/teams.example.json` to `config/teams.json` (presets keep their team in the draw).
 - [ ] Rehearsal with ONE Miro account and several Claude sessions: `npm run referee reset`, then
       `npm run referee lobby -- --rehearsal`, everyone `/join`, Ctrl-C, `npm run referee run -- --rehearsal`
       (add `--minutes 5` for a short one), try one "Start a fire in …'s area?" + YES, `stop`, `reset`.
@@ -21,8 +27,8 @@ The game itself lasts **10 minutes**.
 | --- | --- | --- |
 | −15 | B: `npm run referee verify`, then `npm run referee reset` | |
 | 0:00 | Slides: the forest, the 4 areas, boss/worker, blue in your area, the one human question (attack a neighbour), one water bucket per team | |
-| 0:08 | A: `npm run referee lobby` | `/join Your Name`, then `/play` |
-| 0:12 | Everyone has a card: Ctrl-C A, then A: `npm run referee run` | Agents paint; humans answer the attack question when their Claude asks |
+| 0:08 | A: `npm run referee lobby` | `/join Your Name` (card: "you're in! 🎲"), then `/play` |
+| 0:12 | Everyone has a card: Ctrl-C A, then A: `npm run referee run -- --team-size 4` (the draw: each card gets its team and role) | Agents paint; humans answer the attack question when their Claude asks |
 | 0:22 | The game ends by itself (10 min, or the fire is out after the lightning) | |
 | 0:24 | B: `npm run referee results`; debrief (SPEC.md section 4) | |
 
@@ -32,6 +38,7 @@ The game itself lasts **10 minutes**.
 | --- | --- |
 | A team's paints outside its area are undone | Blue only counts in your own area; orange in a neighbour's area needs a YES on "Start a fire in …'s area?" from a teammate who didn't post it (3 squares, 2 min, 2 attacks per game) |
 | Need a break / referee crashed | Ctrl-C pauses (banner says PAUSED, the fire freezes); `npm run referee run` resumes |
+| A student joins late | Just `/join`: they get a team at once (a smallest team in play) |
 | Out of time | B: `npm run referee stop` (highest % wins): the referee in A ends the game on its next poll |
 | Someone moved or deleted a square / the banner | Put back within one poll; the player is frozen 5 s |
 | 429 rate limits | Only one referee runs (`state/referee.lock`). Add `--poll 5` |

@@ -1,6 +1,6 @@
 // Pure rules engine (SPEC.md section 3): state + observed board changes -> decisions. No I/O, no clocks:
 // game time (`elapsed`) only moves through advance(), and every random draw comes from the injected rng.
-import { FIRST_FIRE, NEIGHBOURS, STATE_COLOR, TEAMS, TEAM_INFO, WIND, sectorText, startState, stateOfFill, teamByName, type CellDef, type CellState, type Team } from "./layout.js";
+import { FIRST_FIRE, NEIGHBOURS, STATE_COLOR, TEAMS, TEAM_INFO, WIND, parseLabel, sectorOf, sectorText, startState, stateOfFill, teamByName, type CellDef, type CellState, type Team } from "./layout.js";
 
 export type Rng = () => number;
 
@@ -36,6 +36,12 @@ export interface RuleSet {
   attackSquares: number; // ... and may light at most this many green squares
   attacksPerTeam: number; // approved attacks per team per game
   gameMinutes: number;
+  /** How many teams play (1-4, Team 1 first; default 4). The instructor sets it with --teams. */
+  teams?: number;
+  /** Players per team (--team-size): the draw uses as few teams as that needs; extras are spread evenly. */
+  teamSize?: number;
+  /** Teams are drawn at random when the game starts (bosses too); off: each player is placed as they join. */
+  drawTeams?: boolean;
 }
 
 export type RuleId = "lobby" | "over" | "unjoined" | "timeout" | "cooldown" | "batch" | "color" | "square" | "area" | "attack" | "water" | "tamper";
@@ -52,6 +58,8 @@ export interface Player {
   team: Team;
   role: Role;
   joinedAt: number;
+  /** The player was told their team and role (a welcome or the draw): never placed again. */
+  announced?: boolean;
 }
 
 export interface PlayerStats {
@@ -118,7 +126,13 @@ export interface GameState {
   attacks: Attack[]; // running attacks (approved "Start a fire in <neighbour>'s area?")
   attacksUsed: Record<Team, number>; // approved attacks per team so far
   origin: Record<string, Origin>; // fire/burnt square -> who lit the fire (absent = wild)
+  /** Teams in play, fixed when the game starts (absent before: see playingTeams). */
+  playing?: Team[];
   events: GameEvent[];
+  /** The team strictly ahead, for the banner's "TAKES THE LEAD!" (presentation only; absent on old saves). */
+  leader?: Team;
+  /** Game ms of the last "TAKES THE LEAD!" event (they never come faster than LEAD_COOLDOWN_MS). */
+  leadAt?: number;
   stats: {
     accepted: number;
     ignitions: number;
@@ -229,19 +243,21 @@ export function startGame(state: GameState, rules: RuleSet, at: number): string[
   if (state.phase !== "lobby") return [];
   state.phase = "live";
   state.startedAt = at;
+  const withPlayers = TEAMS.filter((t) => Object.values(state.players).some((p) => p.team === t));
+  state.playing = withPlayers.length ? withPlayers : openTeams(rules); // nobody in yet: the teams the instructor opened
   for (const lab of FIRST_FIRE) {
     state.cells[lab] = "fire";
     state.burnLeft[lab] = rules.burnTicks;
   }
   const extra = (rules.startFiresAt ?? 0) > 0 ? [] : lightStartFires(state, rules);
-  pushEvent(state, `🔥 The fire started in the centre${extra.length ? " and in every team's area" : ""}!`);
+  pushEvent(state, `THE FIRE HAS STARTED${extra.length ? " IN THE CENTRE AND IN EVERY TEAM'S AREA" : " IN THE CENTRE"}!`);
   return [...FIRST_FIRE, ...extra];
 }
 
 /** The in-area start fires (rules.startFires), at the start or at rules.startFiresAt. */
 function lightStartFires(state: GameState, rules: RuleSet): string[] {
   state.startFiresLit = true;
-  const extra = (rules.startFires ?? []).filter((l) => state.cells[l] === "forest");
+  const extra = (rules.startFires ?? []).filter((l) => state.cells[l] === "forest" && inPlay(state, l));
   for (const lab of extra) ignite(state, rules, lab);
   return extra;
 }
@@ -255,13 +271,56 @@ function endGame(state: GameState, cells: CellDef[], at: number, reason: "time" 
   state.phase = "over";
   state.endedAt = at;
   state.endReason = reason;
+  state.winner = byScore(state, cells, playingTeams(state))[0]!;
+}
+
+/** Teams by forest saved, exactly (points / start score, not the rounded %); ties keep the given order. */
+function byScore(state: GameState, cells: CellDef[], teams: Team[]): Team[] {
   const sc = scores(state, cells);
-  state.winner = TEAMS.slice().sort((a, b) => sc[b].points / state.startScore[b] - sc[a].points / state.startScore[a])[0]!;
+  const r = (t: Team) => sc[t].points / (state.startScore[t] || 1);
+  return teams.slice().sort((a, b) => r(b) - r(a));
+}
+
+/**
+ * The ranking every display uses (leaderboard, scoreboard, banner, lead changes): the teams in play by
+ * exact forest saved, like the winner is picked; once the game is over the winner is first.
+ */
+export function rankTeams(state: GameState, cells: CellDef[]): Team[] {
+  const order = byScore(state, cells, playingTeams(state));
+  const w = state.phase === "over" ? state.winner : undefined;
+  return w && order.includes(w) ? [w, ...order.filter((t) => t !== w)] : order;
+}
+
+/** a is strictly ahead of b (exact forest saved). */
+export function aheadOf(state: GameState, cells: CellDef[], a: Team, b: Team): boolean {
+  const sc = scores(state, cells);
+  return sc[a].points / (state.startScore[a] || 1) > sc[b].points / (state.startScore[b] || 1);
 }
 
 function pushEvent(state: GameState, text: string) {
   state.events.push({ at: state.elapsed, text });
   if (state.events.length > 12) state.events.shift();
+}
+
+/** Lead changes are announced at most this often, so two close teams never spam the banner. */
+export const LEAD_COOLDOWN_MS = 45_000;
+
+/**
+ * Presentation only (no rule depends on it): note which playing team is strictly ahead and push
+ * "TEAM 3 TAKES THE LEAD!" when that changes. The first leader of a game and ties are not announced.
+ */
+export function trackLead(state: GameState, cells: CellDef[]): void {
+  if (state.phase !== "live") return;
+  const playing = playingTeams(state);
+  if (playing.length < 2) return;
+  const order = rankTeams(state, cells);
+  const top = order[0]!;
+  if (!aheadOf(state, cells, top, order[1]!) || top === state.leader) return;
+  const prev = state.leader;
+  state.leader = top;
+  if (!prev || state.elapsed - (state.leadAt ?? -Infinity) < LEAD_COOLDOWN_MS) return;
+  state.leadAt = state.elapsed;
+  pushEvent(state, `${teamName(top).toUpperCase()} TAKES THE LEAD!`);
 }
 
 // ---------- players ----------
@@ -281,11 +340,61 @@ export function cleanName(raw: string): string {
 }
 
 /** Register a player (any phase). `preset` picks the team; otherwise the smallest team. First on a team = boss. */
-export function applyJoin(state: GameState, ev: { userId: string; name: string; at: number }, preset?: Team): { player: Player; duplicate: boolean } {
+/** Teams the instructor opened (rules.teams, Team 1 first). */
+export const openTeams = (rules?: Pick<RuleSet, "teams">): Team[] => {
+  const n = Number.isFinite(rules?.teams) ? Math.floor(rules!.teams!) : 4; // NaN (a bad --teams): all four
+  return TEAMS.slice(0, Math.min(4, Math.max(1, n)));
+};
+
+/** Players per team (rules.teamSize); missing, NaN or ≤ 0: no cap. */
+const teamCap = (rules?: Pick<RuleSet, "teamSize">): number => (rules?.teamSize !== undefined && Number.isFinite(rules.teamSize) && rules.teamSize > 0 ? rules.teamSize : Infinity);
+
+/** One of the smallest teams of `open` that is under the cap (all full: the smallest of them). */
+function smallestTeam(size: (t: Team) => number, open: Team[], cap: number, rng?: Rng): Team {
+  const pool = open.some((t) => size(t) < cap) ? open.filter((t) => size(t) < cap) : open;
+  const min = Math.min(...pool.map(size));
+  const smallest = pool.filter((t) => size(t) === min);
+  return smallest[rng ? Math.floor(rng() * smallest.length) : 0]!;
+}
+
+/** Teams in play: fixed at the start; before it, the teams that have players (none yet: all four). */
+export function playingTeams(state: GameState): Team[] {
+  if (state.playing?.length) return state.playing;
+  const withPlayers = TEAMS.filter((t) => Object.values(state.players).some((p) => p.team === t));
+  return withPlayers.length ? withPlayers : [...TEAMS];
+}
+
+/** The square's area has a team playing (an empty area gets no start fire, no lightning, no attacks). */
+function inPlay(state: GameState, lab: string): boolean {
+  const pos = parseLabel(lab);
+  return !pos || playingTeams(state).includes(sectorOf(pos.col, pos.row));
+}
+
+/**
+ * A player joins. Before the start (and always without rules.drawTeams) they go to the smallest open team
+ * under rules.teamSize; once the game is live, to one of the smallest teams in play (at random when an rng
+ * is given). A preset (config/teams.json) wins.
+ */
+export function applyJoin(
+  state: GameState,
+  ev: { userId: string; name: string; at: number },
+  preset?: Team,
+  rules?: Pick<RuleSet, "teams" | "teamSize">,
+  rng?: Rng,
+): { player: Player; duplicate: boolean } {
   const existing = state.players[ev.userId];
   if (existing) return { player: existing, duplicate: true };
   const size = (t: Team) => Object.values(state.players).filter((p) => p.team === t).length;
-  const team = preset ?? TEAMS.slice().sort((a, b) => size(a) - size(b))[0]!;
+  const cap = teamCap(rules);
+  const live = state.phase !== "lobby" && !!state.playing?.length;
+  if (live) {
+    // Every team in play is full: the next team the instructor opened starts playing (no start fire for it).
+    const next = openTeams(rules).find((t) => !state.playing!.includes(t));
+    if (next && cap !== Infinity && state.playing!.every((t) => size(t) >= cap)) state.playing!.push(next);
+  }
+  const open = live ? state.playing! : openTeams(rules);
+  // Once the teams in play are fixed, a preset for a team that is not playing is ignored.
+  const team = preset && (!live || open.includes(preset)) ? preset : smallestTeam(size, open, cap, rng);
   const role: Role = size(team) === 0 ? "boss" : "worker";
   let name = cleanName(ev.name) || `Player ${Object.keys(state.players).length + 1}`;
   // Two players with one name would share one "Name: paint ..." order: the later one gets a number.
@@ -299,6 +408,54 @@ export function applyJoin(state: GameState, ev: { userId: string; name: string; 
   state.players[ev.userId] = player;
   state.stats.byPlayer[ev.userId] = playerStats(player);
   return { player, duplicate: false };
+}
+
+/**
+ * The draw, when the game starts: every player not yet told a team gets a random one and the first one drawn
+ * into an empty team is its boss. Uses rules.teams teams at most, and only as many as rules.teamSize needs
+ * (8 players, size 3: three teams of 3, 3, 2); more players than teams x size are spread evenly. Presets keep
+ * their team; players already announced (a welcome in a lobby without the draw) keep their team and role.
+ */
+export function drawTeams(state: GameState, rules: Pick<RuleSet, "teams" | "teamSize">, rng: Rng, presets: Record<string, Team> = {}): void {
+  placeTeams(state, rules, presets, rng);
+}
+
+/**
+ * Places every player not yet announced, with these rules: drawn at random (`rng` given, see drawTeams) or in
+ * join order like applyJoin (the smallest open team under rules.teamSize). Lobby only.
+ */
+export function placeTeams(state: GameState, rules: Pick<RuleSet, "teams" | "teamSize">, presets: Record<string, Team> = {}, rng?: Rng): void {
+  if (state.phase !== "lobby") return;
+  const players = Object.values(state.players).sort((a, b) => a.joinedAt - b.joinedAt);
+  const fresh = players.filter((p) => !p.announced);
+  if (!fresh.length) return;
+  const open = openTeams(rules);
+  const cap = teamCap(rules);
+  const members: Record<Team, Player[]> = { ridge: [], pine: [], cedar: [], birch: [] };
+  for (const p of players) if (p.announced) members[p.team].push(p);
+  const placed: Player[] = [];
+  const put = (p: Player, t: Team) => {
+    members[t].push(p);
+    p.team = t;
+    placed.push(p);
+  };
+  for (const p of fresh) if (presets[p.userId]) put(p, presets[p.userId]!);
+  const free = fresh.filter((p) => !presets[p.userId]);
+  if (rng) {
+    const used = cap === Infinity ? open : open.slice(0, Math.max(1, Math.min(open.length, Math.ceil(players.length / cap))));
+    for (let i = free.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      [free[i], free[j]] = [free[j]!, free[i]!];
+    }
+    for (const p of free) put(p, used.slice().sort((a, b) => members[a].length - members[b].length)[0]!);
+  } else for (const p of free) put(p, smallestTeam((t) => members[t].length, open, cap));
+  const hasBoss = new Set(players.filter((p) => p.announced && p.role === "boss").map((p) => p.team));
+  for (const p of placed) {
+    p.role = hasBoss.has(p.team) ? "worker" : "boss";
+    hasBoss.add(p.team);
+    const ps = state.stats.byPlayer[p.userId];
+    if (ps) Object.assign(ps, { team: p.team, role: p.role });
+  }
 }
 
 // ---------- score ----------
@@ -389,8 +546,12 @@ export function spread(state: GameState, rules: RuleSet, cells: CellDef[], byPos
 export function strike(state: GameState, rules: RuleSet, cells: CellDef[], rng: Rng): string | null {
   state.struck ??= [];
   const fires = cells.filter((c) => state.cells[c.label] === "fire");
-  let teams = TEAMS.filter((t) => !state.struck.includes(t));
-  if (!teams.length) teams = [...TEAMS];
+  const playing = playingTeams(state);
+  let teams = playing.filter((t) => !state.struck.includes(t));
+  if (!teams.length) {
+    teams = [...playing];
+    state.struck = []; // every team in play was hit: a second round
+  }
   const area = teams[Math.floor(rng() * teams.length)]!;
   const green = (t?: Team) => cells.filter((c) => state.cells[c.label] === "forest" && (!t || c.sector === t));
   const distTo = (c: CellDef) => fires.reduce((d, f) => Math.min(d, Math.max(Math.abs(f.col - c.col), Math.abs(f.row - c.row))), Infinity);
@@ -404,7 +565,7 @@ export function strike(state: GameState, rules: RuleSet, cells: CellDef[], rng: 
   state.struck.push(hit.sector);
   ignite(state, rules, hit.label);
   state.stats.strikes.push(hit.label);
-  pushEvent(state, `⚡ Lightning! New fire at ${hit.label} (${teamName(hit.sector)}'s area)`);
+  pushEvent(state, `LIGHTNING! New fire at ${hit.label} (${teamName(hit.sector)}'s area)`);
   return hit.label;
 }
 
@@ -427,7 +588,7 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
     state.elapsed = next;
     if (next === gameEnd) {
       endGame(state, cells, realNow, "time");
-      pushEvent(state, "⏱ Time is up!");
+      pushEvent(state, "TIME IS UP!");
       events.push("⏱ Time is up");
       break;
     }
@@ -435,7 +596,7 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
       const lit = lightStartFires(state, rules);
       for (const l of lit) changed.add(l);
       if (lit.length) {
-        pushEvent(state, "🔥 New fires in every team's area!");
+        pushEvent(state, "NEW FIRES IN EVERY TEAM'S AREA!");
         events.push(`🔥 start fires ${lit.join(" ")}`);
       }
     } else if (next === nextLightning) {
@@ -448,15 +609,16 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
     } else if (next === windAt) {
       state.windTurned = true;
       state.wind = (state.wind + (rng() < 0.5 ? 1 : 7)) % 8;
-      pushEvent(state, `🌬️ The wind turned! Now blowing ${WIND[state.wind]!.arrow} ${WIND[state.wind]!.word}`);
+      pushEvent(state, `THE WIND TURNED! Now blowing ${WIND[state.wind]!.word}`);
       events.push(`wind ${WIND[state.wind]!.name}`);
     } else {
       for (const l of spread(state, rules, cells, byPos, rng)) changed.add(l);
       state.nextSpreadAt += rules.spreadSeconds * 1000;
     }
+    trackLead(state, cells);
     if (state.phase === "live" && fireOut(state, rules)) {
       endGame(state, cells, realNow, "out");
-      pushEvent(state, "🌧️ The fire is out!");
+      pushEvent(state, "THE FIRE IS OUT!");
       events.push("fire out");
       break;
     }
@@ -555,7 +717,7 @@ export function decidePaint(state: GameState, rules: RuleSet, cells: Map<string,
     atk.lit++;
     state.stats.lit[team]++;
     ps.lit++;
-    if (atk.lit === 1) pushEvent(state, `🔥 ${teamName(team)} set fire to ${teamName(cell.sector)}'s area!`);
+    if (atk.lit === 1) pushEvent(state, `${teamName(team).toUpperCase()} SET FIRE TO ${teamName(cell.sector).toUpperCase()}'S AREA!`);
     return { accept: true, feedback: `🔥 ${lab} is burning. ${atk.left} more for this attack.` };
   }
 
@@ -653,8 +815,9 @@ export function judgeSticky(state: GameState, rules: RuleSet, s: StickyView): No
   const team = s.team;
   if (creator.team !== team) return tellCreator(`❓ Your question is in ${teamName(team)}'s Orders. Put it in your own team's Orders.`);
   const to = questionTarget(s.text);
-  const near = TEAM_INFO[team].neighbours;
-  if (!to || !near.includes(to)) return tellCreator(`❓ Ask about a neighbour, like: ${questionLine(near[0]!)}? (or ${teamName(near[1]!)}'s).`);
+  const near = TEAM_INFO[team].neighbours.filter((t) => playingTeams(state).includes(t));
+  if (!near.length) return tellCreator(`❓ No neighbouring team is playing this game: nobody to attack. Keep defending.`);
+  if (!to || !near.includes(to)) return tellCreator(`❓ Ask about a neighbour that is playing, like: ${questionLine(near[0]!)}?${near[1] ? ` (or ${teamName(near[1])}'s).` : ""}`);
   if (state.phase === "over") return notes;
 
   const answers = stickyLines(s.text).slice(1).map((l) => l.toUpperCase().replace(/[.!]+$/, "")).filter((l) => l === "YES" || l === "NO");
@@ -705,7 +868,7 @@ export function pendingStickies(state: GameState, stickies: StickyView[], rules?
     if (stickyKind(s.text) !== "QUESTION") continue;
     const creator = state.players[s.createdBy];
     const to = questionTarget(s.text);
-    if (!creator || creator.team !== s.team || !to || !TEAM_INFO[s.team].neighbours.includes(to)) continue;
+    if (!creator || creator.team !== s.team || !to || !TEAM_INFO[s.team].neighbours.includes(to) || !playingTeams(state).includes(to)) continue;
     if (rules && (state.attacksUsed?.[s.team] ?? 0) >= rules.attacksPerTeam) continue;
     const a = state.approvals[s.id];
     // A refused question rewritten without its NO line is asking again.

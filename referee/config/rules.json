@@ -34,5 +34,6 @@
   "attackMinutes": 2,
   "attackSquares": 3,
   "attacksPerTeam": 2,
-  "gameMinutes": 10
+  "gameMinutes": 10,
+  "drawTeams": true
 }

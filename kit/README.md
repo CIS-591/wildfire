@@ -2,8 +2,8 @@
 
 Save your forest from the fire, or set fire to your neighbour's — and a human decides when to attack.
 
-A forest is on fire. There are four teams, Team 1 to Team 4. Your team protects one corner of
-it: your team's area. Your Claude paints water.
+A forest is on fire. There are up to four teams, Team 1 to Team 4. Your team protects one corner of
+it: your team's area. Teams are drawn at random when the game starts. Your Claude paints water.
 
 - 🟩 **green** = tree, protect these
 - 🟧 **orange** = fire, spreads by itself
@@ -29,8 +29,8 @@ That's it. Watch the board, not the terminal.
    `/plugin install miro@claude-plugins-official`, then `/reload-plugins`, then `/mcp` → **miro** →
    **Authenticate** → pick the **CIS 591** team. When Claude asks to use a Miro tool, choose
    "Yes, and don't ask again".
-4. `/join Ana K` (first name + last initial). Within a minute your card on the board shows your
-   team ("Team 1".."Team 4") and role.
+4. `/join Ana K` (first name + last initial). Within a minute your card on the board says
+   "you're in!". When the game starts it shows your team ("Team 1".."Team 4") and role.
 5. `/play` when your instructor says go.
 
 ## What happens during the game
@@ -40,7 +40,10 @@ That's it. Watch the board, not the terminal.
 - The YES/NO question is like: "Start a fire in Team 2's area?" (always a neighbour: Team 1 borders
   Teams 2 and 3, Team 4 borders Teams 2 and 3). YES lets your team light up to 3 squares there
   within 2 minutes (2 attacks per game). Careful: the fire can spread back to you.
-- A thick team-colored border on a fire or burnt square shows which team lit that fire.
+- Every square has a border in its team's color, so you can see where each area is. A thicker
+  team-colored border on a fire or burnt square shows which team lit that fire.
+- The leaderboard next to the board ranks the teams, first place on top: each row shows its % saved,
+  boss, crew, water left, fires set, trees burned and its MVP. Rows swap places as teams overtake.
 
 ## What you will learn
 
@@ -58,7 +61,8 @@ That's it. Watch the board, not the terminal.
 | "not authorized" / board not found | `/mcp` → miro → clear authentication, sign in again, pick **CIS 591** |
 | "rate limit" or "daily limit" from Miro | Tell your instructor |
 | Your Claude stopped | Type `/play` again |
-| No team on your card after a minute | Tell your instructor, then `/join` again |
+| Nothing on your card after a minute | Tell your instructor, then `/join` again |
+| No team on your card | Normal before the start: teams are drawn when the game starts |
 | Your Claude wants to move or delete something | Say no |
 
 Fair play: let your Claude paint, don't edit squares by hand.

@@ -7,7 +7,7 @@
 import { stripHtml } from "./board.js";
 import { Bot, type CellView, type PlayerBoard, type StickyNote } from "./bot.js";
 import { FakeBoard } from "./fake-board.js";
-import { GRID_BOX, ORDERS, TEAMS, buildCells, inside, parseLabel, type Team } from "./layout.js";
+import { GRID_BOX, ORDERS, RANK_SLOTS, TEAMS, buildCells, inside, rankKey, parseLabel, type Team } from "./layout.js";
 import { Referee, emptyGame } from "./referee.js";
 import { mulberry32, scores, stickyKind, type RuleSet } from "./rules.js";
 
@@ -91,7 +91,8 @@ export class FakePlayerBoard implements PlayerBoard {
   async fixtures() {
     const text = (id?: string) => stripHtml(this.fake.items.get(id ?? "")?.content ?? "");
     const ids = this.ref.game.fixtureIds;
-    return { banner: text(ids.banner), scoreboard: text(ids.scoreboard), leaderboard: text(ids.leaderboard) };
+    // The bots read the four leaderboard rows as one text.
+    return { banner: text(ids.banner), scoreboard: text(ids.scoreboard), leaderboard: RANK_SLOTS.map((n) => text(ids[rankKey(n)])).join("\n") };
   }
   async stickies(team: Team): Promise<StickyNote[]> {
     return [...this.fake.items.values()]

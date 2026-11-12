@@ -3,7 +3,7 @@
 import { expect } from "vitest";
 import { stripHtml } from "../src/board.js";
 import { FakeBoard } from "../src/fake-board.js";
-import { FIXTURES, GRID, GRID_BOX, STATE_COLOR, cellBox, center, type Team } from "../src/layout.js";
+import { FIXTURES, GRID, GRID_BOX, STATE_COLOR, RANK_SLOTS, rankKey, cellBox, center, type Team } from "../src/layout.js";
 import { Referee, emptyGame, type GameFile, type RefereeOptions, type TickResult } from "../src/referee.js";
 import { mulberry32, type RuleSet } from "../src/rules.js";
 
@@ -69,7 +69,9 @@ export async function setup(o: SetupOptions = {}) {
   const sq = (label: string) => fake.items.get(ref.cellId.get(label) ?? "")!;
   const fill = (label: string) => sq(label)?.fill;
   const card = (u: string) => stripHtml(fake.items.get(ref.inboxCard.get(u) ?? "")?.content ?? "");
-  const fx = (k: keyof GameFile["fixtureIds"]) => stripHtml(fake.items.get(game.fixtureIds[k] ?? "")?.content ?? "");
+  const one = (k: keyof GameFile["fixtureIds"]) => stripHtml(fake.items.get(game.fixtureIds[k] ?? "")?.content ?? "");
+  /** A fixture's text; "leaderboard" = the four leaderboard rows. */
+  const fx = (k: keyof GameFile["fixtureIds"] | "leaderboard") => (k === "leaderboard" ? RANK_SLOTS.map((n) => one(rankKey(n))).join("\n") : one(k));
   const writes = () => fake.calls.update + fake.calls.create + fake.calls.delete + fake.calls.frame;
   return { fake, ref, game, logs, tick, ticks, cards, sq, fill, card, fx, writes, results, clock, advance: (ms: number) => (clock.t += ms), now };
 }
@@ -91,8 +93,13 @@ export function expectConverged(g: Game, opts: { allowStuck?: boolean } = {}) {
     if (Math.abs(it.x - want.x) > 1 || Math.abs(it.y - want.y) > 1 || it.w !== GRID.cell || it.h !== GRID.cell || it.rotation) bad.push(`${c.label} geometry`);
     if ((it.fill ?? "").toLowerCase() !== ref.fillOf(c.label)) bad.push(`${c.label} fill ${it.fill} != ${ref.fillOf(c.label)}`);
   }
-  for (const k of ["banner", "scoreboard", "leaderboard"] as const) if (!fake.items.has(game.fixtureIds[k] ?? "")) bad.push(`${k} missing`);
-  const tracked = new Set([...ref.cellId.values(), ...Object.values(game.fixtureIds), ...ref.inboxCard.values(), ...fake.staticIds]);
+  for (const k of ["banner", "scoreboard", ...RANK_SLOTS.map(rankKey)] as const) if (!fake.items.has(game.fixtureIds[k] ?? "")) bad.push(`${k} missing`);
+  // Icons: every wanted one placed once, where it belongs.
+  for (const w of ref.wantedIcons()) {
+    const it = fake.items.get(game.icons?.[w.key]?.id ?? "");
+    if (!it || Math.abs(it.x - w.x) > 2 || Math.abs(it.y - w.y) > 2) bad.push(`icon ${w.key} ${it ? "misplaced" : "missing"}`);
+  }
+  const tracked = new Set([...ref.cellId.values(), ...Object.values(game.fixtureIds), ...ref.inboxCard.values(), ...fake.staticIds, ...Object.values(game.icons ?? {}).map((r) => r.id)]);
   for (const it of fake.items.values()) {
     if (tracked.has(it.id)) continue;
     const onGrid = it.x + it.w / 2 >= GRID_BOX.x && it.x - it.w / 2 <= GRID_BOX.x + GRID_BOX.w && it.y + it.h / 2 >= GRID_BOX.y && it.y - it.h / 2 <= GRID_BOX.y + GRID_BOX.h;

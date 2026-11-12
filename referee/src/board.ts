@@ -56,6 +56,14 @@ export interface NewShape {
   parentId?: string; // create inside this frame (x/y given absolute)
 }
 
+/** An image placed by the referee (icons): fetched by Miro from `url`; x/y center, w width (square icons). */
+export interface NewImage {
+  url: string;
+  x: number;
+  y: number;
+  w: number;
+}
+
 export interface BoardAdapter {
   /** Every item, with absolute positions. Slow on a big board (cursor-paginated, 50 per page). */
   listItems(): Promise<BoardItem[]>;
@@ -68,6 +76,9 @@ export interface BoardAdapter {
   updateShape(id: string, patch: ShapePatch): Promise<void>;
   deleteItem(id: string): Promise<void>;
   createShapes(shapes: NewShape[]): Promise<string[]>;
+  /** Icons: create one image, or move/resize/swap one. Absent = no icons on this board. */
+  createImage?(img: NewImage): Promise<string>;
+  updateImage?(id: string, p: Partial<NewImage>): Promise<void>;
   /** userId -> display name for board members (REST only; the fake returns what it knows). */
   members(): Promise<Record<string, string>>;
   /** Frames seen in the last full listing (no extra API call). Absent = frames are not guarded. */

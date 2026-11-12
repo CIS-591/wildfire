@@ -18,7 +18,20 @@ const args = process.argv.slice(2);
 const cmd = args[0] ?? "help";
 const opt = (name: string, def?: string): string | undefined => {
   const i = args.indexOf(`--${name}`);
-  return i >= 0 ? args[i + 1] : def;
+  const v = i >= 0 ? args[i + 1] : undefined;
+  return v !== undefined && !v.startsWith("--") ? v : def; // `--teams --no-draw`: --teams has no value
+};
+
+/** An integer flag (--teams 3): absent = undefined; present but not an integer in [min, max] = exit with a message. */
+const intOpt = (name: string, min: number, max = Infinity): number | undefined => {
+  if (!args.includes(`--${name}`)) return undefined;
+  const raw = opt(name);
+  const n = Number(raw);
+  if (raw === undefined || !Number.isInteger(n) || n < min || n > max) {
+    console.error(`--${name} needs a whole number ${max === Infinity ? `of at least ${min}` : `from ${min} to ${max}`} (got ${raw === undefined ? "nothing" : JSON.stringify(raw)}), like --${name} ${min === 1 && max === 4 ? 3 : 4}`);
+    process.exit(1);
+  }
+  return n;
 };
 
 function miro(): MiroRest {
@@ -45,7 +58,7 @@ async function makeReferee(board: MiroRest) {
   }
   (frames ?? []).forEach((id, i) => board.frames.set(id, boxes[i]!));
   if (!layout) console.warn("no config/layout.json or ../board/board.json: panels are found by position only.");
-  for (const [k, id] of Object.entries(layout?.fixtures ?? {})) game.fixtureIds[k as keyof typeof game.fixtureIds] ??= id;
+  for (const [k, id] of Object.entries(layout?.fixtures ?? {})) if (k in FIXTURES) game.fixtureIds[k as keyof typeof game.fixtureIds] ??= id; // keys the layout no longer has are dropped
   const presets = loadTeams();
   if (Object.keys(presets).length) console.log(`preset teams: ${Object.entries(presets).map(([n, t]) => `${n}=${t}`).join(", ")}`);
   const seed = opt("seed");
@@ -55,6 +68,14 @@ async function makeReferee(board: MiroRest) {
     rules.gameMinutes = Number(minutes);
     rules.lightningAt = rules.lightningAt.filter((m) => m < rules.gameMinutes);
   }
+  // Team setup (the draw happens when `run` starts the game): --teams 3 --team-size 4, --no-draw = placed as they join.
+  const teams = intOpt("teams", 1, 4);
+  const teamSize = intOpt("team-size", 1);
+  if (teams !== undefined) rules.teams = teams;
+  if (teamSize !== undefined) rules.teamSize = teamSize;
+  if (args.includes("--no-draw")) rules.drawTeams = false;
+  if (args.includes("--draw")) rules.drawTeams = true;
+  console.log(`teams: up to ${rules.teams ?? 4}${rules.teamSize ? `, ${rules.teamSize} players each` : ", even split"}, ${rules.drawTeams ? "drawn at random when the game starts" : "placed as they join"}`);
   const rehearsal = args.includes("--rehearsal");
   if (rehearsal) console.log("REHEARSAL: one Miro account plays every seat (each inbox card is a player). Not for class.");
   // The token's own user id: the referee's own writes echoed back are never judged as a player's move.
@@ -135,11 +156,11 @@ const rulesFile = () => (opt("rules") ? path.resolve(opt("rules")!) : undefined)
 
 /** The rules panel, from the numbers the referee actually plays with (config/rules.json). */
 const rulesHtml = (r: RuleSet) => [
-  "<b>🔥 HOW WILDFIRE WORKS</b>",
-  `Every ${r.spreadSeconds} s the fire 🟧 may spread to the green trees 🟩 around it, the same in every direction; it starts in the centre and in every team's area. A square burns ${r.burnTicks} spreads, then it is gone ⬛.`,
-  `<b>Paint blue</b> 🟦 on green or orange squares in your team's area (colored edges). Blue stops the fire and stays. Up to ${r.paintBatch} squares per paint, then wait ${r.cooldownSeconds} s. Each team has its own ${r.waterPerTeam} water.`,
+  "<b>HOW WILDFIRE WORKS</b>",
+  `Every ${r.spreadSeconds} s the fire (ORANGE) may spread to the green trees around it, the same in every direction; it starts in the centre and in every team's area. A square burns ${r.burnTicks} spreads, then it is gone (BLACK).`,
+  `<b>Paint blue</b> on green or orange squares in your team's area (colored edges). Blue stops the fire and stays. Up to ${r.paintBatch} squares per paint, then wait ${r.cooldownSeconds} s. Each team has its own ${r.waterPerTeam} water.`,
   `<b>Score</b> = green squares left in your area (% of 306). The game lasts ${r.gameMinutes} min.${r.lightningAt.length ? ` Lightning starts a new fire in each team's area once (minutes ${r.lightningAt.join(", ")}).` : ""}`,
-  `<b>The human call:</b> the boss asks in your Orders: <b>Start a fire in Team 2's area?</b> (a neighbour). A teammate who didn't ask answers with a line <b>YES</b> or <b>NO</b>. On YES your team may paint orange 🟧 on up to ${r.attackSquares} green squares there for ${r.attackMinutes} min (${r.attacksPerTeam} attacks per game). A team's fire has a border in its color and can spread back into your own area.`,
+  `<b>The human call:</b> the boss asks in your Orders: <b>Start a fire in Team 2's area?</b> (a neighbour). A teammate who didn't ask answers with a line <b>YES</b> or <b>NO</b>. On YES your team may paint orange on up to ${r.attackSquares} green squares there for ${r.attackMinutes} min (${r.attacksPerTeam} attacks per game). A team's fire has a border in its color and can spread back into your own area.`,
   "Anything else you touch is put back.",
 ];
 
@@ -181,10 +202,9 @@ async function build() {
   const fx = await board.createShapes([
     { ...shape(FIXTURES.banner, dark, "<p><b>🔥 WILDFIRE · waiting for the referee</b></p>", 28, { textColor: COLORS.text }), shape: "rectangle" as const, borderColor: COLORS.panelBorder, borderWidth: 2 },
     { ...shape(FIXTURES.scoreboard, dark, "<p><b>TEAM 1 100% · TEAM 2 100%</b></p><p><b>TEAM 3 100% · TEAM 4 100%</b></p>", 30, { textColor: COLORS.text }), shape: "rectangle" as const, borderColor: COLORS.panelBorder, borderWidth: 2 },
-    { ...shape(FIXTURES.leaderboard, dark, "<p><b>🏆 LEADERBOARD</b></p>", 16, { textAlign: "left", textAlignVertical: "top", textColor: COLORS.text }), shape: "rectangle" as const },
-  ]);
+  ]); // the leaderboard rows, badges and icons are made by the referee on its first reset/lobby
   const texts = [
-    { content: "<b>🔥 WILDFIRE</b>", x: PANELS.title.x, y: PANELS.title.y + 45, w: PANELS.title.w, fontSize: 72, color: COLORS.heading },
+    { content: "<b>WILDFIRE</b>", x: PANELS.title.x, y: PANELS.title.y + 45, w: PANELS.title.w, fontSize: 72, color: COLORS.heading },
     { content: "<b>LEADERBOARD · live</b>", x: PANELS.leaderboard.x + 24, y: PANELS.leaderboard.y + 40, w: 600, fontSize: 30, color: COLORS.heading },
     { content: "<b>INBOX · one card per player · read only your own</b>", x: PANELS.inbox.x + 40, y: PANELS.inbox.y + 50, w: 1600, fontSize: 36, color: COLORS.heading },
     { content: rulesHtml(loadRules(rulesFile())).map((l) => `<p>${l}</p>`).join(""), x: PANELS.rules.x + 24, y: PANELS.rules.y + 250, w: PANELS.rules.w - 48, fontSize: 17, color: COLORS.text },
@@ -206,7 +226,7 @@ async function build() {
     note: "Ids of the live board items, written by `npm run referee build`. Rebuilding changes every id.",
     frames,
     orders: Object.fromEntries(TEAMS.map((t, i) => [t, ordersFrames[i]])),
-    fixtures: { banner: fx[0], scoreboard: fx[1], leaderboard: fx[2] },
+    fixtures: { banner: fx[0], scoreboard: fx[1] },
     static: staticIds,
     cells: Object.fromEntries(cells.map((c, i) => [c.label, ids[i]])),
   };
@@ -331,6 +351,8 @@ async function main() {
   npm run referee stop       end now: highest % wins
   npm run referee results    print the result
   options: --poll 3 (seconds between board reads), --seed N (repeatable fire), --minutes N (shorter game),
+           --teams N (1-4 teams play, Team 1 first), --team-size N (players per team: uses only the teams that needs),
+           --no-draw (place players as they join instead of a random draw at the start),
            --rehearsal (test with ONE Miro account: every inbox card is its own player; never in class)
 state: ${GAME_FILE}`);
   }

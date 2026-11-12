@@ -1,7 +1,7 @@
 # Wildfire: standing rules for the AI agent
 
 You play **Wildfire** for one student in CIS 591 (Module 4, multi-agent systems). The whole class shares
-one Miro board with one forest fire. Four teams each protect an area of the forest. You work through the
+one Miro board with one forest fire. Up to four teams each protect an area of the forest. You work through the
 Miro MCP server. A referee program spreads the fire, checks every paint, reverts illegal ones and writes
 the reason on the player's **inbox card**. The referee never fights the fire: only players do.
 
@@ -16,10 +16,11 @@ student reads (your replies, stickies) say "your team's area", never "sector".
   (label → square id, e.g. `"N9": "3458…"`). Read it once per session.
 - `player.json` (written by `/join`, gitignored): `name`, `inboxId`, `team` (internal id `ridge|pine|cedar|birch`; to students always say its
   display name `board.json` `teams[team].name`, "Team 1".."Team 4"),
-  `role` (`boss|worker`), `ordersId`, `stickies` (ids of stickies YOU created), `myOrderId`, `fire`
+  `role` (`boss|worker`) (team and role come from the inbox card once the game starts: teams are drawn
+  at random then; the card always wins over a saved team), `ordersId`, `stickies` (ids of stickies YOU created), `myOrderId`, `fire`
   (labels you last saw burning), `attackYes` (boss: question sticky id → time you first saw its YES),
   `cellIds` (label → NEW square id, for squares whose `cells` id went stale; see "Square ids"),
-  `fixtureIds` (`banner`/`scoreboard`/`leaderboard` → NEW id, same idea),
+  `fixtureIds` (`banner`/`scoreboard`/`rank_1`..`rank_4` → NEW id, same idea),
   `gameOverAt` (time of the first banner read that said GAME OVER), `calls`.
 - `.claude/commands/join.md`, `play.md`: the two routines.
 
@@ -32,8 +33,8 @@ lasts 10 minutes. The one human decision is the **attack**: the boss asks
 `Start a fire in Team 2's area?`; when a teammate's student answers YES, the team may paint **orange**
 `#ff5a1f` on up to 3 **green** squares in that neighbour's area within 2 minutes (at most 2 attacks
 per team per game). Fire spreads into anyone's area, yours too: it can spread back to you.
-A thick team-colored border on a fire or burnt square shows which team lit that fire (normal border =
-wild fire).
+Every square has a border in its area's team color; a fire or burnt square bordered in ANOTHER team's
+color was lit by that team (its own area's color = wild fire).
 
 ## The board
 
@@ -49,15 +50,17 @@ wild fire).
   |---|---|---|---|---|---|
   | Team 1 (top-left) | `ridge` | A–R, 1–17 | 0, 0, 1152, 1088 | Team 2, Team 3 | violet `#7c3aed` |
   | Team 2 (top-right) | `pine` | S–AJ, 1–17 | 1152, 0, 1152, 1088 | Team 1, Team 4 | pink `#db2777` |
-  | Team 3 (bottom-left) | `cedar` | A–R, 18–34 | 0, 1088, 1152, 1088 | Team 1, Team 4 | indigo `#4338ca` |
+  | Team 3 (bottom-left) | `cedar` | A–R, 18–34 | 0, 1088, 1152, 1088 | Team 1, Team 4 | gold `#ca8a04` |
   | Team 4 (bottom-right) | `birch` | S–AJ, 18–34 | 1152, 1088, 1152, 1088 | Team 2, Team 3 | slate `#334155` |
 
   Students only ever see "Team 1".."Team 4"; the ids are for `board.json` keys and `player.json`.
-  Team colors appear on each area's edge, its label, its Orders header, and as a thick border on
-  fire/burnt squares from that team's attack. Never on square fills.
+  Team colors appear on each area's edge, its label, its Orders header, its leaderboard row, as the border of
+  every square in its area, and as a thicker border on fire/burnt squares from that team's attack.
+  Never on square fills. Up to 4 teams play; a team that isn't playing has no `T<n>` in the LIVE
+  banner's `WATER` list (its leaderboard row says `not playing`): never ask to start a fire in its area.
 
   The fire starts in the four centre squares `R17 S17 R18 S18` (every area's inner corner) **and** in
-  a 2-square fire inside each team's area, so every team is busy from the first second.
+  a 2-square fire inside each playing team's area, so every team is busy from the first second.
   `board.json` `teams[team].startScan` is the 6 × 6 box at your inner corner; `teams[team].startFires`
   (when present) lists your area's own start fire.
 - **Square fills: only four** (lowercase hex; compare case-insensitively when reading):
@@ -70,9 +73,13 @@ wild fire).
   | ⬛ black | `#2a2420` | burnt, gone | referee (fire burns out) |
 
 - **Panels**: Banner (0, −220, 1100, 110): phase, time left, next spread, each team's water
-  (`💧 T1 62 · T2 40 · T3 71 · T4 55`: yours is `T` + your team number). Scoreboard
-  (1160, −220, 1140, 110): each team's score as % of its area. Leaderboard (`fixtures.leaderboard`): per team,
-  its players and any `⏳ waiting for a YES: start a fire in Team N's area` line. Orders frames (760 × 900): Team 1 (2440, 340),
+  (`WATER T1 62 · T2 40 · T3 71 · T4 55`: yours is `T` + your team number). Scoreboard
+  (1160, −220, 1140, 110): each team's score as % of its area. Leaderboard (3240, −330, 760, 610):
+  4 ranked rows `fixtures.rank_1`..`rank_4` (slot 1 = first place; teams swap slots as they overtake).
+  Each row's text, plain lines: `TEAM 2 · Boss Ana` / `Water 62 · Fires set 3 · Trees burned 23 · MVP Ben (23)` /
+  `Crew: Ben, Cy` / optional status: `Waiting for a YES: start a fire in Team 4's area` or
+  `ATTACK ON TEAM 4: 2 fires left (1:20)`. Lobby: `TEAM 2` / `Waiting for the draw`; a team not
+  playing: `TEAM 3 · not playing`. Ignore the score badges (`rank_N_score`) and the icons. Orders frames (760 × 900): Team 1 (2440, 340),
   Team 2 (3240, 340), Team 3 (2440, 1300), Team 4 (3240, 1300). Inbox panel
   (0, 2300, 4000, 1500): one card per player.
 
@@ -93,7 +100,7 @@ orange or black now: **always read a square right before painting it**.
 3. During `/join`: one inbox card in the Inbox panel.
 
 **Never move, resize or delete anything, and never change anything not listed above**: never touch
-frames, the banner, the scoreboard, squares outside your area (except an attack), other players' inbox cards or stickies
+frames, the banner, the scoreboard, the leaderboard, squares outside your area (except an attack), other players' inbox cards or stickies
 in other teams' frames. Never write `YES`/`NO` unless your student just answered the question. The
 referee reverts tampering and freezes you for 5 s.
 
@@ -158,7 +165,7 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
 - A **square id** comes only from: your `player.json` `cellIds` (check it first), `board.json` `cells`,
   or a scan result (a `rect` whose text is a label like `N9`).
 - Every other id is NOT a square: `board.json` `frames` are the 9 band frames, `orders` are the Orders
-  frames, `fixtures` are the banner/scoreboard/leaderboard. In a read, squares come wrapped in their
+  frames, `fixtures` are the banner/scoreboard/leaderboard rows. In a read, squares come wrapped in their
   band frame (`<g data-miro-id="…" data-frame="">`): that wrapper id is a frame, never paint or peek it.
   Never peek ids from `frames` or `orders`, except your own Orders frame as the routines say (peeking
   a band frame returns 144 squares and breaks the output limit).
@@ -166,16 +173,20 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
   returns nothing for a square, or a paint says not found: scan the 1-square box at its label
   (x = colIndex × 64, y = (row − 1) × 64, w = h = 64), take the `rect` whose text is that label, save
   `cellIds[label] = its id` in `player.json` and use it from now on.
-- **Stale fixture ids** (the instructor keeps `board.json` in sync, but just in case): the referee may also recreate the banner, scoreboard or leaderboard with a NEW
+- **Stale fixture ids** (the instructor keeps `board.json` in sync, but just in case): the referee may also recreate the banner, scoreboard or a leaderboard row with a NEW
   id in the same box. Use `player.json` `fixtureIds` first, then `board.json` `fixtures`. If a peek by
   a fixture id returns nothing, scan its box (banner 0, −220, 1100, 110; scoreboard 1160, −220,
-  1140, 110; leaderboard: the large text item inside 3240, −330, 760, 610), and save
-  `fixtureIds[name] = its id`.
+  1140, 110) and save `fixtureIds[name] = its id`. Fewer than 4 rows whose first line starts `TEAM `
+  in a status read: scan the leaderboard box (3240, −330, 760, 610), take the shapes whose first line
+  starts `TEAM `, and save them top to bottom as `fixtureIds.rank_1`..`rank_4`.
+- **Inbox card gone** (a peek of `inboxId` returns nothing: deleted, or the instructor reset the game):
+  make a new one (`join.md` steps 2–5; that also starts `player.json` fresh). Never while the old one
+  still reads fine.
 
 ## Pace and waiting
 
 - **One turn ≈ 15 s with 2 Miro calls**: one small read, one write (like Color Wars). Keep reads small:
-  only the ids you need; banner + inbox + leaderboard only every 4th turn. At most **one paint (batch
+  only the ids you need; banner + inbox + the 4 leaderboard rows only every 4th turn. At most **one paint (batch
   of ≤ 5 squares) per turn**, ≥ 5 s between batches (the referee reverts a quicker one).
 - **One Miro call at a time.** Never send two writes in the same message (e.g. a paint and a sticky
   edit together): send one, wait for its result, then the next.
@@ -189,19 +200,24 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
 ## Reading the banner
 
 - `join` / `lobby` / `waiting` → not started. `PAUSED` → wait. `LIVE` → play.
-- `GAME OVER` (also `WINS`, `FINAL`, `OVER`) → **stop, but only once it is confirmed**: someone may
+- `GAME OVER` (`GAME OVER · TEAM 2 WINS WITH 87%`) → **stop, but only once it is confirmed**: someone may
   write a fake one. The first time you read it, save `gameOverAt` = now and keep playing. Stop when a
   read at least 20 s after `gameOverAt` still says GAME OVER, or right away if your previous banner read
   showed under `0:30 left`. A LIVE read in between clears `gameOverAt`.
-- `⚡ LIGHTNING struck K4` (at minutes 2, 4, 6 and 8, one strike in each team's area) names a new fire
-  far from the others.
+- `FINAL MINUTE!`, `TEAM 3 TAKES THE LEAD!`, `… ARE NECK AND NECK` on line 2 are only news for the
+  room: keep playing (the final minute is the time to paint hardest).
+- `LIGHTNING! New fire at K4 (Team 2's area)` (at minutes 2, 4, 6 and 8, each in a playing team's
+  area; on the banner for ~25 s only) names a new fire far from the others.
 - Your team's water at 0 → your team's blue paints are refused; only attack orange (during a YES) still
   works. Otherwise just watch.
 
 ## Inbox card
 
-The referee writes your team, role and welcome on it, a header with `N squares` (your accepted
-squares so far), and one line per reverted paint with the reason.
+After `/join` it says `you're in!` and `🎲 waiting for the draw`. When the game starts the referee
+writes `🎲 The draw: … you are on Team N (id). … You are the BOSS/a WORKER`, and the header becomes
+`Ana · TEAM 1 · 👑 BOSS · N squares` (N = your accepted squares so far). Then one line per reverted
+paint with the reason. The name on the card is your name (a second "Ana K" becomes `Ana K 2`): if it
+differs from `player.json` `name`, save the card's.
 It shows only the last ~6 lines. A square you painted that is green or orange again with no line about
 it was most likely overwritten by the fire: just move on.
 Rehearsal note: when several agents share one Miro account (instructor rehearsal), the card can mix

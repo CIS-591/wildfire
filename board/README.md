@@ -8,7 +8,7 @@ All item ids are in `board.json`.
 | Item | Where | board.json |
 |---|---|---|
 | Locked light backdrop #f5f6f8 (sent to back, behind everything) | (-330, -440, 4410, 4320) | `static` (`restyle.added.backdrop`) |
-| 1,224 squares A1..AJ34 (60x60, pitch 64, border #ffffff width 2, label #0b1a10; `build/restyle_squares.mjs`) | 9 band frames (fill #ffffff), rows 1-4, 5-8, ..., 33-34 | `frames`, `cells` |
+| 1,224 squares A1..AJ34 (60x60, pitch 64, border in the area's team color width 4, set by the referee; label #0b1a10; `build/restyle_squares.mjs`) | 9 band frames (fill #ffffff), rows 1-4, 5-8, ..., 33-34 | `frames`, `cells` |
 | Light rim (#eef0f3) with column letters (top/bottom) and row numbers (left/right), team colored | around the grid, 72 wide | `static` |
 | Team area labels "TEAM 1'S AREA" etc. (rotated, text in team color on #f5f6f8) + one 10 px team-colored edge per area (top for Teams 1-2, bottom for Teams 3-4) | left x -126..-74, right x 2374..2426; stripes y -84 and 2246 | `static` |
 | Title "WILDFIRE" (Titan One 80) + subtitle | (0, -332) and (560, -295) | `static` |
@@ -16,7 +16,9 @@ All item ids are in `board.json`.
 | Banner (fixture) | (0, -220, 1100, 110) | `fixtures.banner` |
 | Scoreboard (fixture) | (1160, -220, 1140, 110) | `fixtures.scoreboard` |
 | "HOW TO PLAY" panel: 4 color swatches (green/orange/blue/black) + 3 plain lines | (2440, -330, 760, 610) | `static` |
-| Leaderboard panel, fixture inside | (3240, -330, 760, 610); fixture (3272, -254, 696, 502) | `fixtures.leaderboard` |
+| Leaderboard panel: 4 ranked rows (slot 1 = first place; 720x118 pills filled with the team's color, white text; rows reorder as teams overtake), all fixtures | panel (3240, -330, 760, 610); rows at x 3260, y -252, -124, 4, 132 | `fixtures.rank_1` ... `rank_4` |
+| Score badges: white rounded 130x80 boxes inside each row's right end (`87%`, `-` for a team not playing), fixtures | right end of each row | `fixtures.rank_1_score` ... `rank_4_score` |
+| Leaderboard icons: a medal per slot (gold, silver, bronze, 4th) + each team's mascot (Team 1 owl, Team 2 fox, Team 3 lion, Team 4 wolf). Microsoft Fluent Emoji 3D images, MIT licence. Placed and guarded by the referee: a moved icon is put back, a deleted one placed again | on the rows | not in board.json (referee state) |
 | ORDERS frames, 2x2 like the team areas: 64-high header ("ORDERS · TEAM N" in team color + one muted line, team-colored divider underneath), one EXAMPLE sticky each at slot (600, 726) | Team 1 / ridge (2440, 340), Team 2 / pine (3240, 340), Team 3 / cedar (2440, 1300), Team 4 / birch (3240, 1300), 760x900 | `orders`, `examples` |
 | Inbox panel, heading "INBOX" + one hint line (cards start at y 2400) | (0, 2300, 4000, 1500) | `static` |
 
@@ -29,8 +31,8 @@ referee never treats them as a real question.
 
 ## Palette (light)
 
-Backdrop `#f5f6f8`; band frames and square borders `#ffffff` (width 2); rim bars `#eef0f3`; panels and Orders frames `#ffffff` with `#e2e5ea` borders, Orders header bars `#f5f6f8`; headings ember `#e8590c`; text `#1f2328`, muted `#6b7280`.
-Team 1 violet `#7c3aed`, Team 2 pink `#db2777`, Team 3 indigo `#4338ca`, Team 4 slate `#334155`. Fixtures are white (banner ember border). The MCP update resets the area labels' rotation: re-apply 270 (left) / 90 (right) via REST after touching them.
+Backdrop `#f5f6f8`; band frames `#ffffff`; square borders in the team color (width 4); rim bars `#eef0f3`; panels and Orders frames `#ffffff` with `#e2e5ea` borders, Orders header bars `#f5f6f8`; headings ember `#e8590c`; text `#1f2328`, muted `#6b7280`.
+Team 1 violet `#7c3aed`, Team 2 pink `#db2777`, Team 3 gold `#ca8a04`, Team 4 slate `#334155`. Fixtures are white (banner ember border), except the leaderboard rows: filled with the team's color (grey for a team not playing), white text. The MCP update resets the area labels' rotation: re-apply 270 (left) / 90 (right) via REST after touching them.
 The backdrop is locked: unlock it in Miro (Cmd+Shift+L) before restyling it, then lock it again.
 Screenshots: `screenshots/light/` (older dark theme: `screenshots/palette/`).
 
