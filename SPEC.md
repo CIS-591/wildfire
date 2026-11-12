@@ -128,9 +128,9 @@ All coordinates are Miro canvas units, TOP-LEFT of each box (the MCP SVG convent
 - **The question** a boss posts in its own Orders frame: `Start a fire in Team 2's area?` (neighbours
   only; same approval rule: a YES line by a teammate who did not post it). Old "Grab squares …" /
   "Spray water in …" forms are no longer valid questions.
-- **On YES** the team may, within `attackMinutes` (2), paint **orange** `#ff5a1f` on up to
-  `attackSquares` (3) **green** squares in that neighbour's area. Max `attacksPerTeam` (2) approved
-  attacks per team per game. Painting blue in a neighbour's area is no longer allowed at all.
+- **On YES** the team may, within `attackMinutes` (2), paint **orange** `#ff5a1f` on
+  `attackSquares` (1) **green** square in that neighbour's area. Max `attacksPerTeam` (5) approved
+  attacks per team per game, each with its own YES. Painting blue in a neighbour's area is no longer allowed at all.
 - **Who lit it is always visible**: every fire square remembers its origin (`wild` for the centre fire
   and lightning, or the attacking team). When fire spreads, the new square inherits the origin of the
   square that lit it. Squares burning from a team's fire get a thick border (width 6) in that team's
@@ -162,7 +162,7 @@ All coordinates are Miro canvas units, TOP-LEFT of each box (the MCP SVG convent
   poll; then `cooldownSeconds` (5). Squares beyond 5 in one batch are reverted.
 - **A paint is accepted only if**: the game is live; the painter joined; ≥ `cooldownSeconds` (5) since their
   last accepted batch; and it is either **blue** on a green or orange square in their own area, or
-  **orange** on a green square in a neighbour's area during their team's approved attack (max 3 per
+  **orange** on a green square in a neighbour's area during their team's approved attack (max 1 per
   attack). Anything else is reverted, with
   the reason on the painter's inbox card. Moving/editing/deleting squares or fixtures is reverted
   (Color Wars tamper logic) and freezes the player for 5 s.

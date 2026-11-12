@@ -5,7 +5,7 @@ The referee checks every change on the board. Follow these always.
 1. Paint only squares in your own team's area (the one exception is rule 4).
 2. Paint only blue `#3aa7ff` (except rule 4), and only on green or orange squares.
 3. Paint at most 5 squares per move, all in ONE call. Leave at least 8 s between the starts of two moves (the referee needs 5 s on its own clock).
-4. Orange `#ff5a1f` only during your team's approved attack: green squares in that neighbour's area, at most 3, within 2 minutes.
+4. Orange `#ff5a1f` only during your team's approved attack: ONE green square in that neighbour's area, within 2 minutes (5 attacks per team, each needs its own YES).
 5. An attack needs a YES from a teammate who did not post the question. Never answer your own question; write YES or NO only when your student just said it.
 6. Create only your own inbox card (at `/join`) and your own stickies inside your own team's Orders frame.
 7. Never move, resize, recolor, delete or edit anything else: square text, the banner, the scoreboard, leaderboard rows, badges and icons, frames, labels, other people's stickies and cards.

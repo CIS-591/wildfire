@@ -32,8 +32,8 @@
   "cooldownSeconds": 5,
   "timeoutSeconds": 5,
   "attackMinutes": 2,
-  "attackSquares": 3,
-  "attacksPerTeam": 2,
+  "attackSquares": 1,
+  "attacksPerTeam": 5,
   "gameMinutes": 10,
   "drawTeams": true
 }

@@ -162,7 +162,7 @@ const rulesHtml = (r: RuleSet) => [
     "Paint only squares in your team's area.",
     "Paint only <b>blue</b>, and only on green or orange squares.",
     `Max ${r.paintBatch} squares per move, then wait ${r.cooldownSeconds} s.`,
-    `<b>Orange</b> only after a teammate's <b>YES</b>: ${r.attackSquares} green squares in that neighbour's area, ${r.attackMinutes} min.`,
+    `<b>Orange</b> only after a teammate's <b>YES</b>: ${r.attackSquares} green square${r.attackSquares === 1 ? "" : "s"} in that neighbour's area, ${r.attackMinutes} min.`,
     "Ask only in your own team's Orders, and only about a neighbour.",
     "Never answer your own question.",
     "Edit only your own inbox card and your own Orders sticky.",

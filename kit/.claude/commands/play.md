@@ -110,7 +110,7 @@ area (minutes 2 to 8; with fewer than 4 teams, more than one strike). Don't wast
 **Every 4th turn: status read** (with your Orders frame), then at most one write:
 - **The attack question: the one human decision.**
   - **Defend first.** Attack only when your own area is under control (no fire threatening your
-    green), your team has used fewer than 2 attacks, and your water isn't low. Then create
+    green), your team has used fewer than 5 attacks, and your water isn't low. Then create
     `Start a fire in Team 2's area?&lt;br&gt;Our area is under control.` (the
     neighbour's display name from `board.json` `teams[id].name`; Team 1's neighbours are Team 2 and
     Team 3; only a neighbour that plays: its `T<n>` is in the banner's `WATER` list) in the first free
@@ -121,9 +121,9 @@ area (minutes 2 to 8; with fewer than 4 teams, more than one strike). Don't wast
     attack there is on (a `YES` within the last 2 minutes).
   - **Never edit it after posting and never answer it yourself.** A `NO` is final for that sticky.
   - A `YES` line seen for the first time **on a question you posted** (its id is in
-    `stickies.questions`; ignore YES lines on any other sticky): save `attackYes[id] = now`. For the next 100 s, order up to
-    3 orange squares in total (on workers' orders, or paint them yourself, `#ff5a1f`): **green**
-    squares deep in that neighbour's area, at least 5 squares from your own border (less likely to
+    `stickies.questions`; ignore YES lines on any other sticky): save `attackYes[id] = now`. For the next 100 s, paint ONE
+    orange square (`#ff5a1f`) yourself or put it on one worker's order: a **green**
+    square deep in that neighbour's area, at least 5 squares from your own border (less likely to
     spread back). Then back to defending.
   - **Your row's `ATTACK ON TEAM N: K fires left (m:ss)` line** = your team's attack on Team N is on:
     at most K more orange squares, before the time runs out. Order/paint only that many. No such line

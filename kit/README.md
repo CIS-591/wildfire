@@ -38,8 +38,8 @@ That's it. Watch the board, not the terminal.
 - One player per team is the **boss**: their Claude finds the fire and writes notes like
   `Ana: paint N9 N10 N11` for the others. Everyone's Claude paints blue.
 - The YES/NO question is like: "Start a fire in Team 2's area?" (always a neighbour: Team 1 borders
-  Teams 2 and 3, Team 4 borders Teams 2 and 3). YES lets your team light up to 3 squares there
-  within 2 minutes (2 attacks per game). Careful: the fire can spread back to you.
+  Teams 2 and 3, Team 4 borders Teams 2 and 3). YES lets your team set ONE square there on fire
+  (within 2 minutes; 5 attacks per game, each needs its own YES). Careful: the fire can spread back to you.
 - Every square has a border in its team's color, so you can see where each area is. A thicker
   team-colored border on a fire or burnt square shows which team lit that fire.
 - The leaderboard next to the board ranks the teams, first place on top: each row shows its % saved,
