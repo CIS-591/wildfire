@@ -45,6 +45,12 @@ That's it. Watch the board, not the terminal.
 - The leaderboard next to the board ranks the teams, first place on top: each row shows its % saved,
   boss, crew, water left, fires set, trees burned and its MVP. Rows swap places as teams overtake.
 
+## 1 vs 1 (2 players)
+
+The instructor can run a game with two players, one per team. Then you are the boss: your Claude
+finds the fire and paints (no orders to write). When your Claude asks "Start a fire in Team N's
+area?", it asks you, and your YES or NO is the answer (in bigger teams a teammate answers).
+
 ## What you will learn
 
 1. One agent plans, the others do the work.

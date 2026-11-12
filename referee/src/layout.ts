@@ -197,17 +197,28 @@ export const ordersTitle = (t: Team) => `ORDERS · ${TEAM_INFO[t].name.toUpperCa
 
 /** Leaderboard row geometry (top-left boxes): a pill per rank slot, a white score badge inside its right end. */
 export const LB_ROW = { x: 3260, y0: -252, pitch: 128, w: 720, h: 118 };
-export const LB_BADGE = { w: 130, h: 80, right: 16 };
+export const LB_BADGE = { w: 96, h: 80, right: 12 };
+/** Water and attacks chips: stacked between the row text and the score badge (an icon at each chip's left). */
+export const LB_CHIP = { w: 136, h: 46, gap: 8, right: 12 };
 export const lbRowBox = (n: number): Box => ({ x: LB_ROW.x, y: LB_ROW.y0 + (n - 1) * LB_ROW.pitch, w: LB_ROW.w, h: LB_ROW.h });
 export const lbBadgeBox = (n: number): Box => {
   const r = lbRowBox(n);
   return { x: r.x + r.w - LB_BADGE.w - LB_BADGE.right, y: r.y + (r.h - LB_BADGE.h) / 2, w: LB_BADGE.w, h: LB_BADGE.h };
 };
+export const lbChipBox = (n: number, which: "water" | "attacks"): Box => {
+  const r = lbRowBox(n);
+  const b = lbBadgeBox(n);
+  const top = r.y + (r.h - 2 * LB_CHIP.h - LB_CHIP.gap) / 2;
+  return { x: b.x - LB_CHIP.right - LB_CHIP.w, y: which === "water" ? top : top + LB_CHIP.h + LB_CHIP.gap, w: LB_CHIP.w, h: LB_CHIP.h };
+};
+type Slot = 1 | 2 | 3 | 4;
 function rankFixtures() {
-  const out = {} as Record<`rank_${1 | 2 | 3 | 4}` | `rank_${1 | 2 | 3 | 4}_score`, Box>;
+  const out = {} as Record<`rank_${Slot}` | `rank_${Slot}_score` | `rank_${Slot}_water` | `rank_${Slot}_attacks`, Box>;
   for (const n of [1, 2, 3, 4] as const) {
     out[`rank_${n}`] = lbRowBox(n);
     out[`rank_${n}_score`] = lbBadgeBox(n);
+    out[`rank_${n}_water`] = lbChipBox(n, "water");
+    out[`rank_${n}_attacks`] = lbChipBox(n, "attacks");
   }
   return out;
 }
@@ -250,8 +261,8 @@ export type IconName = keyof typeof ICON_URL;
 /** Team mascots (icons on the leaderboard rows): Team 1 owl, Team 2 fox, Team 3 lion, Team 4 wolf. */
 export const MASCOT: Record<Team, IconName> = { ridge: "owl", pine: "fox", cedar: "lion", birch: "wolf" };
 /** Row icons: a medal at the left (per slot), the team's mascot next to it; row text starts after LB_INDENT. */
-export const LB_ICONS = { medal: { size: 56, left: 16 }, mascot: { size: 70, left: 82 } };
-export const LB_INDENT = "&nbsp;".repeat(38);
+export const LB_ICONS = { medal: { size: 48, left: 12 }, mascot: { size: 60, left: 66 }, chip: { size: 30, left: 8 } };
+export const LB_INDENT = "&nbsp;".repeat(31);
 export const LB_FONT = 15;
 
 export const INBOX_CARD = { w: 380, h: 150, cols: 9, gapX: 50, gapY: 24, firstX: 40, firstY: 2400 };

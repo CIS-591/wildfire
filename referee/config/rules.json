@@ -35,5 +35,52 @@
   "attackSquares": 1,
   "attacksPerTeam": 5,
   "gameMinutes": 10,
-  "drawTeams": true
+  "drawTeams": true,
+  "autoScale": {
+    "enabled": true,
+    "points": [
+      {
+        "perTeam": 1,
+        "pSide": 0.18,
+        "pDiag": 0.027,
+        "water": 45
+      },
+      {
+        "perTeam": 2,
+        "pSide": 0.2,
+        "pDiag": 0.03,
+        "water": 55
+      },
+      {
+        "perTeam": 3,
+        "pSide": 0.25,
+        "pDiag": 0.037,
+        "water": 65
+      },
+      {
+        "perTeam": 4,
+        "pSide": 0.265,
+        "pDiag": 0.04,
+        "water": 70
+      },
+      {
+        "perTeam": 5,
+        "pSide": 0.29,
+        "pDiag": 0.043,
+        "water": 75
+      },
+      {
+        "perTeam": 7.5,
+        "pSide": 0.33,
+        "pDiag": 0.05,
+        "water": 75
+      },
+      {
+        "perTeam": 10,
+        "pSide": 0.38,
+        "pDiag": 0.057,
+        "water": 85
+      }
+    ]
+  }
 }

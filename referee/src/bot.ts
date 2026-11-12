@@ -191,6 +191,13 @@ export class Bot {
 
     // The one human decision: attack a neighbour when our own area is under control (little fire at our
     // trees, water above 30%): the neighbour with the most green left.
+    // A team of one has no teammate to say YES: the solo player's own human answers (the referee accepts
+    // the poster's own YES when the team has one player), so the bot answers its own open question.
+    if (!crew.length) {
+      for (const q of stickies) {
+        if (q.createdBy === this.userId && /^Start a fire in /.test(q.text) && !/\n(YES|NO)$/i.test(q.text)) await board.editSticky(q.id, `${q.text}\nYES`);
+      }
+    }
     const away = this.attackTo(now, leaderboard);
     if (away) return this.light(board, cells, away, Math.min(this.batchSize(), this.attackLeft(leaderboard)));
     const total = this.opts.waterPerTeam ?? 150;
@@ -198,7 +205,8 @@ export class Bot {
     if ((this.opts.attacks ?? true) && !this.attack && !waiting && this.asked < 2 && now - this.lastAskAt > 120_000 && waterOf(banner, team) > 0.3 * total) {
       const myFire = cells.filter((c) => c.sector === team && c.fill === C.fire && cells.some((g) => g.sector === team && g.fill === C.forest && cheb(g, c) <= 1)).length;
       const green = (n: Team) => cells.filter((c) => c.sector === n && c.fill === C.forest).length;
-      const target = TEAM_INFO[team].neighbours.slice().sort((a, b) => green(b) - green(a))[0];
+      const playing = (n: Team) => !/not playing/i.test(rowOf(leaderboard, n).split("\n")[0] ?? "");
+      const target = TEAM_INFO[team].neighbours.filter(playing).sort((a, b) => green(b) - green(a))[0];
       if (target && myFire <= 2) {
         await board.postSticky(team, `Start a fire in ${TEAM_INFO[target].name}'s area?\nOur area is under control.`);
         this.lastAskAt = now;
@@ -207,7 +215,8 @@ export class Bot {
     }
 
     // Some boss turns go entirely to orders and questions; the others paint a batch too.
-    if (this.rng() < (this.opts.bossOrderTurns ?? 0.5)) return 0;
+    // A solo boss has no crew to order: every turn paints.
+    if (crew.length && this.rng() < (this.opts.bossOrderTurns ?? 0.5)) return 0;
     const k = this.batchSize();
     // Not the squares just given to the crew (5 each): the next most urgent ones.
     const spare = own.slice(crew.length * 5);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { STATE_COLOR, buildCells, startFill, type CellState, type Team } from "../src/layout.js";
 import {
-  advance, applyJoin, createState, decidePaint, drawTeams, judgeSticky, playingTeams, mulberry32, pendingStickies, questionTarget, scores, spread, startGame, stickyKind, strike, type GameState, type RuleSet,
+  advance, applyJoin, createState, decidePaint, drawTeams, judgeSticky, playingTeams, mulberry32, pendingStickies, questionTarget, scaleRules, scores, spread, startGame, stickyKind, strike, type GameState, type RuleSet,
 } from "../src/rules.js";
 
 const base: RuleSet = {
@@ -453,3 +453,46 @@ describe("team setup: --teams, --team-size, the draw", () => {
     expect(notes[0]!.line).toMatch(/neighbour that is playing/);
   });
 });
+
+describe("a team of one", () => {
+  it("its only player may answer its own attack question (its human decides); in a bigger team it may not", () => {
+    const rules = { ...base, teams: 2 };
+    const s = createState(list, rules, mulberry32(1));
+    applyJoin(s, { userId: "a", name: "Ana", at: T0 }, "ridge", rules);
+    applyJoin(s, { userId: "b", name: "Ben", at: T0 }, "pine", rules);
+    startGame(s, rules, T0);
+    s.elapsed = 60_000;
+    sticky(s, "q", "ridge", "Start a fire in Team 2's area?\nYES", "a", "a", rules);
+    expect(s.approvals.q?.status).toBe("approved");
+    applyJoin(s, { userId: "c", name: "Cy", at: T0 }, "pine", rules);
+    const notes = sticky(s, "q2", "pine", "Start a fire in Team 1's area?\nYES", "b", "b", rules);
+    expect(s.approvals.q2).toBeUndefined();
+    expect(notes[0]!.line).toMatch(/teammate who did not post it/);
+  });
+});
+
+describe("scaleRules (auto-scale)", () => {
+  const auto: RuleSet = {
+    ...base,
+    autoScale: { enabled: true, points: [{ perTeam: 4, pSide: 0.3, pDiag: 0.05, water: 100 }, { perTeam: 1, pSide: 0.1, pDiag: 0.01, water: 40 }] },
+  };
+  it("interpolates between the points at the average players per playing team", () => {
+    // 5 players on 2 teams: 2.5 per team, halfway between 1 and 4
+    const { rules, scaled } = scaleRules(auto, ["ridge", "pine"], { ridge: 3, pine: 2, cedar: 9 });
+    expect(scaled).toEqual({ perTeam: 2.5, pSide: 0.2, pDiag: 0.03, waterPerTeam: 70 });
+    expect(rules).toMatchObject({ pSide: 0.2, pDiag: 0.03, waterPerTeam: 70, gameMinutes: base.gameMinutes });
+    expect(auto.pSide).toBe(base.pSide); // pure
+  });
+  it("clamps at the first and last point", () => {
+    expect(scaleRules(auto, ["ridge", "pine"], { ridge: 1 }).scaled).toMatchObject({ perTeam: 0.5, pSide: 0.1, waterPerTeam: 40 });
+    expect(scaleRules(auto, TEAMS4, { ridge: 10, pine: 10, cedar: 10, birch: 10 }).scaled).toMatchObject({ perTeam: 10, pSide: 0.3, pDiag: 0.05, waterPerTeam: 100 });
+  });
+  it("disabled, no points or no players: the rules unchanged", () => {
+    const off = { ...auto, autoScale: { ...auto.autoScale!, enabled: false } };
+    expect(scaleRules(off, ["ridge"], { ridge: 3 })).toEqual({ rules: off, scaled: null });
+    expect(scaleRules(base, ["ridge"], { ridge: 3 })).toEqual({ rules: base, scaled: null });
+    expect(scaleRules({ ...auto, autoScale: { enabled: true, points: [] } }, ["ridge"], { ridge: 3 }).scaled).toBeNull();
+    expect(scaleRules(auto, [], {}).scaled).toBeNull();
+  });
+});
+const TEAMS4: Team[] = ["ridge", "pine", "cedar", "birch"];

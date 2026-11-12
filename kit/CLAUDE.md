@@ -21,8 +21,11 @@ student reads (your replies, stickies) say "your team's area", never "sector".
 - `player.json` (written by `/join`, gitignored): `name`, `inboxId`, `team` (internal id `ridge|pine|cedar|birch`; to students always say its
   display name `board.json` `teams[team].name`, "Team 1".."Team 4"),
   `role` (`boss|worker`) (team and role come from the inbox card once the game starts: teams are drawn
-  at random then; the card always wins over a saved team), `ordersId`, `stickies` (ids of stickies YOU created), `myOrderId`, `fire`
-  (labels you last saw burning), `attackYes` (boss: question sticky id → time you first saw its YES),
+  at random then; the card always wins over a saved team), `ordersId`,
+  `stickies` = ids of stickies YOU created, always this shape: `{"order": "<id>", "questions": ["<id>", …]}`
+  (`order`: a worker's own order sticky; `questions`: the boss's question stickies; start as `{}`),
+  `fire` (labels you last saw burning), `water0` (your team's water at your first LIVE read),
+  `attackYes` (boss: question sticky id → time you first saw its YES),
   `cellIds` (label → NEW square id, for squares whose `cells` id went stale; see "Square ids"),
   `fixtureIds` (`banner`/`scoreboard`/`rank_1`..`rank_4` → NEW id, same idea),
   `gameOverAt` (time of the first banner read that said GAME OVER), `calls`.
@@ -57,17 +60,14 @@ ANOTHER team's color was lit by that team (its own area's color = wild fire).
   Never on square fills. Up to 4 teams play; a team that isn't playing has no `T<n>` in the LIVE
   banner's `WATER` list (its leaderboard row says `not playing`): never ask to start a fire in its area.
 
-  The fire starts in the four centre squares `R17 S17 R18 S18` (every area's inner corner) at the
-  start. **The fires inside each area start at minute 1** (banner `9:00 left`): a 2-square fire in each
-  playing team's area. Don't look for it before then.
-  `board.json` `teams[team].startScan` is the 6 × 6 box at your inner corner; `teams[team].startFires`
-  (when present) lists your area's own start fire.
+  When fires start: `AGENTS.md` "The fire". `board.json` `teams[team].startScan` is the 6 × 6 box at
+  your inner corner (around the centre fire); `teams[team].startFires` lists your area's minute-1 fire.
 - **Square fills: only four** (lowercase hex; compare case-insensitively when reading):
 
   | | Fill | Means | Who paints it |
   |---|---|---|---|
   | 🟩 green | `#3fa66b` | tree, protect these | start |
-  | 🟧 orange | `#ff5a1f` | fire, spreads by itself | referee; **you** only in an attack |
+  | 🟧 orange | `#ff5a1f` | fire, spreads by itself | referee; **the boss** only in an attack |
   | 🟦 blue | `#3aa7ff` | water, fire can't cross it, it stays | **you** |
   | ⬛ black | `#2a2420` | burnt, gone | referee (fire burns out) |
 
@@ -77,7 +77,7 @@ ANOTHER team's color was lit by that team (its own area's color = wild fire).
   4 ranked rows `fixtures.rank_1`..`rank_4` (slot 1 = first place; teams swap slots as they overtake).
   Each row's text, plain lines: `TEAM 2 · Boss Ana` / `Water 62 · Fires set 3 · Trees burned 23 · MVP Ben (23)` /
   `Crew: Ben, Cy` / optional status: `Waiting for a YES: start a fire in Team 4's area` or
-  `ATTACK ON TEAM 4: 2 fires left (1:20)`. Lobby: `TEAM 2` / `Waiting for the draw`; a team not
+  `ATTACK ON TEAM 4: 1 fire left (1:20)` (`0 fires left` once its square is lit). Lobby: `TEAM 2` / `Waiting for the draw`; a team not
   playing: `TEAM 3 · not playing`. Ignore the score badges (`rank_N_score`) and the icons. Orders frames (760 × 900): Team 1 (2440, 340),
   Team 2 (3240, 340), Team 3 (2440, 1300), Team 4 (3240, 1300). Inbox panel
   (0, 2300, 4000, 1500): one card per player.
@@ -94,7 +94,7 @@ The fire changes squares every ~20 s, so a square you saw 30 s ago may be orange
 |---|---|---|---|
 | Order | the worker creates its own (`Ana: paint`), the boss fills it in | `Ana: paint N9 N10 N11` (name, colon, `paint`, 3–6 labels in paint order) | `yellow` |
 | Question | boss | `Start a fire in Team 2's area?` (a neighbour's team; when reading, also accept `team2`, `T2` or an old name like `Pine Valley`) / optional reason line, e.g. `Our area is under control.` | `red` |
-| Answer | a teammate who did not post the question (their student said so) | a new line `YES` or `NO` on the question | — |
+| Answer | a teammate who did not post the question (their student said so); in a team of one (`Crew: -`), the boss itself after asking its student | a new line `YES` or `NO` on the question | — |
 
 - One order sticky per worker: **edit its text, never post a second.** The squares come after `paint`;
   `Ana: paint` with nothing after it means "no order yet".
@@ -123,7 +123,7 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
   around square `L`: x = (colIndex − 2) × 64, y = (row − 3) × 64, w = h = 384, clipped to the grid
   (0, 0, 2304, 2176).
 - **Paint** = a batch of up to **5 squares in ONE `canvas_update_from_svg`**, one `rect` per square,
-  only the id and the fill (`#ff5a1f` for an attack):
+  only the id and the fill (`#3aa7ff`; the boss's attack square: `#ff5a1f`):
   `<svg xmlns="http://www.w3.org/2000/svg"><rect data-miro-id="ID1" fill="#3aa7ff"/><rect data-miro-id="ID2" fill="#3aa7ff"/></svg>`
   All squares of one batch go in this ONE call, never one call per square. More than 5 in one batch:
   the extras are reverted. **The update result's count is unreliable** ("Applied diff: 0 updated" or a
@@ -135,7 +135,7 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
   wrapper has **no `transform`, no `rect data-type="frame"`** (those would move or resize the frame);
   the sticky's x/y are the position, relative to the frame's top-left:
   `<svg xmlns="http://www.w3.org/2000/svg"><g data-miro-id="FRAME_ID" data-frame=""><rect data-type="sticky" x="600" y="234" width="128" height="147" data-color="yellow" data-content="Ana: paint"/></g></svg>`
-  Save the new `data-miro-id` from `result_svg` in `player.json` `stickies`. If the result shows the
+  Save the new `data-miro-id` from `result_svg` in `player.json` `stickies` (`order` or `questions`). If the result shows the
   sticky outside the frame, update it once with absolute x/y inside the frame box and carry on.
 - **Edit a sticky's text**: `canvas_update_from_svg` with
   `<rect data-miro-id="ID" data-type="sticky" data-content="…full new text…"/>` (keep `data-type`).
@@ -171,25 +171,27 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
 
 ## Pace and waiting
 
-- **One turn ≈ 15 s with 2 Miro calls**: one small read, one write (like Color Wars). Keep reads small:
+- **One turn ≈ 15 s with a few small calls** (`play.md` gives each role's exact turn). Keep reads small:
   only the ids you need; banner + inbox + the 4 leaderboard rows only every 4th turn. At most **one paint (batch
   of ≤ 5 squares) per turn**.
-- **Paint cooldown: after a paint, at least 8 s before your next paint.** The referee wants 5 s
-  between the starts of two of your accepted batches, measured on its own ~3 s poll clock, so 5 s on
-  your side is too tight. A read in between counts toward the 8 s; if less has passed, `sleep` the rest.
+- **Paint cooldown: leave at least 8 s between the starts of two paints.** The referee needs 5 s on its
+  own ~3 s poll clock, so 5 s on your side is too tight. Reads in between count toward the 8 s; if less
+  has passed, wait the rest.
 - **One Miro call at a time.** Never send two writes in the same message (e.g. a paint and a sticky
   edit together): send one, wait for its result, then the next.
 - **Budget: cap 150 Miro calls per game**; count them in `player.json` `calls` (lobby peeks before the
   game is LIVE don't count). At 150, stop and say so in one line.
-- **Waiting**: after a write, don't sleep, except to keep the 8 s paint cooldown. In the lobby
-  or when PAUSED, `sleep 15`. Always its own Bash command: never longer than 15, never chained
-  (`sleep 30`, `sleep 15; …`, `sleep 15 && …` are blocked).
-- Miro says rate limit: `sleep 15`, retry once. Daily limit: stop and tell the student in one line.
+- **Waiting** ("wait N s" anywhere in the kit): Bash `sleep N`, N at most 15, as its own command
+  (never `sleep 30`, never chained like `sleep 15; …` or `sleep 15 && …`). **If Bash refuses or blocks
+  the sleep**: don't retry it and don't use `run_in_background` or Monitor; skip the wait and just do
+  the next peek now (a peek takes a few seconds itself). After a write, don't wait, except to keep the
+  8 s paint cooldown. In the lobby or when PAUSED, wait 15 s between peeks.
+- Miro says rate limit: wait 15 s, retry once. Daily limit: stop and tell the student in one line.
 
 ## Reading the banner
 
 - `join` / `lobby` / `waiting` → not started. `LIVE` → play.
-- `PAUSED` → stop painting until a read says LIVE again (`sleep 15` between reads). A paint sent just
+- `PAUSED` → stop painting until a read says LIVE again (wait 15 s between reads). A paint sent just
   as it paused comes back on your card as `undone: no referee was watching`: that is normal, not a
   mistake; just carry on once LIVE.
 - **GAME OVER (the only rule for it):** the first time a banner read says `GAME OVER` (e.g. `GAME OVER ·
@@ -200,8 +202,8 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
   room: keep playing (the final minute is the time to paint hardest).
 - `LIGHTNING! New fire at K4 (Team 2's area)` (at minutes 2, 4, 6 and 8, each in a playing team's
   area; on the banner for ~25 s only) names a new fire far from the others.
-- Your team's water at 0 → your team's blue paints are refused; only attack orange (during a YES) still
-  works. Otherwise just watch.
+- Your team's water at 0 → your team's blue paints are refused; only the boss's attack orange (during
+  a YES) still works. Otherwise just watch.
 
 ## Inbox card
 
@@ -219,4 +221,4 @@ own account.
 ## Replies
 
 While playing, one status line every ~10 turns (e.g. "Turn 10 · Team 1 71% green · water 40 left").
-At the end, two lines: your team's final score and one thing that worked.
+At the end: `play.md` "When the game ends".

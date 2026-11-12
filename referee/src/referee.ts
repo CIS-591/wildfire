@@ -11,11 +11,11 @@
 import type { BoardAdapter, BoardItem, NewImage, NewShape } from "./board.js";
 import { isGone, isLocked, pool, stripHtml } from "./board.js";
 import {
-  CELL_FONT, COLORS, FIXTURES, GRID, ICON_URL, LB_FONT, LB_ICONS, LB_INDENT, MASCOT, RANK_SLOTS, lbRowBox, rankKey, scoreKey, type RankSlot, GRID_BOX, ORDERS, PANELS, STATE_COLOR, TEAMS, TEAM_INFO, WIND, buildCells, cellBox, cellStroke, center, frameBoxes, frameOfRow, inboxSlot,
+  CELL_FONT, COLORS, FIXTURES, GRID, ICON_URL, LB_FONT, LB_ICONS, LB_INDENT, MASCOT, RANK_SLOTS, lbChipBox, lbRowBox, rankKey, scoreKey, type RankSlot, GRID_BOX, ORDERS, PANELS, STATE_COLOR, TEAMS, TEAM_INFO, WIND, buildCells, cellBox, cellStroke, center, frameBoxes, frameOfRow, inboxSlot,
   inside, ordersTeamAt, ordersTitle, parseLabel, sectorText, startFill, startState, textColorFor, type Box, type CellDef, type CellState, type Team,
 } from "./layout.js";
 import {
-  MAX_OPEN_QUESTIONS, advance, aheadOf, decideJunk, drawTeams, placeTeams, playingTeams, rankTeams, windOn, paintsOf, applyJoin, createState, decidePaint, decideTamper, judgeSticky, mulberry32, pendingStickies, questionAnswered, questionTarget, questionText, scores, startGame,
+  MAX_OPEN_QUESTIONS, advance, aheadOf, decideJunk, drawTeams, placeTeams, playingTeams, rankTeams, windOn, paintsOf, applyJoin, createState, decidePaint, decideTamper, judgeSticky, mulberry32, pendingStickies, questionAnswered, questionTarget, questionText, scaleRules, scores, startGame,
   stickyKind, stopGame, teamName, type Decision, type GameState,
   type PaintEvent, type Rng, type RuleSet, type StickyView, type TamperEvent,
 } from "./rules.js";
@@ -130,9 +130,11 @@ const FIXTURE_STYLE: Record<FixtureKey, Partial<NewShape>> = {
   ...(Object.fromEntries(
     RANK_SLOTS.flatMap((n) => [
       [rankKey(n), { fill: LB_GREY, fontSize: LB_FONT, textColor: "#ffffff", textAlign: "left", textAlignVertical: "middle", shape: "round_rectangle", borderColor: "#ffffff", borderWidth: 3 }],
-      [scoreKey(n), { fill: "#ffffff", fontSize: 34, textColor: COLORS.text, shape: "round_rectangle", borderColor: COLORS.panelBorder, borderWidth: 2 }],
+      [scoreKey(n), { fill: "#ffffff", fontSize: 28, textColor: COLORS.text, shape: "round_rectangle", borderColor: COLORS.panelBorder, borderWidth: 2 }],
+      [`rank_${n}_water`, { fill: "#ffffff", fontSize: 17, textColor: COLORS.text, shape: "round_rectangle", borderColor: COLORS.panelBorder, borderWidth: 2 }],
+      [`rank_${n}_attacks`, { fill: "#ffffff", fontSize: 17, textColor: COLORS.text, shape: "round_rectangle", borderColor: COLORS.panelBorder, borderWidth: 2 }],
     ]),
-  ) as Record<`rank_${RankSlot}` | `rank_${RankSlot}_score`, Partial<NewShape>>),
+  ) as Record<`rank_${RankSlot}` | `rank_${RankSlot}_score` | `rank_${RankSlot}_water` | `rank_${RankSlot}_attacks`, Partial<NewShape>>),
 } as Record<FixtureKey, Partial<NewShape>>;
 const CARD_FILL = COLORS.panel;
 
@@ -191,6 +193,8 @@ export class Referee {
   seen = new Set<string>();
   stickies: StickyView[] = [];
   rules: RuleSet;
+  /** The rules file as loaded (auto-scale starts from it at each start). */
+  baseRules: RuleSet;
   rng: Rng;
   now: () => number;
   log: (s: string) => void;
@@ -256,7 +260,10 @@ export class Referee {
     rules: RuleSet,
     opts: RefereeOptions = {},
   ) {
-    this.rules = rules;
+    this.baseRules = rules;
+    // A restarted referee keeps the fire and water auto-scale chose when the game started.
+    const sc = game.state?.scaled;
+    this.rules = sc ? { ...rules, pSide: sc.pSide, pDiag: sc.pDiag, waterPerTeam: sc.waterPerTeam } : rules;
     this.now = opts.now ?? Date.now;
     this.log = opts.log ?? console.log;
     this.staticIds = opts.staticIds ?? new Set();
@@ -426,6 +433,7 @@ export class Referee {
       try {
         const [id] = await this.board.createShapes([this.fixtureShape(key, "")]);
         fx[key] = id!;
+        this.raiseRow(key); // a new row hides its old badge/chips/icons: they are made again after it
         this.createdIds.add(id!);
         this.seen.add(id!);
         this.knownAt.set(id!, this.now());
@@ -577,6 +585,7 @@ export class Referee {
   /** Start the fire spreading (from the lobby). A game already live or over is left as it is. */
   async start(): Promise<void> {
     if (this.state.phase === "lobby" && Object.values(this.state.players).some((p) => !p.announced)) await this.draw();
+    if (this.state.phase === "lobby") this.autoScale();
     const lit = startGame(this.state, this.rules, this.now());
     this.lastAdvanceAt = this.now();
     if (!lit.length) return;
@@ -584,6 +593,18 @@ export class Referee {
     this.writesThisTick = 0;
     await this.execute(this.cellOps(new Set(lit)), Infinity);
     await this.updateBoards();
+  }
+
+  /** At the start (teams drawn): fire and water for this class size (rules.autoScale), saved in the state. */
+  private autoScale() {
+    delete this.state.scaled;
+    const sizes: Partial<Record<Team, number>> = {};
+    for (const p of Object.values(this.state.players)) sizes[p.team] = (sizes[p.team] ?? 0) + 1;
+    const { rules, scaled } = scaleRules(this.baseRules, TEAMS.filter((t) => sizes[t]), sizes);
+    this.rules = rules;
+    if (!scaled) return;
+    this.state.scaled = scaled;
+    this.log(`auto-scale: ${scaled.perTeam} players/team → pSide ${scaled.pSide}, pDiag ${scaled.pDiag}, water ${scaled.waterPerTeam}`);
   }
 
   /**
@@ -1055,6 +1076,11 @@ export class Referee {
       const { medal, mascot } = LB_ICONS;
       out.push({ key: `medal_${n}`, url: this.ranked(t) ? medals[n - 1]! : ICON_URL.tree, x: r.x + medal.left + medal.size / 2, y: r.y + r.h / 2, w: medal.size });
       out.push({ key: `mascot_${n}`, url: ICON_URL[MASCOT[t]], x: r.x + mascot.left + mascot.size / 2, y: r.y + r.h / 2, w: mascot.size });
+      for (const which of ["water", "attacks"] as const) {
+        const c = lbChipBox(n, which);
+        const { chip } = LB_ICONS;
+        out.push({ key: `${which}_${n}`, url: which === "water" ? ICON_URL.water : ICON_URL.fire, x: c.x + chip.left + chip.size / 2, y: c.y + c.h / 2, w: chip.size });
+      }
     }
     out.push({ key: "trophy", url: ICON_URL.trophy, x: PANELS.leaderboard.x + PANELS.leaderboard.w - 48, y: PANELS.leaderboard.y + 38, w: 52 });
     return out;
@@ -1380,6 +1406,33 @@ export class Referee {
     ops.push({ key: `junk:${id}`, prio: 2, run: () => this.board.deleteItem(id), ok: () => this.stuck.delete(id) });
   }
 
+  /**
+   * A leaderboard row made again lands on top of its badge, chips and icons and hides them (Miro has no
+   * z-order API): those go too and are placed again on top of the new row (next poll).
+   */
+  private raiseRow(key: FixtureKey) {
+    const m = /^rank_(\d)$/.exec(key);
+    if (!m) return;
+    const n = m[1];
+    for (const part of ["score", "water", "attacks"]) {
+      const k = `rank_${n}_${part}` as FixtureKey;
+      const id = this.game.fixtureIds[k];
+      if (!id) continue;
+      delete this.game.fixtureIds[k];
+      this.shadow.delete(id);
+      this.written[k] = undefined;
+      this.gone.add(id);
+      void this.board.deleteItem(id).catch(() => {});
+    }
+    for (const part of ["medal", "mascot", "water", "attacks"]) {
+      const rec = this.game.icons?.[`${part}_${n}`];
+      if (!rec) continue;
+      delete this.game.icons![`${part}_${n}`];
+      this.retiredIcons.set(rec.id, this.now());
+      void this.board.deleteItem(rec.id).catch(() => {});
+    }
+  }
+
   private retireFixture(key: FixtureKey, id: string) {
     if (this.game.fixtureIds[key] !== id) return;
     this.log(`\nthe ${key} is locked (403): putting a new one on top. Unlock ${id} in Miro.`);
@@ -1387,6 +1440,7 @@ export class Referee {
     this.shadow.delete(id);
     delete this.game.fixtureIds[key];
     this.written[key] = undefined;
+    this.raiseRow(key);
   }
 
   /** Squares whose board fill differs from the engine: one write each, the fire's changes first. */
@@ -1550,6 +1604,7 @@ export class Referee {
             this.knownAt.set(nid!, this.now());
             this.seen.add(nid!);
             this.createdIds.add(nid!);
+            this.raiseRow(key);
           },
         });
         continue;
@@ -1633,8 +1688,14 @@ export class Referee {
       this.writesThisTick += c;
       run.push(op);
     }
-    await pool(
-      run.map((op) => async () => {
+    // Writes to the same item run one after another: Miro answers two parallel PATCHes of one item with a
+    // 409/400 conflict, which must never count toward "locked".
+    const groups = new Map<string, Op[]>();
+    run.forEach((op, i) => {
+      const k = op.id ?? `#${i}`;
+      groups.set(k, [...(groups.get(k) ?? []), op]);
+    });
+    const runOne = async (op: Op) => {
         try {
           if (op.guard && !(await op.guard())) {
             this.writesThisTick -= op.calls ?? 1; // held: no write made
@@ -1669,6 +1730,10 @@ export class Referee {
             this.log(`repair of ${op.key} failed: ${errMsg(e2)}`);
           }
         }
+    };
+    await pool(
+      [...groups.values()].map((g) => async () => {
+        for (const op of g) await runOne(op);
       }),
       this.concurrency,
     );
@@ -1680,7 +1745,7 @@ export class Referee {
     const frame = ordersTitle(team);
     const job =
       role === "boss"
-        ? `You are the BOSS: in ${frame}, fill in each worker's "Name: paint" sticky (like "Ana: paint N9 N10"), and paint too. When your area is under control you may ask "Start a fire in Team N's area?" (a neighbour; a teammate must say YES).`
+        ? `You are the BOSS: in ${frame}, fill in each worker's "Name: paint" sticky (like "Ana: paint N9 N10"), and paint too. When your area is under control you may ask "Start a fire in Team N's area?" (a neighbour; a teammate must say YES${Object.values(this.state.players).filter((p) => p.team === team).length === 1 ? ": you are alone on your team, so ask your own student and write their YES or NO yourself" : ""}).`
         : `You are a WORKER: paint the squares on your sticky in ${frame} (your name: paint ...).`;
     return `👋 ${esc(name)}: you are on ${t.name} (${team}). Your area: ${sectorText(team)} (edge ${t.color}). Paint blue ${STATE_COLOR.water} on green or orange squares there. ${job}`;
   }
@@ -1815,7 +1880,8 @@ export class Referee {
   private fixtureHtml(key: FixtureKey): string {
     if (key === "banner") return this.bannerOverride ? `<p>${this.bannerOverride}</p>` : this.bannerHtml();
     if (key === "scoreboard") return this.scoreboardHtml();
-    const m = /^rank_(\d)(_score)?$/.exec(key)!;
+    const m = /^rank_(\d)(?:_(score|water|attacks))?$/.exec(key)!;
+    if (m[2] === "water" || m[2] === "attacks") return this.chipHtml(Number(m[1]), m[2]);
     return m[2] ? this.badgeHtml(Number(m[1])) : this.rowHtml(Number(m[1]));
   }
 
@@ -1901,7 +1967,7 @@ export class Referee {
 
   /** Row fill and badge text color for a fixture that follows its team (leaderboard rows), else undefined. */
   fixtureColors(key: FixtureKey): { fill?: string; textColor?: string } | undefined {
-    const m = /^rank_(\d)(_score)?$/.exec(key);
+    const m = /^rank_(\d)(?:_(score|water|attacks))?$/.exec(key);
     if (!m) return undefined;
     const t = this.rankOrder()[Number(m[1]) - 1]!;
     const on = this.state.phase === "lobby" || this.ranked(t);
@@ -1918,18 +1984,17 @@ export class Referee {
     const name = TEAM_INFO[t].name.toUpperCase();
     const clamp = (x: string) => esc(x.length > 14 ? `${x.slice(0, 13)}…` : x);
     const rows = (...ls: string[]) => ls.map((l) => `<p>${LB_INDENT}${l}</p>`).join("");
-    const supplies = `Water ${s.water[t]}/${this.rules.waterPerTeam} · Attacks left ${Math.max(0, this.rules.attacksPerTeam - (s.attacksUsed?.[t] ?? 0))}/${this.rules.attacksPerTeam}`;
-    if (this.beforeDraw()) return rows(`<b>${name} · waiting for the draw</b>`, supplies);
+    if (this.beforeDraw()) return rows(`<b>${name}</b>`, "Waiting for the draw");
     if (s.phase !== "lobby" && !this.ranked(t)) return rows(`<b>${name} · not playing</b>`);
     const players = Object.values(s.stats.byPlayer).filter((p) => p.team === t);
-    if (!players.length) return rows(`<b>${name} · no players yet</b>`, supplies);
+    if (!players.length) return rows(`<b>${name}</b>`, "No players yet");
     const boss = players.find((p) => p.role === "boss")?.name;
     const crew = players.filter((p) => p.role === "worker").map((p) => clamp(p.name));
     const mvp = players.slice().sort((a, b) => paintsOf(b) - paintsOf(a))[0]!;
     const painted = players.reduce((a, p) => a + paintsOf(p), 0);
     const lines = [
       `<b>${name} · Boss ${boss ? clamp(boss) : "-"} · MVP ${paintsOf(mvp) ? `${clamp(mvp.name)} (${paintsOf(mvp)})` : "-"}</b>`,
-      `${supplies} · Painted ${painted}`,
+      `Painted ${painted} · Fires set ${s.stats.lit?.[t] ?? 0} · Trees burned ${s.stats.burnedOthers?.[t] ?? 0}`,
       `Crew: ${crew.length ? crew.join(", ") : "-"}`,
     ];
     const attack = s.attacks.find((g) => g.team === t && g.left > 0 && s.phase === "live");
@@ -1952,6 +2017,17 @@ export class Referee {
       }
     }
     return rows(...lines);
+  }
+
+  /** A row's water or attacks chip (an icon sits at its left): "62 / 90" water, "5 left" attacks. */
+  chipHtml(n: number, which: "water" | "attacks"): string {
+    const s = this.state;
+    const t = this.rankOrder()[n - 1]!;
+    if (s.phase !== "lobby" && !this.ranked(t)) return "<p>-</p>";
+    const pad = "&nbsp;".repeat(7);
+    if (which === "water") return `<p>${pad}<b>${s.water[t]}</b> / ${this.rules.waterPerTeam}</p>`;
+    const left = Math.max(0, this.rules.attacksPerTeam - (s.attacksUsed?.[t] ?? 0));
+    return `<p>${pad}<b>${left}</b> left</p>`;
   }
 
   /** The score badge of slot n: the team's % of forest saved. */

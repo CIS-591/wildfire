@@ -36,7 +36,7 @@ describe("discovery and joining", () => {
     const { d, game, fake } = await setup();
     expect(d.cells).toBe(1224);
     expect(d.missing).toEqual([]);
-    expect(d.fixtures.sort()).toEqual(["banner", "rank_1", "rank_1_score", "rank_2", "rank_2_score", "rank_3", "rank_3_score", "rank_4", "rank_4_score", "scoreboard"]);
+    expect(d.fixtures.sort()).toEqual(["banner", ...[1, 2, 3, 4].flatMap((n) => [`rank_${n}`, `rank_${n}_attacks`, `rank_${n}_score`, `rank_${n}_water`]), "scoreboard"].sort());
     const lb = fake.items.get(game.fixtureIds.rank_1!)!;
     expect(inside(FIXTURES.rank_1, lb.x, lb.y)).toBe(true);
   });
@@ -100,7 +100,7 @@ describe("the game", () => {
     await tick();
     expect(fake.cell("Z4").fill).toBe(C.fire);
     expect(fx("banner")).toContain("TEAM 1 SET FIRE TO TEAM 2'S AREA!");
-    expect(fx("leaderboard")).toContain("Attacks left 1/2");
+    expect(fx(`rank_${ref.rankOrder().indexOf("ridge") + 1}_attacks` as "rank_1_attacks")).toContain("1 left");
     expect(fx("leaderboard")).toContain("ATTACK ON TEAM 2: 2 fires left");
     for (let i = 0; i < 41; i++) await tick(); // 2 min later
     expect(text(cards.r2!)).toContain("Your attack on Team 2's area is over");

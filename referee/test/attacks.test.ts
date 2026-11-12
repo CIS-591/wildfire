@@ -701,6 +701,23 @@ describe("Miro misbehaving, restarts, clocks", () => {
     expect([it.x, it.rotation]).toEqual([-100, 270]);
     expect(writesWhileQuiet).toBeLessThan(40); // the untouched label is not rewritten every tick
   });
+  it(T("A132", "a deleted leaderboard row is made again AND its badge, chips and icons are made again after it (on top, not hidden)"), async () => {
+    const g = await setup({ live: true, fast: true });
+    await g.ticks(3);
+    const row = g.game.fixtureIds.rank_1!;
+    const badge = g.game.fixtureIds.rank_1_score!;
+    const medal = g.game.icons!.medal_1!.id;
+    g.fake.playerDelete(row);
+    await g.ticks(4);
+    const ids = [...g.fake.items.keys()];
+    const at = (id: string) => ids.indexOf(id); // creation order = z-order in Miro
+    expect(g.game.fixtureIds.rank_1).not.toBe(row);
+    expect(g.game.fixtureIds.rank_1_score).not.toBe(badge);
+    expect(g.game.icons!.medal_1!.id).not.toBe(medal);
+    for (const k of ["rank_1_score", "rank_1_water", "rank_1_attacks"] as const) expect(at(g.game.fixtureIds[k]!)).toBeGreaterThan(at(g.game.fixtureIds.rank_1!));
+    expect(at(g.game.icons!.medal_1!.id)).toBeGreaterThan(at(g.game.fixtureIds.rank_1!));
+    expectConverged(g);
+  });
   it(T("A97", "game.json cut short by a kill: the previous save is loaded"), () => {
     const dir = mkdtempSync(path.join(tmpdir(), "wf-"));
     const file = path.join(dir, "game.json");
@@ -942,7 +959,7 @@ describe("fire attack, per-team water, batches, the fire model", () => {
     const violet = TEAM_INFO.ridge.color;
     expect(border(g, "Z4")).toEqual({ color: violet, width: 8 });
     expect(g.ref.state.stats.lit.ridge).toBe(3);
-    expect(g.fx("leaderboard")).toContain("Attacks left 1/2");
+    expect(g.fx(`rank_${g.ref.rankOrder().indexOf("ridge") + 1}_attacks` as "rank_1_attacks")).toContain("1 left");
     await g.ticks(25); // 75 s: 3 spreads, Z4 burns out and keeps a thinner border in Team 1's color
     expect(g.fill("Z4")).toBe(C.burnt);
     expect(border(g, "Z4")).toEqual({ color: violet, width: 6 });
@@ -1053,7 +1070,7 @@ describe("fire attack, per-team water, batches, the fire model", () => {
     expect([g.fill("C6"), g.fill("Z4")]).toEqual([C.forest, C.water]);
     expect(g.card("r2")).toContain("Team 1's water is empty");
     expect(g.fx("banner")).toContain("WATER T1 0 · T2 1 · T3 2 · T4 2");
-    expect(g.fx("leaderboard")).toMatch(/TEAM 1 · Boss[^]*Water 0\//);
+    expect(g.fx(`rank_${g.ref.rankOrder().indexOf("ridge") + 1}_water` as "rank_1_water")).toMatch(/^\s*0 \/ /);
   });
 });
 

@@ -264,9 +264,18 @@ export class FakeBoard implements BoardAdapter {
     this.gridFrameIds = [...ids];
   }
 
+  /** Items with a PATCH in flight: like Miro, a second parallel PATCH of the same item is refused (409). */
+  private inflight = new Set<string>();
+
   async updateShape(id: string, patch: ShapePatch): Promise<void> {
     this.calls.update++;
-    await this.lag();
+    if (this.inflight.has(id)) throw (this.calls.failed++, miroErr(409, `PATCH shapes/${id}`, '{"status":409,"code":"conflict"}'));
+    this.inflight.add(id);
+    try {
+      await this.lag();
+    } finally {
+      this.inflight.delete(id);
+    }
     const kind = this.items.get(id)?.type === "sticky_note" ? "sticky_notes" : this.items.get(id)?.type === "text" ? "texts" : "shapes";
     const ghost = this.writeFault(`PATCH ${kind}`, id);
     const it = this.items.get(id)!;

@@ -42,6 +42,48 @@ export interface RuleSet {
   teamSize?: number;
   /** Teams are drawn at random when the game starts (bosses too); off: each player is placed as they join. */
   drawTeams?: boolean;
+  /** Fire and water follow the class size, set once when the game starts (see scaleRules). */
+  autoScale?: { enabled: boolean; points: AutoScalePoint[] };
+}
+
+/** One calibration point of rules.autoScale: the fire and water for teams of `perTeam` players. */
+export interface AutoScalePoint {
+  perTeam: number;
+  pSide: number;
+  pDiag: number;
+  water: number;
+}
+
+/** The knobs auto-scale sets (saved in the game state so a restarted referee keeps them). */
+export type ScaledRules = Pick<RuleSet, "pSide" | "pDiag" | "waterPerTeam"> & { perTeam: number };
+
+/**
+ * The rules for this class size: pSide, pDiag and waterPerTeam interpolated (linearly) between the
+ * rules.autoScale points at the average players per playing team, clamped to the first and last point.
+ * Disabled, no points or nobody playing: the rules unchanged (and `scaled` null).
+ */
+export function scaleRules(rules: RuleSet, playing: Team[], sizes: Partial<Record<Team, number>>): { rules: RuleSet; scaled: ScaledRules | null } {
+  const pts = (rules.autoScale?.points ?? []).slice().sort((a, b) => a.perTeam - b.perTeam);
+  const players = playing.reduce((a, t) => a + (sizes[t] ?? 0), 0);
+  if (!rules.autoScale?.enabled || !pts.length || !playing.length || players <= 0) return { rules, scaled: null };
+  const perTeam = players / playing.length;
+  let lo = pts[0]!;
+  let hi = pts[0]!;
+  if (perTeam >= pts.at(-1)!.perTeam) lo = hi = pts.at(-1)!;
+  else if (perTeam > pts[0]!.perTeam) {
+    const i = pts.findIndex((p) => p.perTeam >= perTeam);
+    lo = pts[i - 1]!;
+    hi = pts[i]!;
+  }
+  const f = hi.perTeam === lo.perTeam ? 0 : (perTeam - lo.perTeam) / (hi.perTeam - lo.perTeam);
+  const mix = (a: number, b: number) => a + (b - a) * f;
+  const scaled: ScaledRules = {
+    perTeam: Math.round(perTeam * 100) / 100,
+    pSide: Math.round(mix(lo.pSide, hi.pSide) * 1000) / 1000,
+    pDiag: Math.round(mix(lo.pDiag, hi.pDiag) * 1000) / 1000,
+    waterPerTeam: Math.round(mix(lo.water, hi.water)),
+  };
+  return { rules: { ...rules, pSide: scaled.pSide, pDiag: scaled.pDiag, waterPerTeam: scaled.waterPerTeam }, scaled };
 }
 
 export type RuleId = "lobby" | "over" | "unjoined" | "timeout" | "cooldown" | "batch" | "color" | "square" | "area" | "attack" | "water" | "tamper";
@@ -128,6 +170,8 @@ export interface GameState {
   origin: Record<string, Origin>; // fire/burnt square -> who lit the fire (absent = wild)
   /** Teams in play, fixed when the game starts (absent before: see playingTeams). */
   playing?: Team[];
+  /** The fire and water auto-scale chose at the start (absent: the rules file's own). */
+  scaled?: ScaledRules;
   events: GameEvent[];
   /** The team strictly ahead, for the banner's "TAKES THE LEAD!" (presentation only; absent on old saves). */
   leader?: Team;
@@ -825,7 +869,9 @@ export function judgeSticky(state: GameState, rules: RuleSet, s: StickyView): No
   const answers = stickyLines(s.text).slice(1).map((l) => l.toUpperCase().replace(/[.!]+$/, "")).filter((l) => l === "YES" || l === "NO");
   if (!answers.length) return notes;
   const answer = answers.at(-1)!;
-  if (s.modifiedBy === s.createdBy) return tellCreator(`✋ "${questionLine(to)}?" needs a YES from a teammate who did not post it.`);
+  // A team of one has no teammate: its own player's human answers (the kit makes the agent ask its student).
+  const solo = teamOf(team).length === 1;
+  if (s.modifiedBy === s.createdBy && !solo) return tellCreator(`✋ "${questionLine(to)}?" needs a YES from a teammate who did not post it.`);
   const editor = state.players[s.modifiedBy];
   if (!editor || editor.team !== team) return tellCreator(`✋ Only a ${teamName(team)} player can answer your question.`);
 

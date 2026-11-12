@@ -33,6 +33,10 @@ export interface SimResult {
   burningAt8: number;
   waterUsedPct: number;
   waterUsedByTeam: Record<Team, number>;
+  /** What auto-scale chose (null: off). */
+  scaled: string | null;
+  /** Teams in play. */
+  playing: Team[];
   attempts: number; // paints the bots tried (accepted + undone)
   waterLeft: number;
   paints: number;
@@ -190,6 +194,8 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
   const lobbyEnd = t + (opts.lobbySec ?? 30) * 1000;
   while (t < lobbyEnd) await step();
   await ref.start();
+  // Auto-scale may have set the water when the game started: the bosses read their bucket against it.
+  for (const b of bots) b.opts.waterPerTeam = ref.rules.waterPerTeam;
   // Agents notice the LIVE banner on their next loop, then need a full turn for their first paint.
   for (const b of bots) b.nextTurnAt = t + (opts.lateSec ?? 0) * 1000 + Math.round(turnMs(b) * (0.5 + rng()));
   const timeline: SimResult["timeline"] = [];
@@ -208,6 +214,8 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
   }
   const s = ref.state;
   const sc = scores(s, ref.cellList);
+  const W = ref.rules.waterPerTeam;
+  const inPlay = s.playing?.length ? s.playing : TEAMS;
   const approvals: Record<string, number> = {};
   for (const a of Object.values(s.approvals)) approvals[`attack ${a.status}`] = (approvals[`attack ${a.status}`] ?? 0) + 1;
   const attempts = bots.reduce((a, b) => a + b.painted, 0);
@@ -218,14 +226,16 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
   return {
     seed,
     winner: s.winner ?? "-",
+    playing: [...inPlay],
     endReason: s.endReason ?? "-",
     minutes: Math.round(s.elapsed / 6000) / 10,
     pct: Object.fromEntries(TEAMS.map((x) => [x, sc[x].pct])) as Record<Team, number>,
     burningAt8: burningAt8 < 0 ? 0 : burningAt8,
     attempts,
-    waterUsedPct: Math.round((100 * (4 * rules.waterPerTeam - TEAMS.reduce((a, x) => a + s.water[x], 0))) / (4 * rules.waterPerTeam)),
+    waterUsedPct: Math.round((100 * (inPlay.length * W - inPlay.reduce((a, x) => a + s.water[x], 0))) / (inPlay.length * W)),
     waterLeft: TEAMS.reduce((a, x) => a + s.water[x], 0),
-    waterUsedByTeam: Object.fromEntries(TEAMS.map((x) => [x, Math.round((100 * (rules.waterPerTeam - s.water[x])) / rules.waterPerTeam)])) as Record<Team, number>,
+    waterUsedByTeam: Object.fromEntries(TEAMS.map((x) => [x, Math.round((100 * (W - s.water[x])) / W)])) as Record<Team, number>,
+    scaled: s.scaled ? `${s.scaled.perTeam}/team: pSide ${s.scaled.pSide} pDiag ${s.scaled.pDiag} water ${s.scaled.waterPerTeam}` : null,
     paints: s.stats.accepted,
     refused: Object.fromEntries(Object.entries(s.stats.illegal).filter(([, v]) => v)),
     approvals,
@@ -251,7 +261,7 @@ export function formatSim(r: SimResult, full = true): string {
   const lines = [
     `seed ${r.seed}: ${r.winner} wins (${r.endReason}${r.fireOutAt !== null ? ` at ${r.fireOutAt} min` : ""}) after ${r.minutes} min · burning at min 8: ${r.burningAt8} squares · final % ridge/pine/cedar/birch:${pct(r.pct)}`,
     `  squares ${r.paints} blue accepted of ${r.attempts} tried (${r.wastedPct}% wasted; ${r.squareWastePct}% refused as already burnt/blue) · ${r.perPlayerMin}/min/player`,
-    `  water used ${r.waterUsedPct}% (per team ${TEAMS.map((t) => r.waterUsedByTeam[t]).join("/")}) · lightning ${r.strikes.join(" ") || "-"} · max writes/tick ${r.maxWritesPerTick} · by-id reads/tick avg ${r.avgReadsPerTick} max ${r.maxReadsPerTick}`,
+    `  ${r.scaled ? `auto-scale ${r.scaled} · ` : ""}water used ${r.waterUsedPct}% (per team ${TEAMS.map((t) => r.waterUsedByTeam[t]).join("/")}) · lightning ${r.strikes.join(" ") || "-"} · max writes/tick ${r.maxWritesPerTick} · by-id reads/tick avg ${r.avgReadsPerTick} max ${r.maxReadsPerTick}`,
     `  attacks ${r.attacks} · lit ${TEAMS.map((t) => r.lit[t]).join("/")} · burned others' trees ${TEAMS.map((t) => r.burnedOthers[t]).join("/")} · blowback ${TEAMS.map((t) => r.blowback[t]).join("/")}`,
     `  approvals: ${Object.entries(r.approvals).map(([k, v]) => `${k} ${v}`).join(", ") || "none"} · refused: ${Object.entries(r.refused).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}`,
   ];
