@@ -1,7 +1,11 @@
 // In-memory board with the same contract as the REST adapter, plus helpers that act AS A PLAYER (or a
 // vandal), and switches that make Miro misbehave the way it did in class: 429s, 5xx, timeouts, partial
 // pages, locked items, items that vanish between a read and a write, writes that land but still throw.
-import type { BoardAdapter, BoardItem, FrameBox, NewShape, ShapePatch } from "./board.js";
+// Like Miro REST: a deleted item answers 404 to PATCH, DELETE and GET-by-id (worded exactly like the REST
+// adapter's errors); a locked one answers 403. With `fullListReads` set, a full listing behaves like on the
+// real board (~1,400 items = ~28 cursor pages): it shows the board as it was when it began, and lands only
+// after that many fast per-frame reads, so whatever it says about non-square items is seconds old.
+import { MiroHttpError, type BoardAdapter, type BoardItem, type FrameBox, type NewShape, type ShapePatch } from "./board.js";
 import { BACKDROP, FIXTURES, ORDERS, PANELS, TEAMS, buildCells, cellBox, center, frameBoxes, frameOfRow, ordersTitle, startFill, type Box, type Team } from "./layout.js";
 import { mulberry32, type Rng } from "./rules.js";
 
@@ -26,16 +30,17 @@ export interface Faults {
   failNextReads: number;
   /** The next N full listings silently drop one page (50 items), like a cursor that skipped. */
   partialNextLists: number;
+  /** 409 Conflict on a write (seen live on a banner PATCH): transient, retried. */
+  rate409: number;
 }
 
-export class MiroError extends Error {
-  constructor(
-    public status: number,
-    what: string,
-  ) {
-    super(`Miro ${what} -> ${status}`);
-  }
-}
+const B = "/v2/boards/fake";
+const NOT_FOUND = '{"type":"error","status":404,"code":"notFound","message":"Item not found"}';
+/** A Miro HTTP error worded like the REST adapter's (`what` = "PATCH shapes/ID", "DELETE items/ID", ...). */
+const miroErr = (status: number, what: string, body = "") => {
+  const [method, ...rest] = what.split(" ");
+  return new MiroHttpError(status, method!, `${B}/${rest.join(" ")}`, body || (status === 404 ? NOT_FOUND : `{"status":${status}}`));
+};
 
 export class FakeBoard implements BoardAdapter {
   items = new Map<string, BoardItem>();
@@ -43,7 +48,7 @@ export class FakeBoard implements BoardAdapter {
   private seq = 1000;
   now: () => number;
   names: Record<string, string> = {};
-  calls = { list: 0, grid: 0, update: 0, delete: 0, create: 0, frame: 0, failed: 0 };
+  calls = { list: 0, grid: 0, typed: 0, get: 0, update: 0, delete: 0, create: 0, frame: 0, failed: 0 };
   /** Set (or call enableFastReads) to exercise the referee's fast (per-frame) read path. */
   listGridItems?: () => Promise<BoardItem[]>;
   private byLabel = new Map<string, string>();
@@ -56,7 +61,16 @@ export class FakeBoard implements BoardAdapter {
   locked = new Set<string>();
   /** These items disappear right before the referee's next write to them reaches Miro. */
   vanishOnWrite = new Set<string>();
-  faults: Faults = { rate429: 0, rate5xx: 0, rateTimeout: 0, rateGhost: 0, failNextWrites: 0, failNextReads: 0, partialNextLists: 0 };
+  faults: Faults = { rate429: 0, rate5xx: 0, rateTimeout: 0, rateGhost: 0, failNextWrites: 0, failNextReads: 0, partialNextLists: 0, rate409: 0 };
+  /** Real Miro: a full listing lands this many fast reads after it began, showing the board as it was then (0 = at once). */
+  fullListReads = 0;
+  private pendingLists: { left: number; done: () => void }[] = [];
+  /** Frames as of the last full listing (MiroRest's listFrames gives what that listing saw). */
+  private framesSeen: BoardItem[] | null = null;
+  /** Square borders as written (what the projector shows): id -> color, width. */
+  borders = new Map<string, { color?: string; width?: number }>();
+  /** Runs right after a fast (per-frame) read returns: a player acting between the referee's read and its write. */
+  afterGridRead?: () => void;
   rng: Rng = mulberry32(99);
 
   constructor(now: () => number) {
@@ -124,10 +138,10 @@ export class FakeBoard implements BoardAdapter {
     if (this.faults.failNextReads > 0) {
       this.faults.failNextReads--;
       this.calls.failed++;
-      throw new MiroError(503, `GET ${what}`);
+      throw miroErr(503, `GET ${what}`);
     }
-    if (this.roll(this.faults.rate429)) throw (this.calls.failed++, new MiroError(429, `GET ${what}`));
-    if (this.roll(this.faults.rate5xx)) throw (this.calls.failed++, new MiroError(502, `GET ${what}`));
+    if (this.roll(this.faults.rate429)) throw (this.calls.failed++, miroErr(429, `GET ${what}`));
+    if (this.roll(this.faults.rate5xx)) throw (this.calls.failed++, miroErr(502, `GET ${what}`));
     if (this.roll(this.faults.rateTimeout)) throw (this.calls.failed++, new Error(`GET ${what}: The operation was aborted due to timeout`));
   }
 
@@ -137,15 +151,17 @@ export class FakeBoard implements BoardAdapter {
       this.vanishOnWrite.delete(id);
       this.items.delete(id);
     }
-    if (id && !this.items.has(id) && !this.frames.has(id)) throw (this.calls.failed++, new MiroError(404, `${what} ${id}`));
-    if (id && this.locked.has(id)) throw (this.calls.failed++, new MiroError(403, `${what} ${id} (locked)`));
+    const w = id ? `${what}/${id}` : what;
+    if (id && !this.items.has(id) && !this.frames.has(id)) throw (this.calls.failed++, miroErr(404, w));
+    if (id && this.locked.has(id)) throw (this.calls.failed++, miroErr(403, w, '{"status":403,"code":"forbidden","message":"Item is locked"}'));
     if (this.faults.failNextWrites > 0) {
       this.faults.failNextWrites--;
       this.calls.failed++;
-      throw new MiroError(500, what);
+      throw miroErr(500, w);
     }
-    if (this.roll(this.faults.rate429)) throw (this.calls.failed++, new MiroError(429, what));
-    if (this.roll(this.faults.rate5xx)) throw (this.calls.failed++, new MiroError(503, what));
+    if (this.roll(this.faults.rate409)) throw (this.calls.failed++, miroErr(409, w));
+    if (this.roll(this.faults.rate429)) throw (this.calls.failed++, miroErr(429, w));
+    if (this.roll(this.faults.rate5xx)) throw (this.calls.failed++, miroErr(503, w));
     if (this.roll(this.faults.rateTimeout)) throw (this.calls.failed++, new Error(`${what}: The operation was aborted due to timeout`));
     return this.roll(this.faults.rateGhost);
   }
@@ -154,13 +170,31 @@ export class FakeBoard implements BoardAdapter {
   async listItems(): Promise<BoardItem[]> {
     this.calls.list++;
     this.readFault("items");
+    // The snapshot is taken when the listing begins; on a real board it lands many polls later.
     let all = [...this.items.values()].map((i) => ({ ...i }));
+    const frames = [...this.frames.values()].map((f) => ({ ...f }));
     if (this.faults.partialNextLists > 0) {
       this.faults.partialNextLists--;
       const start = Math.floor(this.rng() * Math.max(1, all.length - 50));
       all = [...all.slice(0, start), ...all.slice(start + 50)];
     }
+    if (this.fullListReads > 0 && this.listGridItems) await new Promise<void>((done) => this.pendingLists.push({ left: this.fullListReads, done }));
+    this.framesSeen = frames;
     return all;
+  }
+
+  /** Like GET /items?type=X (one listing per type): only those types, anywhere, current. */
+  async listByType(types: string[]): Promise<BoardItem[]> {
+    this.calls.typed += types.length;
+    this.readFault("items?type=");
+    return [...this.items.values()].filter((i) => types.includes(i.type)).map((i) => ({ ...i }));
+  }
+
+  async getItem(id: string): Promise<BoardItem | null> {
+    this.calls.get++;
+    this.readFault(`items/${id}`);
+    const it = this.items.get(id) ?? this.frames.get(id);
+    return it ? { ...it } : null;
   }
 
   /** Per-frame reads, like MiroRest: positions come back relative to each frame, placed on its BUILT box. */
@@ -171,25 +205,33 @@ export class FakeBoard implements BoardAdapter {
       const out: BoardItem[] = [];
       for (const fid of this.gridFrameIds) {
         const f = this.frames.get(fid);
-        if (!f) throw new MiroError(404, `GET items?parent_item_id=${fid}`);
+        if (!f) throw miroErr(404, `GET items?parent_item_id=${fid}`);
         const built = this.builtBox.get(fid)!;
         const dx = f.x - f.w / 2 - built.x;
         const dy = f.y - f.h / 2 - built.y;
         for (const i of this.items.values()) if (i.parentId === fid) out.push({ ...i, x: i.x - dx, y: i.y - dy });
       }
+      // Each fast read brings the slow full listings in flight one step closer to landing.
+      for (const p of this.pendingLists) p.left--;
+      for (const p of this.pendingLists.filter((q) => q.left <= 0)) p.done();
+      this.pendingLists = this.pendingLists.filter((q) => q.left > 0);
+      const hook = this.afterGridRead;
+      this.afterGridRead = undefined;
+      hook?.();
       return out;
     };
   }
 
+  /** Like MiroRest: the frames the last full listing saw (no extra call). */
   async listFrames(): Promise<BoardItem[]> {
-    return [...this.frames.values()].map((f) => ({ ...f }));
+    return (this.framesSeen ?? [...this.frames.values()]).map((f) => ({ ...f }));
   }
 
   async createFrame(box: FrameBox, fill: string, title: string): Promise<string> {
     this.calls.frame++;
     if (this.writeFault("POST frames")) {
       this.addFrame(box, fill, title);
-      throw new MiroError(504, "POST frames");
+      throw miroErr(504, "POST frames");
     }
     return this.addFrame(box, fill, title);
   }
@@ -206,10 +248,11 @@ export class FakeBoard implements BoardAdapter {
 
   async updateShape(id: string, patch: ShapePatch): Promise<void> {
     this.calls.update++;
-    const ghost = this.writeFault("PATCH shapes", id);
+    const kind = this.items.get(id)?.type === "sticky_note" ? "sticky_notes" : this.items.get(id)?.type === "text" ? "texts" : "shapes";
+    const ghost = this.writeFault(`PATCH ${kind}`, id);
     const it = this.items.get(id)!;
     this.apply(it, patch, REFEREE_USER);
-    if (ghost) throw new MiroError(504, `PATCH shapes ${id}`);
+    if (ghost) throw miroErr(504, `PATCH ${kind}/${id}`);
   }
 
   async deleteItem(id: string): Promise<void> {
@@ -219,18 +262,19 @@ export class FakeBoard implements BoardAdapter {
       this.deleteFrame(id);
       return;
     }
-    if (!this.items.has(id)) throw (this.calls.failed++, new MiroError(404, `DELETE items ${id}`));
+    if (!this.items.has(id)) throw (this.calls.failed++, miroErr(404, `DELETE items/${id}`));
     const ghost = this.writeFault("DELETE items", id);
     this.items.delete(id);
-    if (ghost) throw new MiroError(504, `DELETE items ${id}`);
+    if (ghost) throw miroErr(504, `DELETE items/${id}`);
   }
 
   async createShapes(shapes: NewShape[]): Promise<string[]> {
     this.calls.create++;
-    for (const s of shapes) if (s.parentId && !this.frames.has(s.parentId)) throw (this.calls.failed++, new MiroError(404, `POST items/bulk (parent ${s.parentId})`));
+    for (const s of shapes) if (s.parentId && !this.frames.has(s.parentId)) throw (this.calls.failed++, miroErr(404, `POST items/bulk`, `{"status":404,"message":"parent ${s.parentId} not found"}`));
     const ghost = this.writeFault("POST items/bulk");
     const ids = shapes.map((s) => this.add({ type: "shape", content: `<p>${s.content}</p>`, fill: s.fill, x: s.x, y: s.y, w: s.w, h: s.h, parentId: s.parentId }, REFEREE_USER).id);
-    if (ghost) throw new MiroError(504, "POST items/bulk");
+    shapes.forEach((s, k) => this.borders.set(ids[k]!, { color: s.borderColor, width: s.borderWidth }));
+    if (ghost) throw miroErr(504, "POST items/bulk");
     return ids;
   }
 
@@ -246,6 +290,11 @@ export class FakeBoard implements BoardAdapter {
     if (patch.w !== undefined) it.w = patch.w;
     if (patch.h !== undefined) it.h = patch.h;
     if (patch.rotation !== undefined) it.rotation = patch.rotation;
+    // Borders are kept (the projector shows them) but, like Miro's listing, never read back by the referee.
+    const b = this.borders.get(it.id) ?? {};
+    if (patch.borderColor !== undefined) b.color = patch.borderColor;
+    if (patch.borderWidth !== undefined) b.width = patch.borderWidth;
+    this.borders.set(it.id, b);
     it.modifiedBy = user;
     it.modifiedAt = at;
   }

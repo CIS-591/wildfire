@@ -49,7 +49,7 @@ async function makeReferee(board: MiroRest) {
   const presets = loadTeams();
   if (Object.keys(presets).length) console.log(`preset teams: ${Object.entries(presets).map(([n, t]) => `${n}=${t}`).join(", ")}`);
   const seed = opt("seed");
-  const rules = loadRules();
+  const rules = loadRules(rulesFile());
   const minutes = opt("minutes");
   if (minutes) {
     rules.gameMinutes = Number(minutes);
@@ -114,7 +114,7 @@ async function loop(ref: Referee, game: ReturnType<typeof loadGame>, done: () =>
       const players = Object.keys(ref.state.players).length;
       const mm = `${Math.floor(ref.state.elapsed / 60_000)}:${String(Math.floor((ref.state.elapsed % 60_000) / 1000)).padStart(2, "0")}`;
       process.stdout.write(
-        `\r${ref.state.phase.toUpperCase()} ${mm} · ${players} players · ${TEAMS.map((t) => `${t} ${sc[t].pct}%`).join(" ")} · 🔥${r.fire} 💧${ref.state.water} · paints ${r.paints} tampers ${r.tampers} joins ${r.joins} · tick ${((Date.now() - t0) / 1000).toFixed(1)}s   `,
+        `\r${ref.state.phase.toUpperCase()} ${mm} · ${players} players · ${TEAMS.map((t) => `${t} ${sc[t].pct}%`).join(" ")} · 🔥${r.fire} 💧${TEAMS.map((t) => ref.state.water[t]).join("/")} · paints ${r.paints} tampers ${r.tampers} joins ${r.joins} · writes ${r.writes} reads ${r.reads ?? 0} · tick ${((Date.now() - t0) / 1000).toFixed(1)}s   `,
       );
     } catch (e) {
       console.error(`\ntick failed: ${(e as Error).message}`);
@@ -129,13 +129,16 @@ async function loop(ref: Referee, game: ReturnType<typeof loadGame>, done: () =>
   return stopping;
 }
 
+/** `--rules config/rules.8players.json`: another tuning (fewer players, slower agents); default config/rules.json. */
+const rulesFile = () => (opt("rules") ? path.resolve(opt("rules")!) : undefined);
+
 /** The rules panel, from the numbers the referee actually plays with (config/rules.json). */
 const rulesHtml = (r: RuleSet) => [
   "<b>🔥 HOW WILDFIRE WORKS</b>",
-  `Every ${r.spreadSeconds} s the fire 🟧 spreads to green trees 🟩 next to it, faster with the wind (arrow on the banner). A square burns ${r.burnTicks} spreads, then it is gone ⬛.`,
-  `<b>Paint only blue</b> 🟦 on green or orange squares in your team's area (colored borders). Blue stops the fire and stays. One paint every ${r.cooldownSeconds} s. ONE water pool of ${r.waterTotal} for the whole class.`,
-  `<b>Score</b> = green + blue squares left in your area. The game lasts ${r.gameMinutes} min. At minute ${r.windMinutes} the wind turns${r.lightningAt.length ? ` and lightning starts a new fire (minute ${r.lightningAt.join(", ")})` : ""}.`,
-  `<b>The human call:</b> the boss asks in your Orders: <b>Spray water in Team 2's area?</b> A teammate who didn't ask answers with a line <b>YES</b> or <b>NO</b>. On YES your team may paint blue there for ${r.outsideMinutes} min.`,
+  `Every ${r.spreadSeconds} s the fire 🟧 may spread to the green trees 🟩 around it, the same in every direction; it starts in the centre and in every team's area. A square burns ${r.burnTicks} spreads, then it is gone ⬛.`,
+  `<b>Paint blue</b> 🟦 on green or orange squares in your team's area (colored edges). Blue stops the fire and stays. Up to ${r.paintBatch} squares per paint, then wait ${r.cooldownSeconds} s. Each team has its own ${r.waterPerTeam} water.`,
+  `<b>Score</b> = green squares left in your area (% of 306). The game lasts ${r.gameMinutes} min.${r.lightningAt.length ? ` Lightning starts a new fire in each team's area once (minutes ${r.lightningAt.join(", ")}).` : ""}`,
+  `<b>The human call:</b> the boss asks in your Orders: <b>Start a fire in Team 2's area?</b> (a neighbour). A teammate who didn't ask answers with a line <b>YES</b> or <b>NO</b>. On YES your team may paint orange 🟧 on up to ${r.attackSquares} green squares there for ${r.attackMinutes} min (${r.attacksPerTeam} attacks per game). A team's fire has a border in its color and can spread back into your own area.`,
   "Anything else you touch is put back.",
 ];
 
@@ -158,7 +161,6 @@ async function build() {
       shape(PANELS.rules, COLORS.panel),
       shape(PANELS.leaderboard, dark),
       shape(PANELS.inbox, COLORS.panel),
-      { ...shape(PANELS.compass, dark, "", 14), shape: "circle" as const },
     ])),
   );
   // Team-colored header bars on top of each Orders frame.
@@ -180,17 +182,11 @@ async function build() {
     { ...shape(FIXTURES.scoreboard, dark, "<p><b>TEAM 1 100% · TEAM 2 100%</b></p><p><b>TEAM 3 100% · TEAM 4 100%</b></p>", 30, { textColor: COLORS.text }), shape: "rectangle" as const, borderColor: COLORS.panelBorder, borderWidth: 2 },
     { ...shape(FIXTURES.leaderboard, dark, "<p><b>🏆 LEADERBOARD</b></p>", 16, { textAlign: "left", textAlignVertical: "top", textColor: COLORS.text }), shape: "rectangle" as const },
   ]);
-  const white = COLORS.text;
   const texts = [
     { content: "<b>🔥 WILDFIRE</b>", x: PANELS.title.x, y: PANELS.title.y + 45, w: PANELS.title.w, fontSize: 72, color: COLORS.heading },
     { content: "<b>LEADERBOARD · live</b>", x: PANELS.leaderboard.x + 24, y: PANELS.leaderboard.y + 40, w: 600, fontSize: 30, color: COLORS.heading },
     { content: "<b>INBOX · one card per player · read only your own</b>", x: PANELS.inbox.x + 40, y: PANELS.inbox.y + 50, w: 1600, fontSize: 36, color: COLORS.heading },
-    { content: rulesHtml(loadRules()).map((l) => `<p>${l}</p>`).join(""), x: PANELS.rules.x + 24, y: PANELS.rules.y + 250, w: PANELS.rules.w - 48, fontSize: 17, color: COLORS.text },
-    { content: "<b>N</b>", x: PANELS.compass.x + 80, y: PANELS.compass.y + 22, w: 40, fontSize: 26, color: white, align: "center" as const },
-    { content: "<b>S</b>", x: PANELS.compass.x + 80, y: PANELS.compass.y + 178, w: 40, fontSize: 26, color: white, align: "center" as const },
-    { content: "<b>W</b>", x: PANELS.compass.x + 4, y: PANELS.compass.y + 100, w: 40, fontSize: 26, color: white, align: "center" as const },
-    { content: "<b>E</b>", x: PANELS.compass.x + 156, y: PANELS.compass.y + 100, w: 40, fontSize: 26, color: white, align: "center" as const },
-    { content: "🧭", x: PANELS.compass.x + 60, y: PANELS.compass.y + 100, w: 80, fontSize: 40, color: white, align: "center" as const },
+    { content: rulesHtml(loadRules(rulesFile())).map((l) => `<p>${l}</p>`).join(""), x: PANELS.rules.x + 24, y: PANELS.rules.y + 250, w: PANELS.rules.w - 48, fontSize: 17, color: COLORS.text },
     ...Array.from({ length: GRID.cols }, (_, c) => ({ content: `<b>${colName(c)}</b>`, x: c * GRID.pitch, y: -36, w: GRID.cell, fontSize: 24, color: TEAM_INFO[c < 18 ? "ridge" : "pine"].color, align: "center" as const })),
     ...Array.from({ length: GRID.rows }, (_, r) => ({ content: `<b>${r + 1}</b>`, x: -84, y: r * GRID.pitch + 30, w: 70, fontSize: 24, color: TEAM_INFO[r < 17 ? "ridge" : "cedar"].color, align: "right" as const })),
   ];
@@ -224,7 +220,7 @@ async function main() {
     case "sim": {
       const seeds = opt("seeds") ? Array.from({ length: Number(opt("seeds")) }, (_, i) => i + 1) : [Number(opt("seed", "1"))];
       for (const seed of seeds) {
-        const res = await runSimulation(loadRules(), { players: Number(opt("players", "28")), seed, paceSec: Number(opt("pace", "45")), mistakeRate: opt("mistakes") ? Number(opt("mistakes")) : undefined });
+        const res = await runSimulation(loadRules(rulesFile()), { players: Number(opt("players", "28")), seed, slow: process.argv.includes("--slow"), mistakeRate: opt("mistakes") ? Number(opt("mistakes")) : undefined });
         console.log(formatSim(res, seeds.length === 1));
       }
       return;
@@ -317,12 +313,13 @@ async function main() {
     case "results": {
       const game = loadGame();
       const noop = { listItems: async () => [], updateShape: async () => {}, deleteItem: async () => {}, createShapes: async () => [], members: async () => ({}) };
-      console.log(new Referee(noop, game, loadRules()).resultsText());
+      console.log(new Referee(noop, game, loadRules(rulesFile())).resultsText());
       return;
     }
     default:
       console.log(`wildfire referee
-  npm run sim [-- --players 28 --seed 1 | --seeds 3 --pace 45]   offline game with bots (tuning)
+  npm run sim [-- --players 28 --seed 1 | --seeds 5 --slow]   offline game with bots (tuning; --slow = rehearsal pace)
+  any command: --rules config/rules.8players.json             another tuning (8 players; rules.slow.json for slow agents)
   npm run referee build      WIPE the board and build it (SPEC.md geometry): grid, panels, Orders frames
   npm run referee verify     token + board + color check
   npm run referee reset      new game: starting colors, empty Inbox and Orders

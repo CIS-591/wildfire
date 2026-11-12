@@ -1,6 +1,6 @@
-// Restyle the 1,224 squares and 9 band frames to the "night map" palette (SPEC.md, Palette).
-// Squares: border #0e1311 width 2, label #0b1a10. Fills are NOT touched (the referee reset repaints them).
-// Frames: fill #0e1311.
+// Restyle the 1,224 squares and 9 band frames to the light palette (SPEC.md, Palette).
+// Squares: border #ffffff width 2, label #0b1a10. Fills are NOT touched (the referee reset repaints them).
+// Frames: fill #ffffff.
 // Run: node board/build/restyle_squares.mjs   (token + board id from referee/.env, ids from board/board.json)
 import { readFileSync } from "node:fs";
 
@@ -56,12 +56,12 @@ async function patch(path, body) {
 }
 
 const jobs = [
-  ...board.frames.map((id) => ({ kind: "frame", path: `/frames/${id}`, body: { style: { fillColor: "#0e1311" } } })),
+  ...board.frames.map((id) => ({ kind: "frame", path: `/frames/${id}`, body: { style: { fillColor: "#ffffff" } } })),
   ...Object.entries(board.cells).map(([label, id]) => ({
     kind: "square",
     label,
     path: `/shapes/${id}`,
-    body: { style: { borderColor: "#0e1311", borderWidth: "2", color: "#0b1a10" } },
+    body: { style: { borderColor: "#ffffff", borderWidth: "2", color: "#0b1a10" } },
   })),
 ];
 

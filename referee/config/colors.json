@@ -3,13 +3,23 @@
   "fire": "#ff5a1f",
   "water": "#3aa7ff",
   "burnt": "#2a2420",
-  "teams": { "ridge": "#a78bfa", "pine": "#f472b6", "cedar": "#fde047", "birch": "#e2e8f0" },
-  "square": { "border": "#0e1311", "borderWidth": 2, "label": "#0b1a10", "labelBurnt": "#7d736a" },
-  "frame": "#0e1311",
-  "backdrop": "#0e1311",
-  "panel": "#161d19",
-  "panelBorder": "#25302a",
-  "text": "#f1efe9",
-  "muted": "#9aa39c",
-  "heading": "#ff7a3d"
+  "teams": {
+    "ridge": "#7c3aed",
+    "pine": "#db2777",
+    "cedar": "#4338ca",
+    "birch": "#334155"
+  },
+  "square": {
+    "border": "#ffffff",
+    "borderWidth": 2,
+    "label": "#0b1a10",
+    "labelBurnt": "#c9c2bb"
+  },
+  "frame": "#ffffff",
+  "backdrop": "#f5f6f8",
+  "panel": "#ffffff",
+  "panelBorder": "#e2e5ea",
+  "text": "#1f2328",
+  "muted": "#6b7280",
+  "heading": "#e8590c"
 }

@@ -9,8 +9,8 @@ import { mulberry32, type RuleSet } from "../src/rules.js";
 
 export const C = STATE_COLOR;
 export const RULES: RuleSet = {
-  spreadSeconds: 20, pSide: 0.3, pDiag: 0.08, downwindMult: 2, upwindMult: 0.3, burnTicks: 3, windMinutes: 5, lightningAt: [5], lightningMinDistance: 6,
-  waterTotal: 400, cooldownSeconds: 5, timeoutSeconds: 5, outsideMinutes: 2, gameMinutes: 10,
+  spreadSeconds: 20, pSide: 0.3, pDiag: 0.08, burnTicks: 3, lightningAt: [5], lightningMinDistance: 6, startFires: [], paintBatch: 1,
+  waterPerTeam: 400, cooldownSeconds: 5, timeoutSeconds: 5, attackMinutes: 2, attackSquares: 3, attacksPerTeam: 2, gameMinutes: 10,
 };
 /** No spread: the board only changes when a test changes it. */
 export const CALM: RuleSet = { ...RULES, pSide: 0, pDiag: 0 };

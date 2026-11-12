@@ -18,7 +18,7 @@ initial, then continue). Keep the name short; it goes on your order sticky (`Ana
 
    ```xml
    <svg xmlns="http://www.w3.org/2000/svg">
-   <rect id="inbox" x="X" y="Y" width="380" height="150" fill="#161d19" stroke="#25302a" stroke-width="2" data-content="Inbox · NAME" data-text-color="#f1efe9" data-font-size="16" data-text-align="left" data-text-align-vertical="top"/>
+   <rect id="inbox" x="X" y="Y" width="380" height="150" fill="#ffffff" stroke="#e2e5ea" stroke-width="2" data-content="Inbox · NAME" data-text-color="#1f2328" data-font-size="16" data-text-align="left" data-text-align-vertical="top"/>
    </svg>
    ```
 
@@ -36,6 +36,6 @@ initial, then continue). Keep the name short; it goes on your order sticky (`Ana
      slot; the id stays the same.
 5. Tell the student in one line: "You are on Team N" (the display name, `board.json`
    `teams[team].name`, never the id), their role, and "Run /play when your instructor says go."
-   Workers also get: "I may ask you one YES/NO question during the game: answer it."
+   Workers also get: "I may ask you one YES/NO question during the game (whether to start a fire in a neighbour's area): answer it."
    No team after 8 peeks: "The referee isn't running yet; run /join again when the instructor says
    go." Don't create a second card.

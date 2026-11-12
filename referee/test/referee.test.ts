@@ -6,8 +6,8 @@ import { Referee, emptyGame, type GameFile } from "../src/referee.js";
 import { mulberry32, type RuleSet } from "../src/rules.js";
 
 const rules: RuleSet = {
-  spreadSeconds: 20, pSide: 0.3, pDiag: 0.08, downwindMult: 2, upwindMult: 0.3, burnTicks: 3, windMinutes: 5, lightningAt: [5], lightningMinDistance: 6,
-  waterTotal: 400, cooldownSeconds: 5, timeoutSeconds: 5, outsideMinutes: 2, gameMinutes: 10,
+  spreadSeconds: 20, pSide: 0.3, pDiag: 0.08, burnTicks: 3, lightningAt: [5], lightningMinDistance: 6, startFires: [], paintBatch: 1,
+  waterPerTeam: 400, cooldownSeconds: 5, timeoutSeconds: 5, attackMinutes: 2, attackSquares: 3, attacksPerTeam: 2, gameMinutes: 10,
 };
 const C = STATE_COLOR;
 
@@ -71,39 +71,42 @@ describe("discovery and joining", () => {
 });
 
 describe("the game", () => {
-  it("a blue paint in your team's area is kept; outside it is undone until a teammate says YES to the question", async () => {
+  it("blue in your team's area is kept, outside it undone; after a teammate's YES orange in that neighbour's area counts", async () => {
     const { fake, ref, cards, tick, text, fx, advance } = await setup();
     await ref.start();
     fake.playerPaint("r2", "C4", C.water);
     await tick();
     expect(fake.cell("C4").fill).toBe(C.water);
-    expect(ref.state.water).toBe(399);
-    expect(text(cards.r2!)).toContain("C4 is now water. 399 water left.");
+    expect(ref.state.water.ridge).toBe(399);
+    expect(text(cards.r2!)).toContain("C4 is now water. 399 water left for Team 1.");
     advance(30_000);
     fake.playerPaint("r2", "Z4", C.water);
     await tick();
     expect(fake.cell("Z4").fill).toBe(C.forest);
     expect(text(cards.r2!)).toContain("Z4 undone: it is Team 2's area");
-    const q = fake.playerSticky("r1", "ridge", "Spray water in Team 2's area?\nTheir fire is about to cross");
+    const q = fake.playerSticky("r1", "ridge", "Start a fire in Team 2's area?\nOur area is under control");
     await tick();
-    expect(fx("leaderboard")).toContain("⏳ waiting for a YES: spray water in Team 2's area");
-    fake.playerEditSticky("r1", q.id, "Spray water in Team 2's area?\nTheir fire is about to cross\nYES");
+    expect(fx("leaderboard")).toContain("⏳ waiting for a YES: start a fire in Team 2's area");
+    fake.playerEditSticky("r1", q.id, "Start a fire in Team 2's area?\nOur area is under control\nYES");
     await tick();
-    expect(ref.state.outside).toHaveLength(0);
+    expect(ref.state.attacks).toHaveLength(0);
     expect(text(cards.r1!)).toContain("did not post it");
-    fake.playerEditSticky("r2", q.id, "Spray water in Team 2's area?\nTheir fire is about to cross\nYES");
+    fake.playerEditSticky("r2", q.id, "Start a fire in Team 2's area?\nOur area is under control\nYES");
     await tick();
-    expect(text(cards.r2!)).toContain("Rob said YES: you may paint blue in Team 2's area");
-    expect(text(cards.p1!)).toContain("Team 1 is spraying water in your area");
-    expect(fx("leaderboard")).toContain("spraying water in Team 2's area");
-    fake.playerPaint("r2", "Z4", C.water);
+    expect(text(cards.r2!)).toContain("Rob said YES: you may paint orange #ff5a1f on up to 3 green squares in Team 2's area");
+    expect(text(cards.p1!)).toContain("Team 1 may set fire to your area");
+    expect(fx("leaderboard")).toMatch(/🔥 Team 1 may light 3 more fires in Team 2's area \(\d:\d\d left\)/);
+    fake.playerPaint("r2", "Z4", C.fire);
     await tick();
-    expect(fake.cell("Z4").fill).toBe(C.water);
+    expect(fake.cell("Z4").fill).toBe(C.fire);
+    expect(fx("banner")).toContain("🔥 Team 1 set fire to Team 2's area!");
+    expect(fx("leaderboard")).toContain("🔥 lit 1 · burned 0 trees of others");
+    expect(fx("leaderboard")).toContain("may light 2 more fires");
     for (let i = 0; i < 41; i++) await tick(); // 2 min later
-    expect(text(cards.r2!)).toContain("Time is up in Team 2's area");
-    fake.playerPaint("r2", "Z5", C.water);
+    expect(text(cards.r2!)).toContain("Your attack on Team 2's area is over");
+    fake.playerPaint("r2", "Z9", C.fire);
     await tick();
-    expect(fake.cell("Z5").fill).toBe(C.forest);
+    expect(fake.cell("Z9").fill).toBe(C.forest);
   });
   it("rehearsal (one Miro account): the question's creator is the team's boss, its answerer another member", async () => {
     let t = 1_000_000;
@@ -115,11 +118,11 @@ describe("the game", () => {
     await ((t += 3000), ref.tick());
     expect(Object.keys(ref.state.players)).toHaveLength(5);
     await ref.start();
-    const q = fake.playerSticky("me", "ridge", "Spray water in Team 2's area?");
+    const q = fake.playerSticky("me", "ridge", "Start a fire in Team 2's area?");
     await ((t += 3000), ref.tick());
-    fake.playerEditSticky("me", q.id, "Spray water in Team 2's area?\nYES");
+    fake.playerEditSticky("me", q.id, "Start a fire in Team 2's area?\nYES");
     await ((t += 3000), ref.tick());
-    expect(ref.state.outside).toMatchObject([{ team: "ridge", to: "pine" }]);
+    expect(ref.state.attacks).toMatchObject([{ team: "ridge", to: "pine" }]);
     const ridge = Object.values(ref.state.players).filter((p) => p.team === "ridge");
     expect(ref.state.approvals[q.id]).toMatchObject({ creator: ridge.find((p) => p.role === "boss")!.userId, by: ridge.find((p) => p.role === "worker")!.userId });
   });
@@ -132,7 +135,8 @@ describe("the game", () => {
     expect([...fills].every((f) => [C.forest, C.fire, C.burnt].includes(f!))).toBe(true);
     expect(fake.cell("R17").fill).toBe(C.burnt);
     expect(ref.state.spreads).toBe(9);
-    expect(fx("banner")).toMatch(/🔥 LIVE · \d+:\d\d left · wind \S+ [NESW]{1,2} · next spread \d+s · 💧 400 water/);
+    expect(fx("banner")).toMatch(/🔥 LIVE · \d+:\d\d left · next spread \d+s · 💧 T1 400 · T2 400 · T3 400 · T4 400/);
+    expect(fx("banner")).not.toMatch(/wind/i);
     expect(fx("scoreboard")).toMatch(/TEAM 1 \d+%.*TEAM 2 \d+%.*\n.*TEAM 3 \d+%.*TEAM 4 \d+%/);
   });
   it("other colors are undone with the reason on the card", async () => {

@@ -59,6 +59,10 @@ export interface NewShape {
 export interface BoardAdapter {
   /** Every item, with absolute positions. Slow on a big board (cursor-paginated, 50 per page). */
   listItems(): Promise<BoardItem[]>;
+  /** One item by id, read now (GET /items/{id}): null when Miro answers 404 (it was deleted). */
+  getItem?(id: string): Promise<BoardItem | null>;
+  /** Items of these types only, anywhere on the board (GET /items?type=image, one cheap listing per type). */
+  listByType?(types: string[]): Promise<BoardItem[]>;
   /** Fast path: only the grid squares, read frame by frame in parallel. Absent = use listItems. */
   listGridItems?(): Promise<BoardItem[]>;
   updateShape(id: string, patch: ShapePatch): Promise<void>;
@@ -75,6 +79,31 @@ export interface BoardAdapter {
   /** The 9 grid band frame ids, top band first, after the referee recreated one (fast reads). */
   setGridFrames?(ids: string[]): void;
 }
+
+/** An HTTP error from Miro, worded like the REST adapter's: "Miro PATCH /v2/boards/B/shapes/ID -> 404 {...}". */
+export class MiroHttpError extends Error {
+  constructor(
+    public status: number,
+    method: string,
+    path: string,
+    body = "",
+  ) {
+    super(`Miro ${method} ${path} -> ${status} ${body}`.trim());
+  }
+}
+
+/** The HTTP status of a failed Miro call (from `.status`, else from the "-> 404" in its message). */
+export function httpStatus(e: unknown): number | undefined {
+  const s = (e as { status?: unknown } | null)?.status;
+  if (typeof s === "number") return s;
+  const m = / -> (\d{3})\b/.exec(String((e as Error)?.message ?? e));
+  return m ? Number(m[1]) : undefined;
+}
+
+/** 404: the item is gone (deleted). Rebuild it; never treat it as locked. */
+export const isGone = (e: unknown) => httpStatus(e) === 404;
+/** 403 (or a message saying "locked"): the token may not change this item. */
+export const isLocked = (e: unknown) => httpStatus(e) === 403 || /\blocked\b/i.test(String((e as Error)?.message ?? e));
 
 export function stripHtml(s: string): string {
   return s

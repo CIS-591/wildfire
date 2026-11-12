@@ -7,10 +7,10 @@ All item ids are in `board.json`.
 
 | Item | Where | board.json |
 |---|---|---|
-| Locked dark backdrop (sent to back, behind everything) | (-330, -440, 4410, 4320) | `static` (`restyle.added.backdrop`) |
-| 1,224 squares A1..AJ34 (60x60, pitch 64, border #0e1311 width 2, label #0b1a10; `build/restyle_squares.mjs`) | 9 band frames (fill #0e1311), rows 1-4, 5-8, ..., 33-34 | `frames`, `cells` |
-| Dark rim with column letters (top/bottom) and row numbers (left/right), team colored | around the grid, 72 wide | `static` |
-| Team area labels "TEAM 1'S AREA" etc. (rotated, text in team color on #0e1311) + one 10 px team-colored edge per area (top for Teams 1-2, bottom for Teams 3-4) | left x -126..-74, right x 2374..2426; stripes y -84 and 2246 | `static` |
+| Locked light backdrop #f5f6f8 (sent to back, behind everything) | (-330, -440, 4410, 4320) | `static` (`restyle.added.backdrop`) |
+| 1,224 squares A1..AJ34 (60x60, pitch 64, border #ffffff width 2, label #0b1a10; `build/restyle_squares.mjs`) | 9 band frames (fill #ffffff), rows 1-4, 5-8, ..., 33-34 | `frames`, `cells` |
+| Light rim (#eef0f3) with column letters (top/bottom) and row numbers (left/right), team colored | around the grid, 72 wide | `static` |
+| Team area labels "TEAM 1'S AREA" etc. (rotated, text in team color on #f5f6f8) + one 10 px team-colored edge per area (top for Teams 1-2, bottom for Teams 3-4) | left x -126..-74, right x 2374..2426; stripes y -84 and 2246 | `static` |
 | Title "WILDFIRE" (Titan One 80) + subtitle | (0, -332) and (560, -295) | `static` |
 | Wind rose (N/E/S/W) | left of the banner, centre (-100, -165), r 68 | `static` |
 | Banner (fixture) | (0, -220, 1100, 110) | `fixtures.banner` |
@@ -27,12 +27,12 @@ collides with the sticky slots (y 70+).
 The example stickies start with `Example:` (never with "Spray water"), so no one mistakes one for a real question. They are listed in `static` (and `examples`) so the
 referee never treats them as a real question.
 
-## Palette ("night map")
+## Palette (light)
 
-Backdrop, band frames, square borders `#0e1311`; panels `#161d19` with `#25302a` borders; headings ember `#ff7a3d`; text `#f1efe9`, muted `#9aa39c`.
-Team 1 violet `#a78bfa`, Team 2 rose `#f472b6`, Team 3 lemon `#fde047`, Team 4 frost `#e2e8f0`.
+Backdrop `#f5f6f8`; band frames and square borders `#ffffff` (width 2); rim bars `#eef0f3`; panels and Orders frames `#ffffff` with `#e2e5ea` borders, Orders header bars `#f5f6f8`; headings ember `#e8590c`; text `#1f2328`, muted `#6b7280`.
+Team 1 violet `#7c3aed`, Team 2 pink `#db2777`, Team 3 indigo `#4338ca`, Team 4 slate `#334155`. Fixtures are white (banner ember border). The MCP update resets the area labels' rotation: re-apply 270 (left) / 90 (right) via REST after touching them.
 The backdrop is locked: unlock it in Miro (Cmd+Shift+L) before restyling it, then lock it again.
-Screenshots: `screenshots/palette/`.
+Screenshots: `screenshots/light/` (older dark theme: `screenshots/palette/`).
 
 ## Rebuild
 

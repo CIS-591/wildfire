@@ -9,13 +9,14 @@
 // every plan is re-derived from "board vs engine" each tick (reconciliation, not a queue of events).
 // Works on any BoardAdapter.
 import type { BoardAdapter, BoardItem, NewShape } from "./board.js";
-import { pool, stripHtml } from "./board.js";
+import { isGone, isLocked, pool, stripHtml } from "./board.js";
 import {
   CELL_FONT, COLORS, FIXTURES, GRID, GRID_BOX, ORDERS, PANELS, STATE_COLOR, TEAMS, TEAM_INFO, WIND, buildCells, cellBox, cellStroke, center, frameBoxes, frameOfRow, inboxSlot,
   inside, ordersTeamAt, ordersTitle, parseLabel, sectorText, startFill, startState, textColorFor, type Box, type CellDef, type CellState, type Team,
 } from "./layout.js";
 import {
-  advance, applyJoin, createState, decidePaint, decideTamper, judgeSticky, mulberry32, pendingStickies, scores, startGame, stopGame, teamName, type Decision, type GameState,
+  MAX_OPEN_QUESTIONS, advance, decideJunk, windOn, paintsOf, applyJoin, createState, decidePaint, decideTamper, judgeSticky, mulberry32, pendingStickies, questionAnswered, questionTarget, questionText, scores, startGame,
+  stickyKind, stopGame, teamName, type Decision, type GameState,
   type PaintEvent, type Rng, type RuleSet, type StickyView, type TamperEvent,
 } from "./rules.js";
 
@@ -33,6 +34,8 @@ export interface GameFile {
   /** Grid band frame ids (top band first) and Orders frame ids, as last repaired. */
   frames?: string[];
   orders?: Partial<Record<Team, string>>;
+  /** Where each fixture sits (center-based), so a recreated one lands in exactly the same box. */
+  fixtureBoxes?: Partial<Record<FixtureKey, { x: number; y: number; w: number; h: number }>>;
   /** Items that refused every write (locked): never adopted again, deleted when Miro lets us. */
   stuck?: string[];
 }
@@ -62,7 +65,14 @@ interface Op {
   calls?: number; // API calls it costs (default 1)
   run: () => Promise<unknown>;
   ok?: () => void;
-  fail?: (e: Error, failures: number) => void;
+  /** Called only when Miro refuses the write as locked (403), with how many times in a row. */
+  fail?: (e: Error, lockedTimes: number) => void;
+  /** A fire/burnt fill write to this square label: re-read the square by id right before writing. */
+  recheck?: string;
+  /** The item this op writes: a 404 on it means it was deleted (never "locked"). */
+  id?: string;
+  /** Miro answered 404: forget the item so it is rebuilt at once (this tick). */
+  gone?: () => void;
 }
 
 export interface TickResult {
@@ -73,6 +83,8 @@ export interface TickResult {
   changed: number;
   /** Board write calls this tick, and writes left for a later tick (the cap). */
   writes: number;
+  /** Extra by-id reads this tick (fixtures, card probes, fire-write rechecks). */
+  reads?: number;
   deferred: number;
   /** The board could not be read: nothing was judged and game time did not move. */
   skipped?: boolean;
@@ -86,8 +98,16 @@ const TOL = 1.5;
 const MAX_STEP_MS = 15_000;
 /** A tracked item must be missing from this many reads in a row before it is rebuilt (a partial page is not a delete). */
 const MISSING_READS = 2;
-/** A write that failed this many times in a row: the item is treated as locked and replaced. */
+/** A write refused as locked (403) this many times in a row: the item is replaced. Only 403 means locked; 404 means deleted. */
 const STUCK_AFTER = 3;
+/** Inbox cards checked by id per tick (round robin), so a deleted card comes back within a few polls. */
+const CARD_PROBES_PER_TICK = 4;
+/** Item types that never belong to the game wherever they are (memes): listed by type every poll. */
+const JUNK_TYPES = ["image", "embed", "document", "preview", "app_card"];
+/** Junk deletions per tick at most (newest first); the rest go next tick. */
+const JUNK_DELETES_PER_TICK = 20;
+/** Fire/burnt fill writes re-read by id right before writing, per tick (the rest wait a tick). */
+const RECHECK_MAX = 60;
 const STICKY_TEXT_MAX = 2000;
 const FIXTURE_STYLE: Record<FixtureKey, Partial<NewShape>> = {
   banner: { fill: COLORS.panel, fontSize: 28, textColor: COLORS.text },
@@ -171,7 +191,7 @@ export class Referee {
   private tickNo = 0;
   private writesThisTick = 0;
   private missing = new Map<string, number>(); // id or "frame:key" -> reads in a row it was missing
-  private failures = new Map<string, { n: number; next: number }>(); // op key -> consecutive failures
+  private failures = new Map<string, { n: number; locked: number; next: number }>(); // op key -> consecutive failures (and 403s)
   private penalized = new Set<string>(); // "id@modifiedAt": one penalty per change, however long the repair takes
   private stale = new Map<string, number>(); // square id -> modifiedAt of a paint made while no referee watched
   private stuck = new Set<string>();
@@ -185,6 +205,19 @@ export class Referee {
   private fastOff = false;
   private placing = new Set<string>(); // cards placed this tick (their text goes with the placing write)
   private onPaint?: (ev: PaintEvent, d: Decision) => void;
+  /** Ids Miro answered 404 for (or that we deleted): a slow full listing that began earlier may still show them. */
+  private gone = new Set<string>();
+  private goneThisTick = 0;
+  /** Extra by-id reads this tick (fixtures, card probes, fire-write rechecks), for the status line and the sim. */
+  readsThisTick = 0;
+  lastReads = 0;
+  /** Square label -> border we last wrote ("color/width"); the REST listing doesn't return borders. */
+  private borderWritten = new Map<string, string>();
+  /** Items read by id this tick (fixtures, probed cards): as fresh as the squares. */
+  private freshIds = new Set<string>();
+  private probeAt = 0;
+  /** Question stickies the referee removed (spam, wrong frame, non-neighbour, over the cap). */
+  private removedStickies = new Set<string>();
 
   constructor(
     public board: BoardAdapter,
@@ -221,14 +254,32 @@ export class Referee {
     return Object.values(this.state.players).filter((p) => p.team === team).map((p) => p.userId);
   }
 
-  /** Rehearsal: a paint belongs to the square's team member who painted least recently. */
-  private painterOf(label: string, realUser: string): string {
+  /**
+   * Rehearsal: a paint belongs to a member of the square's team, the one who painted least recently and is
+   * off cooldown, not already used for another paint this tick (one shared account can't be told apart).
+   */
+  private painterOf(label: string, realUser: string, at = this.now(), used = new Set<string>(), fill = ""): string {
     if (!this.rehearsal) return realUser;
-    const team = this.cells.get(label)?.sector;
-    const ids = team ? this.teamPlayers(team) : [];
+    const sector = this.cells.get(label)?.sector;
+    // Orange in a neighbour's area: a member of a team attacking that area right now (the stand-in rule).
+    const attackers = fill === STATE_COLOR.fire && sector ? [...new Set(this.state.attacks.filter((g) => g.to === sector && g.left > 0 && g.until > this.state.elapsed).map((g) => g.team))] : [];
+    const ids = attackers.length ? attackers.flatMap((t) => this.teamPlayers(t)) : sector ? this.teamPlayers(sector) : [];
     if (!ids.length) return realUser;
     const last = this.state.lastPaintAt;
-    return ids.sort((a, b) => (last[a] ?? -Infinity) - (last[b] ?? -Infinity))[0]!;
+    const cool = this.rules.cooldownSeconds * 1000;
+    const sorted = ids.sort((a, b) => (last[a] ?? -Infinity) - (last[b] ?? -Infinity));
+    const ready = (u: string) => !used.has(u) && (last[u] === undefined || at - last[u]! >= cool) && !((this.state.timeoutUntil[u] ?? 0) > at);
+    const pick = sorted.find(ready) ?? sorted.find((u) => !used.has(u)) ?? sorted[0]!;
+    used.add(pick);
+    return pick;
+  }
+
+  /** Every judged paint goes to the log: square, color, player, team, verdict and reason. */
+  private logPaint(ev: PaintEvent, d: Decision) {
+    const p = this.state.players[ev.userId];
+    const who = p ? `${p.name} (${TEAM_INFO[p.team].name})` : `unjoined ${ev.userId || "?"}`;
+    const reason = d.feedback.replace(/^\S+\s+/, "");
+    this.log(`\npaint ${ev.label} ${ev.fill || "(no fill)"} by ${who}: ${d.accept ? "accepted" : `refused [${d.rule ?? "?"}]`} · ${reason}`);
   }
 
   get state(): GameState {
@@ -308,6 +359,9 @@ export class Referee {
       this.cellId.set(lab, best.id);
       this.idCell.set(best.id, lab);
       this.setCellShadow(lab, this.fillOf(lab));
+      // Borders aren't in the listing: assume the normal one is there, rewrite a team-colored one once.
+      const o = this.state.origin?.[lab];
+      if (!o || o === "wild") this.borderWritten.set(lab, `${this.strokeFor(lab).color}/${this.strokeFor(lab).width}`);
       // A square whose fill differs from the engine was painted (or vandalised) while no referee watched.
       if ((best.fill ?? "").toLowerCase() !== this.fillOf(lab)) this.stale.set(best.id, best.modifiedAt);
     }
@@ -338,6 +392,7 @@ export class Referee {
       // off FIXTURES.leaderboard); only a fixture the referee just created uses the FIXTURES box.
       const box = it && intersects(it, FIXTURES[key]) ? { x: it.x, y: it.y, w: it.w, h: it.h } : { ...center(FIXTURES[key]), w: FIXTURES[key].w, h: FIXTURES[key].h };
       this.shadow.set(fx[key]!, { content: it ? norm(it.content) : "", fill: FIXTURE_STYLE[key].fill, ...box });
+      (this.game.fixtureBoxes ??= {})[key] = { ...box };
       if (it && it.fill?.toLowerCase() !== FIXTURE_STYLE[key].fill) this.shadow.get(fx[key]!)!.fill = it.fill ?? FIXTURE_STYLE[key].fill; // keep the board's own style
     }
     if (created.length) this.log(`created missing fixtures: ${created.join(", ")}`);
@@ -439,7 +494,11 @@ export class Referee {
           const st = cellStroke(cell);
           writes.push(() => this.board.updateShape(it.id, { fill, textColor: textColorFor(startState(cell)), borderColor: st.color, borderWidth: st.width, content: lab, ...c, w: GRID.cell, h: GRID.cell, rotation: 0 }));
           repainted++;
+        } else if (this.borderWritten.get(lab) !== `${cellStroke(cell).color}/${cellStroke(cell).width}`) {
+          const st = cellStroke(cell);
+          writes.push(() => this.board.updateShape(it.id, { borderColor: st.color, borderWidth: st.width }));
         }
+        this.borderWritten.set(lab, `${cellStroke(cell).color}/${cellStroke(cell).width}`);
         this.setCellShadow(lab, fill);
         continue;
       }
@@ -493,6 +552,12 @@ export class Referee {
 
   /** Squares are always fresh; `full` says whether the rest of the board is in `items` too. */
   private async readBoard(): Promise<{ items: BoardItem[]; full: boolean; since: number }> {
+    const r = await this.readBoardRaw();
+    if (this.gone.size) r.items = r.items.filter((i) => !this.gone.has(i?.id));
+    return r;
+  }
+
+  private async readBoardRaw(): Promise<{ items: BoardItem[]; full: boolean; since: number }> {
     if (!this.fastPath()) return { items: await this.board.listItems(), full: true, since: Infinity };
     if (!this.sweep) {
       this.sweepStartedAt = this.now();
@@ -531,10 +596,10 @@ export class Referee {
     for (const it of items) {
       if (it.type !== "sticky_note") continue;
       const team = ordersTeamAt(it.x, it.y);
-      if (!team || this.staticIds.has(it.id)) continue;
+      if (!team || this.staticIds.has(it.id) || this.removedStickies.has(it.id)) continue;
       // A giant sticky costs nothing: only its start is read.
       const text = stripHtml(String(it.content ?? "").slice(0, STICKY_TEXT_MAX * 4)).slice(0, STICKY_TEXT_MAX).split("\n").map((l) => l.slice(0, 200)).slice(0, 20).join("\n");
-      out.push({ id: it.id, team, text, ...this.stickyPeople(team, text, it) });
+      out.push({ id: it.id, team, text, createdAt: it.createdAt, ...this.stickyPeople(team, text, it) });
     }
     return out;
   }
@@ -564,6 +629,7 @@ export class Referee {
   async tick(): Promise<TickResult> {
     this.tickNo++;
     this.writesThisTick = 0;
+    this.readsThisTick = 0;
     this.placing.clear();
     try {
       return await this.tickInner();
@@ -573,6 +639,7 @@ export class Referee {
       return { paints: 0, tampers: 0, joins: 0, fire: this.burning(), changed: 0, writes: this.writesThisTick, deferred: 0, error: errMsg(e) };
     } finally {
       this.lastWrites = this.writesThisTick;
+      this.lastReads = this.readsThisTick;
       this.persistIds();
     }
   }
@@ -593,15 +660,22 @@ export class Referee {
     }
     const { items, full, since } = read;
     const now = this.now();
+    this.goneThisTick = 0;
     this.learnSelf(items);
-    // Squares are always fresh. Anything else only when the sweep began after we last touched that aspect of it.
-    const fresh = (m: Map<string, number>, id: string) => this.idCell.has(id) || (full && (m.get(id) ?? -Infinity) < since);
     const byId = new Map<string, BoardItem>();
     for (const i of items) if (i && typeof i.id === "string") byId.set(i.id, i);
+    // The fixtures (and a few cards) read by id now: a slow full listing may be many seconds old.
+    await this.readById(byId);
+    // Squares and items read by id are always fresh. Anything else only when the sweep began after we last touched that aspect of it.
+    const fresh = (m: Map<string, number>, id: string) => this.idCell.has(id) || this.freshIds.has(id) || (full && (m.get(id) ?? -Infinity) < since);
     const paints: (PaintEvent & { stale?: boolean })[] = [];
     const tampers: TamperEvent[] = [];
     const ops: Op[] = [];
     let joins = 0;
+    // Memes: images (and embeds, documents...) anywhere on the board, by a cheap type-filtered listing every poll.
+    const junk = new Map<string, { at: number; it: BoardItem }>();
+    await this.scanTypedJunk(junk, tampers, now);
+
     const fixtureKeyOf = (id: string) => FIXTURE_KEYS.find((k) => this.game.fixtureIds[k] === id);
     const cardOwnerOf = (id: string) => [...this.inboxCard].find(([, cid]) => cid === id)?.[0];
 
@@ -643,11 +717,16 @@ export class Referee {
     }
 
     // 2. squares + fixtures + inbox cards: diff against the shadow
+    const readFill = new Map<string, string>(); // label -> fill in this tick's read
+    const preFill = new Map<string, string>(); // label -> what the engine last wrote/saw there
+    const judged = new Set<string>(); // labels whose change this tick is judged (a paint) or our own echo
     for (const [id, sh] of [...this.shadow]) {
       const it = byId.get(id);
       if (!it) continue;
       const lab = this.idCell.get(id);
       if (lab) {
+        readFill.set(lab, (it.fill ?? "").toLowerCase());
+        preFill.set(lab, (sh.fill ?? "").toLowerCase());
         const cell = this.cells.get(lab)!;
         const bandOff = it.parentId ? framesOff.has(it.parentId) : framesOff.has(this.frameIds[frameOfRow(cell.row)] ?? "");
         const sizeOff = Math.abs(it.w - sh.w) > TOL || Math.abs(it.h - sh.h) > TOL;
@@ -664,9 +743,10 @@ export class Referee {
         const bf = (it.fill ?? "").toLowerCase();
         if (bf === (sh.fill ?? "").toLowerCase()) continue;
         sh.fill = bf; // what the board shows now; reconciliation below brings it back to the engine
+        judged.add(lab);
         if (bf === this.fillOf(lab) || this.isSelf(it.modifiedBy)) continue; // already right, or our own write echoed back
         const staleAt = this.stale.get(id);
-        paints.push({ label: lab, fill: bf, userId: this.painterOf(lab, it.modifiedBy), at: this.when(it.modifiedAt, now), stale: staleAt !== undefined && staleAt === it.modifiedAt });
+        paints.push({ label: lab, fill: bf, userId: it.modifiedBy, at: this.when(it.modifiedAt, now), batchId: this.tickNo, stale: staleAt !== undefined && staleAt === it.modifiedAt });
         continue;
       }
       const fxKey = fixtureKeyOf(id);
@@ -688,6 +768,7 @@ export class Referee {
       if (geomOff || fillOff) {
         ops.push({
           key: `restore:${id}`,
+          id,
           prio: 1,
           run: () => this.board.updateShape(id, { fill: sh.fill, x: sh.x, y: sh.y, w: sh.w, h: sh.h, ...(it.rotation ? { rotation: 0 } : {}) }),
           ok: () => this.touch(id, true),
@@ -708,19 +789,24 @@ export class Referee {
           continue;
         }
         if (!this.isJunk(it)) continue;
-        // Junk on the forest or the fixtures: removed (retried with backoff while it is locked).
+        // Junk on the forest, the fixtures, a panel or an Orders frame: removed (retried with backoff while it is locked).
         if (!this.stuck.has(it.id) && !this.createdIds.has(it.id)) {
           const who = parseLabel(norm(it.content)) && it.w < 2 * GRID.pitch ? it.modifiedBy : it.createdBy;
-          this.penalize(tampers, who, "added", "an item on the forest", it.id, this.when(it.createdAt, now));
+          this.penalize(tampers, who, "added", this.junkWhat(it), it.id, this.when(it.createdAt, now));
         }
-        ops.push({ key: `junk:${it.id}`, prio: 4, run: () => this.board.deleteItem(it.id), ok: () => this.stuck.delete(it.id) });
+        junk.set(it.id, { at: it.createdAt || 0, it });
       }
       this.guardStatics(byId, fresh, tampers, ops, now);
     }
 
+    // Junk deletions: newest first, at most JUNK_DELETES_PER_TICK per tick (the rest next tick).
+    const doomed = [...junk.values()].sort((a, b) => b.at - a.at);
+    for (const { it } of doomed.slice(0, JUNK_DELETES_PER_TICK)) ops.push({ key: `junk:${it.id}`, prio: 4, run: () => this.board.deleteItem(it.id), ok: () => this.stuck.delete(it.id) });
+
     // 4. approvals: sticky notes in the Orders frames (full reads only)
     if (full) {
       this.stickies = this.readStickies(items);
+      if (!this.rehearsal) this.policeQuestions(ops);
       for (const s of this.stickies) {
         try {
           for (const n of judgeSticky(state, this.rules, s)) this.pushFeedback(n.userId, n.line);
@@ -732,10 +818,14 @@ export class Referee {
 
     // 5. paints, in time order (many paints by one player in one poll: the first counts, the rest wait the cooldown)
     paints.sort((a, b) => a.at - b.at);
+    const usedStandIns = new Set<string>();
     for (const ev of paints) {
+      // Rehearsal: the stand-in painter is picked now, after the earlier paints of this tick were judged.
+      ev.userId = this.painterOf(ev.label, ev.userId, ev.at, usedStandIns, ev.fill);
       if (ev.stale) {
         this.stale.delete(this.cellId.get(ev.label) ?? "");
         this.pushFeedback(ev.userId, `⏸ ${ev.label} undone: no referee was watching.`);
+        this.logPaint(ev, { accept: false, feedback: "undone: no referee was watching (painted while the referee was off)" });
         continue;
       }
       const d = decidePaint(state, this.rules, this.cells, ev);
@@ -743,6 +833,7 @@ export class Referee {
         const sh = this.shadow.get(this.cellId.get(ev.label) ?? "");
         if (sh) sh.fill = ev.fill; // the player's paint is already on the board
       }
+      this.logPaint(ev, d);
       this.onPaint?.(ev, d);
       if (d.feedback) this.pushFeedback(ev.userId, d.feedback);
     }
@@ -752,23 +843,28 @@ export class Referee {
         this.log(`\nput back: ${t.target} (${t.what})`);
         continue;
       }
-      this.pushFeedback(t.userId, decideTamper(state, this.rules, t).feedback);
+      this.pushFeedback(t.userId, (t.what === "added" ? decideJunk(state, { userId: t.userId, what: t.target, at: t.at }) : decideTamper(state, this.rules, t)).feedback);
     }
 
-    // 6. the fire: game time moves on (spread, burn-out, wind, lightning, OUTSIDE time, the end)
+    // 6. the fire: game time moves on (spread, burn-out, lightning, attacks running out, the end)
     const dt = this.lastAdvanceAt === null ? 0 : Math.min(MAX_STEP_MS, Math.max(0, now - this.lastAdvanceAt));
     this.lastAdvanceAt = now;
     const adv = advance(state, this.rules, this.cellList, this.byPos, this.rng, dt, now);
     for (const e of adv.events) this.log(`\n${e}`);
     for (const g of adv.ended) {
-      for (const u of this.teamPlayers(g.team)) this.pushFeedback(u, `⌛ Time is up in ${teamName(g.to)}'s area: paint only in your team's area again.`);
+      for (const u of this.teamPlayers(g.team)) this.pushFeedback(u, `⌛ Your attack on ${teamName(g.to)}'s area is over: paint blue in your team's area again.`);
     }
 
-    // 7. plan every write (board vs engine) and run what fits in this tick; one refused write never stalls the game
-    ops.push(...this.cellOps(new Set(adv.changed)), ...this.rebuildOps(), ...this.fixtureOps(), ...this.cardOps());
-    const { deferred } = await this.execute(ops);
+    // 7. plan every write (board vs engine) and run what fits in this tick; one refused write never stalls the game.
+    // A square is written only when this tick's read showed it as the engine last wrote/saw it, or its change
+    // was judged above: a player's newer blue is never overwritten by a fire change planned on an older look.
+    const writable = (lab: string) => readFill.has(lab) && (judged.has(lab) || readFill.get(lab) === preFill.get(lab));
+    ops.push(...(await this.recheckFireWrites(this.cellOps(new Set(adv.changed), writable), readFill)), ...this.rebuildOps(), ...this.fixtureOps(), ...this.cardOps());
+    let { deferred } = await this.execute(ops);
+    // Miro said 404 (deleted) for something: rebuild it now, not on a later tick.
+    if (this.goneThisTick) deferred += (await this.execute([...this.rebuildOps(), ...this.fixtureOps(), ...this.cardOps()])).deferred;
     this.prevReadAt = now;
-    return { paints: paints.length, tampers: tampers.length, joins, fire: this.burning(), changed: adv.changed.length, writes: this.writesThisTick, deferred };
+    return { paints: paints.length, tampers: tampers.length, joins, fire: this.burning(), changed: adv.changed.length, writes: this.writesThisTick, reads: this.readsThisTick, deferred };
   }
 
   /** Something that does not belong where it is: on the forest or over a fixture. */
@@ -781,6 +877,11 @@ export class Referee {
     const onGrid = intersects({ x: it.x, y: it.y, w, h }, GRID_BOX);
     const onFixture = FIXTURE_KEYS.some((k) => intersects({ x: it.x, y: it.y, w, h }, FIXTURES[k]));
     if (this.stuck.has(it.id)) return true;
+    if (JUNK_TYPES.includes(it.type) && this.isMeme(it)) return true;
+    // New items on a panel (title, rules, leaderboard) or in an Orders frame (anything but a sticky): junk.
+    const onPanel = [PANELS.title, PANELS.rules, PANELS.leaderboard].some((b) => inside(b, it.x, it.y));
+    const inOrders = !!ordersTeamAt(it.x, it.y) && it.type !== "sticky_note";
+    if ((onPanel || inOrders) && !this.baseline.has(it.id) && !this.createdIds.has(it.id) && !this.isSelf(it.createdBy)) return true;
     // An untracked copy of a square (dragged out of its frame, a vandal's fake) goes wherever it is.
     if (it.type === "shape" && parseLabel(norm(it.content)) && w < 2 * GRID.pitch && h < 2 * GRID.pitch) return true;
     if (!onGrid && !onFixture) return false;
@@ -788,6 +889,41 @@ export class Referee {
     // backdrop, an area band); anything small, anything new, or any untracked copy of a square goes.
     const small = w <= 400 && h <= 400;
     return small || !this.baseline.has(it.id);
+  }
+
+  /** An image/embed/document that isn't the board's own: anything not static, not ours, not there at the start (unless a player put it there). */
+  private isMeme(it: BoardItem): boolean {
+    if (this.staticIds.has(it.id) || this.createdIds.has(it.id) || this.isSelf(it.createdBy) || this.gone.has(it.id)) return false;
+    if (this.baseline.has(it.id) && !this.state.players[it.createdBy]) return false; // decoration from the board build
+    return true;
+  }
+
+  /** What a junk item is, for the inbox line ("image", "item on the forest"). */
+  private junkWhat(it: BoardItem): string {
+    if (JUNK_TYPES.includes(it.type)) return it.type === "image" ? "image" : it.type.replace("_", " ");
+    const box = { x: it.x, y: it.y, w: Math.max(0, it.w || 0), h: Math.max(0, it.h || 0) };
+    if (intersects(box, GRID_BOX)) return "item on the forest";
+    if (FIXTURE_KEYS.some((k) => intersects(box, FIXTURES[k]))) return "item on the banner";
+    if (ordersTeamAt(it.x, it.y)) return "item in the Orders";
+    return "item on a panel";
+  }
+
+  /** Every poll: images, embeds, documents, previews anywhere on the board (one cheap listing per type). */
+  private async scanTypedJunk(junk: Map<string, { at: number; it: BoardItem }>, tampers: TamperEvent[], now: number) {
+    if (!this.board.listByType) return;
+    let items: BoardItem[];
+    this.readsThisTick += JUNK_TYPES.length;
+    try {
+      items = await this.board.listByType(JUNK_TYPES);
+    } catch {
+      return; // next poll
+    }
+    for (const it of items) {
+      if (!it || !this.isMeme(it)) continue;
+      this.seen.add(it.id);
+      if (!this.stuck.has(it.id)) this.penalize(tampers, it.createdBy, "added", this.junkWhat(it), it.id, this.when(it.createdAt, now));
+      junk.set(it.id, { at: it.createdAt || 0, it });
+    }
   }
 
   /** Static items (panels, title, rules, headers): edits and moves are put back; deletes are logged (rebuild between games). */
@@ -808,6 +944,13 @@ export class Referee {
       this.penalize(tampers, it.modifiedBy, textOff ? "edited" : "moved", "a board panel", id, this.when(it.modifiedAt, now));
       ops.push({
         key: `static:${id}`,
+        id,
+        gone: () => {
+          this.gone.add(id);
+          this.log(`\nstatic ${snap.type} ${id} ("${snap.content.slice(0, 30)}") was deleted; it can't be rebuilt mid-game without covering the forest. Rebuild the board between games.`);
+          this.reported.add(`static:${id}`);
+          this.staticSnap.delete(id);
+        },
         prio: 4,
         run: () =>
           this.board.updateShape(id, {
@@ -877,19 +1020,132 @@ export class Referee {
       off.add(f.id);
       if (!this.board.updateFrame) continue;
       this.penalize(tampers, f.modifiedBy, "moved", g.key.startsWith("band") ? "a row of the forest" : "an Orders frame", f.id, f.modifiedAt);
-      ops.push({ key: `frame:${g.key}`, prio: -1, run: () => this.board.updateFrame!(f.id, { x: c.x, y: c.y, w: g.box.w, h: g.box.h }), ok: () => this.touch(f.id, true) });
+      ops.push({
+        key: `frame:${g.key}`,
+        id: f.id,
+        gone: () => this.missing.set(`frame:${g.key}`, MISSING_READS - 1), // deleted after that listing: recreated on the next full read
+        prio: -1,
+        run: () => this.board.updateFrame!(f.id, { x: c.x, y: c.y, w: g.box.w, h: g.box.h }),
+        ok: () => this.touch(f.id, true),
+      });
     }
     // A frame a vandal drew over the forest or a fixture (it can swallow squares): removed.
     const mine = new Set(guarded.map((g) => g.get()).filter(Boolean));
     for (const f of frames) {
       if (mine.has(f.id) || this.staticIds.has(f.id) || this.baseline.has(f.id)) continue;
       if (!intersects(f, GRID_BOX) && !FIXTURE_KEYS.some((k) => intersects(f, FIXTURES[k]))) continue;
-      this.penalize(tampers, f.createdBy, "added", "a frame on the forest", f.id, f.createdAt);
+      this.penalize(tampers, f.createdBy, "added", "frame on the forest", f.id, f.createdAt);
       ops.push({ key: `junk:${f.id}`, prio: 4, run: () => this.board.deleteItem(f.id) });
     }
     if (ops.length) await this.execute(ops);
     if (gridChanged) this.board.setGridFrames?.(this.frameIds);
     return off;
+  }
+
+  /** The 3 fixtures every tick (cheap: 3 GETs) and a few inbox cards round robin, read by id. A 404 rebuilds now. */
+  private async readById(byId: Map<string, BoardItem>) {
+    this.freshIds.clear();
+    if (!this.board.getItem) return;
+    const fixtures = FIXTURE_KEYS.map((k) => this.game.fixtureIds[k]).filter((x): x is string => !!x && !this.stuck.has(x));
+    const cards = [...this.inboxCard.values()].filter((id) => !this.placing.has(id));
+    const probes = cards.length <= CARD_PROBES_PER_TICK ? cards : Array.from({ length: CARD_PROBES_PER_TICK }, (_, i) => cards[(this.probeAt + i) % cards.length]!);
+    this.probeAt = cards.length ? (this.probeAt + CARD_PROBES_PER_TICK) % cards.length : 0;
+    const got = new Map<string, BoardItem | null>();
+    await pool(
+      [...fixtures, ...probes].map((id) => async () => {
+        this.readsThisTick++;
+        try {
+          got.set(id, await this.board.getItem!(id));
+        } catch {
+          // unknown this tick (429, 5xx): the listing decides
+        }
+      }),
+      10,
+    );
+    for (const [id, it] of got) {
+      if (!it) {
+        this.itemGone(id);
+        byId.delete(id);
+        continue;
+      }
+      // Fixtures: judged on this read (geometry and text). Cards: only proven present here.
+      if (fixtures.includes(id)) {
+        byId.set(id, it);
+        this.freshIds.add(id);
+      }
+    }
+  }
+
+  /** Miro says this item is gone (404): forget it; squares, fixtures and cards are rebuilt this tick. */
+  private itemGone(id: string) {
+    this.gone.add(id);
+    this.missing.delete(id);
+    this.stuck.delete(id);
+    this.goneThisTick++;
+    const lab = this.idCell.get(id);
+    if (lab) {
+      this.idCell.delete(id);
+      this.cellId.delete(lab);
+      this.shadow.delete(id);
+      this.log(`\nput back: ${lab} (deleted)`);
+      return;
+    }
+    const key = FIXTURE_KEYS.find((k) => this.game.fixtureIds[k] === id);
+    if (key) {
+      delete this.game.fixtureIds[key];
+      this.written[key] = undefined;
+      this.shadow.delete(id);
+      this.log(`\nput back: the ${key} (deleted)`);
+      return;
+    }
+    const owner = [...this.inboxCard].find(([, cid]) => cid === id)?.[0];
+    if (owner) {
+      this.inboxCard.delete(owner);
+      this.shadow.delete(id);
+      if (this.state.players[owner]) this.replacedCards.add(owner);
+      this.log(`\nput back: ${this.state.players[owner]?.name ?? owner}'s inbox card (deleted)`);
+      return;
+    }
+    this.shadow.delete(id);
+  }
+
+  /**
+   * Class only: question stickies that can never be valid are removed, after telling their creator:
+   * posted in another team's Orders (or by someone not on the team), naming a non-neighbour, or more
+   * than 2 open (unanswered) questions by one player.
+   */
+  private policeQuestions(ops: Op[]) {
+    const state = this.state;
+    const remove = (s: StickyView, line?: string) => {
+      this.removedStickies.add(s.id);
+      if (line && state.players[s.createdBy] && state.noted[s.id] !== line) {
+        state.noted[s.id] = line;
+        this.pushFeedback(s.createdBy, line);
+      }
+      ops.push({ key: `junk:${s.id}`, prio: 3, run: () => this.board.deleteItem(s.id) });
+    };
+    const open = new Map<string, StickyView[]>();
+    for (const s of this.stickies) {
+      if (stickyKind(s.text) !== "QUESTION" || this.isSelf(s.createdBy) || state.approvals[s.id]) continue;
+      const creator = state.players[s.createdBy];
+      if (!creator || creator.team !== s.team) {
+        remove(s, `🗑️ Removed your question in ${teamName(s.team)}'s Orders: put it in your own team's Orders.`);
+        continue;
+      }
+      const to = questionTarget(s.text);
+      const near = TEAM_INFO[s.team].neighbours;
+      if (!to || !near.includes(to)) {
+        remove(s, `🗑️ Removed your question: ask about a neighbour, like: ${questionText(near[0]!)}? (or ${teamName(near[1]!)}'s).`);
+        continue;
+      }
+      if (questionAnswered(s.text)) continue;
+      open.set(s.createdBy, [...(open.get(s.createdBy) ?? []), s]);
+    }
+    for (const list of open.values()) {
+      list.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0) || Number(a.id) - Number(b.id));
+      for (const s of list.slice(MAX_OPEN_QUESTIONS)) remove(s, `🗑️ Removed an extra question: at most ${MAX_OPEN_QUESTIONS} open questions each. Wait for a YES or NO.`);
+    }
+    this.stickies = this.stickies.filter((s) => !this.removedStickies.has(s.id));
   }
 
   /** A square moved/edited/locked: forget it (deleted when Miro lets us) and build a fresh one. */
@@ -904,7 +1160,7 @@ export class Referee {
 
   private retireFixture(key: FixtureKey, id: string) {
     if (this.game.fixtureIds[key] !== id) return;
-    this.log(`\nthe ${key} refuses writes (locked?): putting a new one on top. Unlock ${id} in Miro.`);
+    this.log(`\nthe ${key} is locked (403): putting a new one on top. Unlock ${id} in Miro.`);
     this.stuck.add(id);
     this.shadow.delete(id);
     delete this.game.fixtureIds[key];
@@ -912,25 +1168,39 @@ export class Referee {
   }
 
   /** Squares whose board fill differs from the engine: one write each, the fire's changes first. */
-  private cellOps(fireChanged: Set<string>): Op[] {
+  private cellOps(fireChanged: Set<string>, writable?: (lab: string) => boolean): Op[] {
     const ops: Op[] = [];
     for (const [lab, id] of this.cellId) {
       const sh = this.shadow.get(id);
       if (!sh) continue;
       const want = this.fillOf(lab);
-      if ((sh.fill ?? "").toLowerCase() === want) continue;
+      const stroke = this.strokeFor(lab);
+      const bkey = `${stroke.color}/${stroke.width}`;
+      const fillOff = (sh.fill ?? "").toLowerCase() !== want;
+      const borderOff = this.borderWritten.get(lab) !== bkey;
+      if (!fillOff && !borderOff) continue;
+      // A fill write could overwrite a player's newer paint: only on a square this read showed as expected.
+      // A border-only write leaves the fill alone (the REST listing doesn't return borders: we track what we wrote).
+      if (fillOff && writable && !writable(lab)) continue; // looked at again next tick
       const st = this.state.cells[lab]!;
       ops.push({
         key: `cell:${lab}`,
+        id,
         prio: fireChanged.has(lab) ? 0 : 1,
-        run: () => this.board.updateShape(id, { fill: want, textColor: textColorFor(st) }),
+        recheck: fillOff && (st === "fire" || st === "burnt") ? lab : undefined,
+        run: () =>
+          this.board.updateShape(id, {
+            ...(fillOff ? { fill: want, textColor: textColorFor(st) } : {}),
+            ...(borderOff ? { borderColor: stroke.color, borderWidth: stroke.width } : {}),
+          }),
         ok: () => {
           const s = this.shadow.get(id);
           if (s) s.fill = want;
+          this.borderWritten.set(lab, bkey);
         },
         fail: (_e, n) => {
           if (n < STUCK_AFTER || this.cellId.get(lab) !== id) return;
-          this.log(`\n${lab} refuses writes (locked?): putting a new square on top`);
+          this.log(`\n${lab} is locked (403): putting a new square on top`);
           this.idCell.delete(id);
           this.cellId.delete(lab);
           this.shadow.delete(id);
@@ -939,6 +1209,47 @@ export class Referee {
       });
     }
     return ops;
+  }
+
+  /** A square's border: a team's fire gets its team color (6), a square burned by a team's fire keeps it (3); else normal. */
+  strokeFor(lab: string): { color: string; width: number } {
+    const st = this.state.cells[lab];
+    const o = this.state.origin?.[lab];
+    if (o && o !== "wild" && (st === "fire" || st === "burnt")) return { color: TEAM_INFO[o].color, width: st === "fire" ? 6 : 3 };
+    return cellStroke(this.cells.get(lab)!);
+  }
+
+  /**
+   * Right before writing a fire/burnt fill, read those squares by id (pooled, at most RECHECK_MAX per tick):
+   * a square whose fill changed since this tick's read (a player's fresh paint) is not written now; its
+   * change is judged on the next tick. Ops over the cap wait for the next tick. A 404 rebuilds the square.
+   */
+  private async recheckFireWrites(ops: Op[], readFill: Map<string, string>): Promise<Op[]> {
+    if (!this.board.getItem) return ops;
+    const todo = ops.filter((o) => o.recheck).sort((a, b) => a.prio - b.prio);
+    const checked = new Set(todo.slice(0, RECHECK_MAX));
+    const drop = new Set<Op>(todo.slice(RECHECK_MAX));
+    await pool(
+      [...checked].map((op) => async () => {
+        this.readsThisTick++;
+        try {
+          const it = await this.board.getItem!(op.id!);
+          if (!it) {
+            drop.add(op);
+            this.itemGone(op.id!);
+            return;
+          }
+          if ((it.fill ?? "").toLowerCase() !== readFill.get(op.recheck!)) {
+            drop.add(op);
+            this.log(`\n${op.recheck} changed since this tick's read: fire write held, judged next tick`);
+          }
+        } catch {
+          drop.add(op); // unknown: don't risk overwriting a paint; next tick
+        }
+      }),
+      20,
+    );
+    return ops.filter((o) => !drop.has(o));
   }
 
   /** Missing squares, recreated 20 per call, into their band frame when it exists. */
@@ -959,6 +1270,7 @@ export class Referee {
             this.cellId.set(c.label, id);
             this.idCell.set(id, c.label);
             this.setCellShadow(c.label, shapes[k]!.fill);
+            this.borderWritten.set(c.label, `${shapes[k]!.borderColor}/${shapes[k]!.borderWidth}`);
             this.seen.add(id);
             this.createdIds.add(id);
           });
@@ -979,10 +1291,10 @@ export class Referee {
           key: `mkfx:${key}`,
           prio: 1,
           run: async () => {
-            const [nid] = await this.board.createShapes([this.fixtureShape(key, html)]);
+            const shape = this.fixtureShape(key, html);
+            const [nid] = await this.board.createShapes([shape]);
             this.game.fixtureIds[key] = nid!;
-            const box = FIXTURES[key];
-            this.shadow.set(nid!, { content: norm(html), fill: FIXTURE_STYLE[key].fill, ...center(box), w: box.w, h: box.h });
+            this.shadow.set(nid!, { content: norm(html), fill: FIXTURE_STYLE[key].fill, x: shape.x, y: shape.y, w: shape.w, h: shape.h });
             this.written[key] = html;
             this.touch(nid!, true);
             this.knownAt.set(nid!, this.now());
@@ -996,6 +1308,7 @@ export class Referee {
       if (this.written[key] === html && sh?.content === norm(html)) continue;
       ops.push({
         key: `fx:${key}`,
+        id,
         prio: 1,
         run: () => this.board.updateShape(id, { content: html }),
         ok: () => {
@@ -1038,6 +1351,7 @@ export class Referee {
       if (sh.content === norm(html)) continue;
       ops.push({
         key: `card:${id}`,
+        id,
         prio: 3,
         run: () => this.board.updateShape(id, { content: html }),
         ok: () => {
@@ -1071,14 +1385,27 @@ export class Referee {
         try {
           await op.run();
           this.failures.delete(op.key);
+          if (op.key.startsWith("junk:")) this.gone.add(op.key.slice(5)); // deleted: an older listing may still show it
           op.ok?.();
         } catch (e) {
-          const n = (this.failures.get(op.key)?.n ?? 0) + 1;
-          // Retry next tick, then back off (2, 4, ... 16 ticks): a locked item must not cost a write every poll.
-          this.failures.set(op.key, { n, next: this.tickNo + (n < STUCK_AFTER ? 1 : Math.min(16, 2 ** (n - STUCK_AFTER + 1))) });
-          if (n === 1 || n === STUCK_AFTER) this.log(`write ${op.key} failed (${errMsg(e)})${n >= STUCK_AFTER ? `; ${n} times in a row` : ""}`);
           try {
-            op.fail?.(e as Error, n);
+            if (isGone(e) && (op.id || op.key.startsWith("junk:"))) {
+              // 404: the item was deleted. Never "locked": forget it and rebuild it this tick.
+              this.failures.delete(op.key);
+              if (op.key.startsWith("junk:")) {
+                this.gone.add(op.key.slice(5));
+                this.stuck.delete(op.key.slice(5));
+              } else if (op.gone) op.gone();
+              else this.itemGone(op.id!);
+              return;
+            }
+            const prev = this.failures.get(op.key);
+            const n = (prev?.n ?? 0) + 1;
+            const locked = isLocked(e) ? (prev?.locked ?? 0) + 1 : 0;
+            // Retry next tick, then back off (2, 4, ... 16 ticks): a locked item must not cost a write every poll.
+            this.failures.set(op.key, { n, locked, next: this.tickNo + (n < STUCK_AFTER ? 1 : Math.min(16, 2 ** (n - STUCK_AFTER + 1))) });
+            if (n === 1 || n === STUCK_AFTER) this.log(`write ${op.key} failed (${errMsg(e)})${n >= STUCK_AFTER ? `; ${n} times in a row` : ""}`);
+            if (locked) op.fail?.(e as Error, locked);
           } catch (e2) {
             this.log(`repair of ${op.key} failed: ${errMsg(e2)}`);
           }
@@ -1094,7 +1421,7 @@ export class Referee {
     const frame = ordersTitle(team);
     const job =
       role === "boss"
-        ? `You are the BOSS: in ${frame}, keep one sticky per worker like "Ana: paint N9 N10", and paint too.`
+        ? `You are the BOSS: in ${frame}, keep one sticky per worker like "Ana: paint N9 N10", and paint too. When your area is under control you may ask "Start a fire in Team N's area?" (a neighbour; a teammate must say YES).`
         : `You are a WORKER: paint the squares on your sticky in ${frame} (your name: paint ...).`;
     return `👋 ${esc(name)}: you are on ${t.name} (${team}). Your area: ${sectorText(team)} (edge ${t.color}). Paint blue ${STATE_COLOR.water} on green or orange squares there. ${job}`;
   }
@@ -1146,6 +1473,7 @@ export class Referee {
     this.placing.add(it.id);
     ops.push({
       key: `place:${it.id}`,
+      id: it.id,
       prio: 3,
       run: () => this.board.updateShape(it.id, sticky ? { content, x: c.x, y: c.y } : { content, x: c.x, y: c.y, w: slot.w, h: slot.h, fill: CARD_FILL, textColor: COLORS.text }),
       ok: () => {
@@ -1196,7 +1524,7 @@ export class Referee {
   private cardContent(userId: string): string {
     const p = this.state.players[userId];
     const ps = this.state.stats.byPlayer[userId];
-    const paints = ps ? ps.water : 0;
+    const paints = paintsOf(ps);
     const head = p ? `<b>${esc(p.name)} · ${TEAM_INFO[p.team].name.toUpperCase()} · ${p.role.toUpperCase()} · ${paints} paints</b>` : "<b>Inbox</b>";
     const lines = this.feedback.get(userId) ?? [];
     return [head, ...lines].map((l) => `<p>${l}</p>`).join("");
@@ -1236,9 +1564,11 @@ export class Referee {
   bannerHtml(): string {
     const s = this.state;
     const r = this.rules;
-    const w = WIND[s.wind]!;
     const p = (a: string, b: string) => `<p><b>${a}</b></p><p>${b}</p>`;
-    if (s.phase === "lobby") return p(`🔥 WILDFIRE · /join now · the fire starts soon · wind ${w.arrow} ${w.name} · 💧 ${s.water} water`, `paint blue ${STATE_COLOR.water} on green or orange squares in your team's area`);
+    const water = `💧 ${TEAMS.map((t) => `T${TEAM_INFO[t].num} ${s.water[t]}`).join(" · ")}`;
+    const w = windOn(r) ? WIND[s.wind]! : null;
+    const windTxt = w ? ` · wind ${w.arrow} ${w.name}` : "";
+    if (s.phase === "lobby") return p(`🔥 WILDFIRE · /join now · the fire starts soon${windTxt} · ${water}`, `paint blue ${STATE_COLOR.water} on green or orange squares in your team's area`);
     if (s.phase === "over") {
       const sc = scores(s, this.cellList);
       const why = s.endReason === "out" ? "the fire is out" : s.endReason === "time" ? "time is up" : "stopped";
@@ -1246,16 +1576,19 @@ export class Referee {
     }
     const left = r.gameMinutes * 60_000 - s.elapsed;
     const spreadIn = Math.max(0, Math.ceil((s.nextSpreadAt - s.elapsed) / 1000));
-    const line1 = `🔥 LIVE · ${mmss(left)} left · wind ${w.arrow} ${w.name} · next spread ${spreadIn}s · 💧 ${s.water} water`;
+    const line1 = `🔥 LIVE · ${mmss(left)} left${windTxt} · next spread ${spreadIn}s · ${water}`;
+    const windIn = w && !s.windTurned ? r.wind!.turnAt * 60_000 - s.elapsed : Infinity;
     const nextBolt = s.lightningDone < r.lightningAt.length ? r.lightningAt[s.lightningDone]! * 60_000 - s.elapsed : Infinity;
-    const windIn = s.windTurned ? Infinity : r.windMinutes * 60_000 - s.elapsed;
     const recent = s.events.filter((e) => s.elapsed - e.at < 25_000).at(-1);
     const burning = Object.values(s.cells).filter((c) => c === "fire").length;
     let line2: string;
-    if (recent) line2 = recent.text;
-    else if (nextBolt <= 60_000) line2 = `⚡ Lightning in ${mmss(nextBolt)}: a new fire somewhere far away`;
-    else if (windIn <= 60_000) line2 = `🌬️ The wind turns in ${mmss(windIn)}`;
-    else line2 = `${burning} squares on fire${s.water <= r.waterTotal / 5 ? " · 🚱 water running low!" : ""}`;
+    if (windIn <= 30_000) line2 = `🌬️ Wind turning in ${Math.ceil(windIn / 1000)} s!`;
+    else if (recent) line2 = recent.text;
+    else if (nextBolt <= 60_000) line2 = `⚡ Lightning in ${mmss(nextBolt)}: a new fire in a team's area`;
+    else {
+      const low = TEAMS.filter((t) => s.water[t] <= r.waterPerTeam / 5).map((t) => `T${TEAM_INFO[t].num}`);
+      line2 = `${burning} squares on fire${low.length ? ` · 🚱 water running low: ${low.join(" ")}` : ""}`;
+    }
     return p(line1, line2);
   }
 
@@ -1270,7 +1603,7 @@ export class Referee {
   leaderboardHtml(): string {
     const s = this.state;
     const sc = scores(s, this.cellList);
-    const pending = pendingStickies(s, this.stickies);
+    const pending = pendingStickies(s, this.stickies, this.rules);
     const lines: string[] = [`<b>🏆 LEADERBOARD · forest saved</b>`];
     const order = TEAMS.slice().sort((a, b) => sc[b].pct - sc[a].pct);
     for (const t of order) {
@@ -1278,26 +1611,34 @@ export class Referee {
       const water = players.reduce((a, p) => a + p.water, 0);
       const boss = players.find((p) => p.role === "boss")?.name ?? "-";
       lines.push("");
-      lines.push(`<b>${TEAM_INFO[t].emoji} ${TEAM_INFO[t].name.toUpperCase()} ${sc[t].pct}% · ${players.length} players · 💧 ${water} paints</b>`);
+      lines.push(`<b>${TEAM_INFO[t].emoji} ${TEAM_INFO[t].name.toUpperCase()} ${sc[t].pct}% · ${players.length} players · 💧 ${s.water[t]} water left · ${water} blue paints</b>`);
       lines.push(`boss ${esc(boss)}`);
       const crew = players.filter((p) => p.role === "worker").map((p) => esc(p.name));
       if (crew.length) lines.push(`crew: ${crew.join(", ")}`);
-      const out = s.outside.filter((g) => g.team === t && s.phase === "live").map((g) => `🤝 spraying water in ${TEAM_INFO[g.to].name}'s area (${mmss(g.until - s.elapsed)} left)`);
+      lines.push(`🔥 lit ${s.stats.lit?.[t] ?? 0} · burned ${s.stats.burnedOthers?.[t] ?? 0} trees of others`);
+      const out = s.attacks
+        .filter((g) => g.team === t && g.left > 0 && s.phase === "live")
+        .map((g) => `🔥 ${TEAM_INFO[t].name} may light ${g.left} more fire${g.left === 1 ? "" : "s"} in ${TEAM_INFO[g.to].name}'s area (${mmss(g.until - s.elapsed)} left)`);
       const waiting = pending[t].map((x) => `⏳ waiting for a YES: ${x}`);
       if (out.length || waiting.length) lines.push([...out, ...waiting].slice(0, 2).join(" · "));
+      for (const p of Object.values(s.players).filter((q) => q.team === t)) {
+        const n = s.junk?.[p.userId] ?? 0;
+        if (n >= 3) lines.push(`🚫 ${esc(p.name)}: ${n} junk items removed`);
+      }
     }
     return lines.map((l) => `<p>${l}</p>`).join("");
   }
 
   private fixtureShape(key: FixtureKey, content: string): NewShape {
-    const box = FIXTURES[key];
+    // Exactly where the fixture was (agents find a recreated one by a small read of that box).
+    const box = this.game.fixtureBoxes?.[key] ?? { ...center(FIXTURES[key]), w: FIXTURES[key].w, h: FIXTURES[key].h };
     const st = FIXTURE_STYLE[key];
-    return { content, fill: st.fill!, ...center(box), w: box.w, h: box.h, fontSize: st.fontSize, textAlign: st.textAlign, textAlignVertical: st.textAlignVertical, textColor: st.textColor, borderColor: COLORS.panelBorder, borderWidth: 2 };
+    return { content, fill: st.fill!, x: box.x, y: box.y, w: box.w, h: box.h, fontSize: st.fontSize, textAlign: st.textAlign, textAlignVertical: st.textAlignVertical, textColor: st.textColor, borderColor: COLORS.panelBorder, borderWidth: 2 };
   }
 
   cellShape(cell: CellDef, fill: string): NewShape {
     const c = center(cellBox(cell));
-    const st = cellStroke(cell);
+    const st = this.strokeFor(cell.label);
     const state: CellState = this.state.cells[cell.label] ?? startState(cell);
     // Into its band frame when that frame is known; otherwise on the canvas (and reads stop using the fast path).
     const parentId = this.fastPath() || (this.frameIds.length === 9 && this.frameIds.every(Boolean)) ? this.frameIds[frameOfRow(cell.row)] : undefined;
@@ -1313,14 +1654,14 @@ export class Referee {
     const out: string[] = [
       s.phase === "over" ? `🏆 ${TEAM_INFO[s.winner!].name.toUpperCase()} WINS (${s.endReason === "out" ? "the fire went out" : s.endReason === "time" ? "time is up" : "stopped"})` : `phase: ${s.phase}`,
       `forest saved: ${TEAMS.map((t) => `${TEAM_INFO[t].name} ${sc[t].pct}%`).join(" · ")} · ${mins} min of fire`,
-      `paints ${s.stats.accepted} · water left ${s.water}/${this.rules.waterTotal} · ignitions ${s.stats.ignitions} · burnt out ${s.stats.burntOut} · lightning ${s.stats.strikes.join(" ") || "-"}`,
-      `spray outside approved: ${approved.map((a) => `${a.team}→${a.to}`).join(" ") || "none"} · refused by a human: ${Object.values(s.approvals).filter((a) => a.status === "refused").length}`,
+      `paints ${s.stats.accepted} · water left ${TEAMS.map((t) => `${t} ${s.water[t]}`).join(" ")} (of ${this.rules.waterPerTeam} each) · ignitions ${s.stats.ignitions} · burnt out ${s.stats.burntOut} · lightning ${s.stats.strikes.join(" ") || "-"}`,
+      `attacks approved: ${approved.map((a) => `${a.team}→${a.to}`).join(" ") || "none"} · lit ${TEAMS.map((t) => `${t} ${s.stats.lit[t]}`).join(" ")} · burned others' trees ${TEAMS.map((t) => `${t} ${s.stats.burnedOthers[t]}`).join(" ")} · blowback ${TEAMS.map((t) => `${t} ${s.stats.blowback[t]}`).join(" ")} · refused by a human: ${Object.values(s.approvals).filter((a) => a.status === "refused").length}`,
       `paints undone: ${Object.entries(s.stats.illegal).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(" · ") || "none"}`,
       "",
     ];
     for (const t of TEAMS) {
       const ps = Object.values(s.stats.byPlayer).filter((p) => p.team === t).sort((a, b) => b.water - a.water);
-      out.push(`${TEAM_INFO[t].name}: ${ps.map((p) => `${p.name}${p.role === "boss" ? " (boss)" : ""} 💧${p.water}${p.outside ? ` (${p.outside} outside)` : ""}`).join(", ") || "no players"}`);
+      out.push(`${TEAM_INFO[t].name}: ${ps.map((p) => `${p.name}${p.role === "boss" ? " (boss)" : ""} 💧${p.water}${p.lit ? ` 🔥${p.lit}` : ""}`).join(", ") || "no players"}`);
     }
     return out.join("\n");
   }

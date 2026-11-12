@@ -79,8 +79,8 @@ export interface TeamInfo {
 export const TEAM_INFO: Record<Team, TeamInfo> = {
   ridge: { name: "Team 1", oldName: "Ridge", num: 1, color: PALETTE.teams.ridge, cols: [0, 17], rows: [0, 16], emoji: "🟪", neighbours: ["pine", "cedar"] },
   pine: { name: "Team 2", oldName: "Pine Valley", num: 2, color: PALETTE.teams.pine, cols: [18, 35], rows: [0, 16], emoji: "🌸", neighbours: ["ridge", "birch"] },
-  cedar: { name: "Team 3", oldName: "Cedar Creek", num: 3, color: PALETTE.teams.cedar, cols: [0, 17], rows: [17, 33], emoji: "🟨", neighbours: ["ridge", "birch"] },
-  birch: { name: "Team 4", oldName: "Birch Hollow", num: 4, color: PALETTE.teams.birch, cols: [18, 35], rows: [17, 33], emoji: "⬜", neighbours: ["pine", "cedar"] },
+  cedar: { name: "Team 3", oldName: "Cedar Creek", num: 3, color: PALETTE.teams.cedar, cols: [0, 17], rows: [17, 33], emoji: "🔷", neighbours: ["ridge", "birch"] },
+  birch: { name: "Team 4", oldName: "Birch Hollow", num: 4, color: PALETTE.teams.birch, cols: [18, 35], rows: [17, 33], emoji: "🔘", neighbours: ["pine", "cedar"] },
 };
 
 export const COL_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -227,7 +227,8 @@ export function ordersTeamAt(cx: number, cy: number): Team | null {
   return TEAMS.find((t) => inside(ORDERS[t], cx, cy)) ?? null;
 }
 
-// Wind: 8 directions, index 0 = N, clockwise. The wind BLOWS toward this direction: the fire runs that way.
+// Wind (switched off by default, rules.json wind.enabled): 8 directions, index 0 = N, clockwise. The wind
+// BLOWS toward this direction: the fire runs that way. Also the 8 neighbours of a square, in the same order.
 export const WIND = [
   { name: "N", arrow: "↑", dc: 0, dr: -1, word: "north" },
   { name: "NE", arrow: "↗", dc: 1, dr: -1, word: "north-east" },
@@ -238,6 +239,7 @@ export const WIND = [
   { name: "W", arrow: "←", dc: -1, dr: 0, word: "west" },
   { name: "NW", arrow: "↖", dc: -1, dr: -1, word: "north-west" },
 ] as const;
+export const NEIGHBOURS = WIND;
 
 /**
  * Team by "Team 2" / "team2" / "T2" / "2", by id ("pine"), or by the old name or its first word

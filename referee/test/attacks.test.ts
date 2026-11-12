@@ -6,8 +6,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { stripHtml } from "../src/board.js";
 import { loadGame, saveGame } from "../src/config.js";
-import { FIXTURES, GRID_BOX, ORDERS, PANELS, center, frameBoxes, inside, teamByName } from "../src/layout.js";
+import { FIXTURES, GRID_BOX, ORDERS, PANELS, TEAMS, TEAM_INFO, center, frameBoxes, inside, teamByName } from "../src/layout.js";
 import { acquireLock, releaseLock } from "../src/lock.js";
+import { FakeBoard } from "../src/fake-board.js";
 import { emptyGame } from "../src/referee.js";
 import { judgeSticky, mulberry32, questionTarget } from "../src/rules.js";
 import { C, CALM, RULES, expectConverged, setup } from "./harness.js";
@@ -25,7 +26,7 @@ describe("paints", () => {
     await g.ticks(2);
     for (let i = 0; i < colors.length; i++) expect(g.fill(`C${i + 2}`)).toBe(C.forest);
     expect(g.card("r2")).toContain("paint only blue");
-    expect(g.ref.state.water).toBe(400);
+    expect(g.ref.state.water.ridge).toBe(400);
   });
   it(T("A02", "blue on blue changes nothing and costs no water"), async () => {
     const g = await setup({ live: true });
@@ -33,7 +34,7 @@ describe("paints", () => {
     await g.tick(6000);
     g.fake.playerPaint("r1", "C4", C.water);
     await g.tick(6000);
-    expect(g.ref.state.water).toBe(399);
+    expect(g.ref.state.water.ridge).toBe(399);
     expect(g.ref.state.stats.byPlayer.r1!.water).toBe(0);
   });
   it(T("A03", "blue on a burnt square is undone"), async () => {
@@ -52,21 +53,24 @@ describe("paints", () => {
     expect(g.fill("Z4")).toBe(C.forest);
     expect(g.card("r2")).toContain("it is Team 2's area");
   });
-  it(T("A05", "blue in a neighbour's area counts only while a YES runs"), async () => {
+  it(T("A05", "blue in a neighbour's area is undone even with a YES; orange there counts only while the attack runs"), async () => {
     const g = await setup({ live: true });
-    const q = g.fake.playerSticky("r1", "ridge", "Spray water in Team 2's area?");
+    const q = g.fake.playerSticky("r1", "ridge", "Start a fire in Team 2's area?");
     await g.tick();
-    g.fake.playerEditSticky("r2", q.id, "Spray water in Team 2's area?\nYES");
+    g.fake.playerEditSticky("r2", q.id, "Start a fire in Team 2's area?\nYES");
     await g.tick();
     g.fake.playerPaint("r2", "Z4", C.water);
-    await g.tick();
-    expect(g.fill("Z4")).toBe(C.water);
+    await g.tick(6000);
+    expect(g.fill("Z4")).toBe(C.forest);
+    g.fake.playerPaint("r2", "Z5", C.fire);
+    await g.tick(6000);
+    expect(g.fill("Z5")).toBe(C.fire);
     await g.ticks(41); // 2 minutes later
-    g.fake.playerPaint("r2", "Z5", C.water);
+    g.fake.playerPaint("r2", "Z6", C.fire);
     await g.tick();
-    expect(g.fill("Z5")).toBe(C.forest);
-    // Team 3 is not Team 1's neighbour grant: Team 1 still can't paint there.
-    g.fake.playerPaint("r1", "C30", C.water);
+    expect(g.fill("Z6")).toBe(C.forest);
+    // Team 3 is not under attack: Team 1 can't light it.
+    g.fake.playerPaint("r1", "C30", C.fire);
     await g.tick(6000);
     expect(g.fill("C30")).toBe(C.forest);
   });
@@ -130,13 +134,14 @@ describe("paints", () => {
     await g.tick();
     expect(g.fill("R17")).toBe(C.fire);
   });
-  it(T("A13", "with the shared water at 0 every paint is undone"), async () => {
+  it(T("A13", "with the team's water at 0 its blue paints are undone (other teams go on)"), async () => {
     const g = await setup({ live: true });
-    g.ref.state.water = 0;
+    g.ref.state.water.ridge = 0;
     g.fake.playerPaint("r2", "C4", C.water);
+    g.fake.playerPaint("p1", "Z4", C.water);
     await g.tick();
-    expect(g.fill("C4")).toBe(C.forest);
-    expect(g.card("r2")).toContain("all used up");
+    expect([g.fill("C4"), g.fill("Z4")]).toEqual([C.forest, C.water]);
+    expect(g.card("r2")).toContain("Team 1's water is empty");
   });
   it(T("A14", "a player of another team painting your area is undone"), async () => {
     const g = await setup({ live: true });
@@ -243,7 +248,7 @@ describe("squares", () => {
     await g.ticks(6);
     expect(g.sq("D5").id).not.toBe(sq.id);
     expect(g.fake.cell("D5").fill).toBe(C.forest); // the one on top
-    expect(g.logs.join("\n")).toMatch(/D5 refuses writes/);
+    expect(g.logs.join("\n")).toMatch(/D5 is locked \(403\)/);
     expectConverged(g, { allowStuck: true });
     g.fake.unlock(sq.id);
     await g.ticks(20);
@@ -283,16 +288,16 @@ describe("frames", () => {
   });
   it(T("A33", "a deleted Orders frame is recreated; approvals already given stay"), async () => {
     const g = await setup({ live: true });
-    const q = g.fake.playerSticky("r1", "ridge", "Spray water in Team 2's area?");
+    const q = g.fake.playerSticky("r1", "ridge", "Start a fire in Team 2's area?");
     await g.tick();
-    g.fake.playerEditSticky("r2", q.id, "Spray water in Team 2's area?\nYES");
+    g.fake.playerEditSticky("r2", q.id, "Start a fire in Team 2's area?\nYES");
     await g.tick();
     const old = g.fake.ordersFrameIds.ridge;
     g.fake.deleteFrame(old);
     await g.ticks(3);
     const f = [...g.fake.frames.values()].find((x) => inside(ORDERS.ridge, x.x, x.y));
     expect(f && f.id !== old).toBe(true);
-    expect(g.ref.state.outside.some((o) => o.team === "ridge" && o.to === "pine")).toBe(true);
+    expect(g.ref.state.attacks.some((o) => o.team === "ridge" && o.to === "pine")).toBe(true);
   });
   it(T("A34", "a moved Orders frame is moved back"), async () => {
     const g = await setup({ live: true });
@@ -374,7 +379,7 @@ describe("covering the board", () => {
     const g = await setup({ live: true });
     for (const type of ["sticky_note", "text", "image", "shape", "connector"]) g.fake.vandalAdd("c1", type, { x: 600, y: 600, w: 100, h: 100 }, "hi");
     await g.ticks(2);
-    expect(g.card("c1")).toContain("Removed an item on the forest");
+    expect(g.card("c1")).toMatch(/🚫 (image|item on the forest) removed — frozen/);
     expectConverged(g);
   });
   it(T("A52", "junk dropped over the banner is removed"), async () => {
@@ -397,8 +402,8 @@ describe("covering the board", () => {
   });
 });
 
-describe("the spray question", () => {
-  const ask = async (text = "Spray water in Team 2's area?") => {
+describe("the attack question", () => {
+  const ask = async (text = "Start a fire in Team 2's area?") => {
     const g = await setup({ live: true });
     const q = g.fake.playerSticky("r1", "ridge", text);
     await g.tick();
@@ -406,61 +411,61 @@ describe("the spray question", () => {
   };
   it(T("A60", "a YES on your own question does nothing"), async () => {
     const { g, q } = await ask();
-    g.fake.playerEditSticky("r1", q.id, "Spray water in Team 2's area?\nYES");
+    g.fake.playerEditSticky("r1", q.id, "Start a fire in Team 2's area?\nYES");
     await g.tick();
-    expect(g.ref.state.outside).toEqual([]);
+    expect(g.ref.state.attacks).toEqual([]);
     expect(g.card("r1")).toContain("did not post it");
   });
   it(T("A61", "a YES from another team does nothing"), async () => {
     const { g, q } = await ask();
-    g.fake.playerEditSticky("p1", q.id, "Spray water in Team 2's area?\nYES");
+    g.fake.playerEditSticky("p1", q.id, "Start a fire in Team 2's area?\nYES");
     await g.tick();
-    expect(g.ref.state.outside).toEqual([]);
+    expect(g.ref.state.attacks).toEqual([]);
   });
   it(T("A62", "a YES from someone who never joined does nothing"), async () => {
     const { g, q } = await ask();
-    g.fake.playerEditSticky("guest", q.id, "Spray water in Team 2's area?\nYES");
+    g.fake.playerEditSticky("guest", q.id, "Start a fire in Team 2's area?\nYES");
     await g.tick();
-    expect(g.ref.state.outside).toEqual([]);
+    expect(g.ref.state.attacks).toEqual([]);
   });
   it(T("A63", "editing a question after its YES keeps that grant and opens nothing new"), async () => {
     const { g, q } = await ask();
-    g.fake.playerEditSticky("r2", q.id, "Spray water in Team 2's area?\nYES");
+    g.fake.playerEditSticky("r2", q.id, "Start a fire in Team 2's area?\nYES");
     await g.tick();
-    g.fake.playerEditSticky("r2", q.id, "Spray water in Team 3's area?\nYES");
+    g.fake.playerEditSticky("r2", q.id, "Start a fire in Team 3's area?\nYES");
     await g.tick();
-    expect(g.ref.state.outside.map((o) => o.to)).toEqual(["pine"]);
+    expect(g.ref.state.attacks.map((o) => o.to)).toEqual(["pine"]);
   });
   it(T("A64", "NO then a teammate's later YES: the latest answer counts"), async () => {
     const { g, q } = await ask();
-    g.fake.playerEditSticky("r2", q.id, "Spray water in Team 2's area?\nNO");
+    g.fake.playerEditSticky("r2", q.id, "Start a fire in Team 2's area?\nNO");
     await g.tick();
-    expect(g.ref.state.outside).toEqual([]);
-    g.fake.playerEditSticky("r2", q.id, "Spray water in Team 2's area?\nNO\nYES");
+    expect(g.ref.state.attacks).toEqual([]);
+    g.fake.playerEditSticky("r2", q.id, "Start a fire in Team 2's area?\nNO\nYES");
     await g.tick();
-    expect(g.ref.state.outside.map((o) => o.to)).toEqual(["pine"]);
+    expect(g.ref.state.attacks.map((o) => o.to)).toEqual(["pine"]);
   });
-  it(T("A65", "a question about a non-neighbour, your own team or gibberish opens nothing"), async () => {
-    for (const text of ["Spray water in Team 4's area?", "Spray water in Team 1's area?", "Spray water in asdf qwer?", "Spray water in ?"]) {
+  it(T("A65", "a question about a non-neighbour, your own team or gibberish opens nothing and is removed"), async () => {
+    for (const text of ["Start a fire in Team 4's area?", "Start a fire in Team 1's area?", "Start a fire in asdf qwer?", "Start a fire in ?"]) {
       const { g, q } = await ask(text);
-      g.fake.playerEditSticky("r2", q.id, `${text}\nYES`);
-      await g.tick();
-      expect(g.ref.state.outside).toEqual([]);
-      expect(g.card("r1")).toContain("Ask about a neighbour");
+      expect(g.fake.items.has(q.id)).toBe(false); // the creator is told on their card, then it goes
+      expect(g.ref.state.attacks).toEqual([]);
+      expect(g.card("r1")).toMatch(/ask about a neighbour/i);
+      expect(g.fx("leaderboard")).not.toContain("waiting for a YES");
     }
   });
-  it(T("A66", "a question in another team's Orders frame opens nothing"), async () => {
+  it(T("A66", "a question in another team's Orders frame opens nothing and is removed"), async () => {
     const g = await setup({ live: true });
-    const q = g.fake.playerSticky("r1", "pine", "Spray water in Team 2's area?");
+    const q = g.fake.playerSticky("r1", "pine", "Start a fire in Team 2's area?");
     await g.tick();
-    g.fake.playerEditSticky("r2", q.id, "Spray water in Team 2's area?\nYES");
-    await g.tick();
-    expect(g.ref.state.outside).toEqual([]);
+    expect(g.fake.items.has(q.id)).toBe(false);
+    expect(g.ref.state.attacks).toEqual([]);
     expect(g.card("r1")).toContain("your own team's Orders");
+    expect(g.fx("leaderboard")).not.toContain("waiting for a YES");
   });
   it(T("A67", "100 spam stickies: no crash, bounded writes, one note per sticky"), async () => {
     const g = await setup({ live: true });
-    for (let i = 0; i < 100; i++) g.fake.playerSticky("r1", "ridge", i % 2 ? `Spray water in Team ${i % 5}'s area?` : `spam ${i}`);
+    for (let i = 0; i < 100; i++) g.fake.playerSticky("r1", "ridge", i % 2 ? `Start a fire in Team ${i % 5}'s area?` : `spam ${i}`);
     await g.ticks(3);
     expect(Math.max(...g.results.map((r) => r.writes))).toBeLessThanOrEqual(g.ref.maxWritesPerTick);
     const notes = Object.keys(g.ref.state.noted).length;
@@ -469,18 +474,18 @@ describe("the spray question", () => {
   });
   it(T("A68", "a giant sticky (100 KB, trailing spaces) is judged in milliseconds"), async () => {
     const g = await setup({ live: true });
-    g.fake.playerSticky("r1", "ridge", "Spray water in Team 2" + " ".repeat(100_000) + "x");
+    g.fake.playerSticky("r1", "ridge", "Start a fire in Team 2" + " ".repeat(100_000) + "x");
     g.fake.playerSticky("r1", "ridge", "x".repeat(200_000));
     const t0 = performance.now();
     await g.tick();
     expect(performance.now() - t0).toBeLessThan(1000);
-    expect(questionTarget("Spray water in " + " ".repeat(5000))).toBeNull();
+    expect(questionTarget("Start a fire in " + " ".repeat(5000))).toBeNull();
   });
   it(T("A69", "Team 2 / team2 / T2 / old names all name the same team"), async () => {
     for (const s of ["Team 2", "team 2", "team2", "T2", "t2", "Pine Valley", "pine", "TEAM 2"]) expect(teamByName(s)).toBe("pine");
-    for (const s of ["Spray water in Team 2's area?", "spray water in team2", "Spray water in T2's area", "Spray water in Pine Valley's area?"]) expect(questionTarget(s)).toBe("pine");
+    for (const s of ["Start a fire in Team 2's area?", "start a fire in team2", "Start a fire in T2's area", "Start a fire in Pine Valley's area?"]) expect(questionTarget(s)).toBe("pine");
     const s = (await setup({ live: true })).ref.state;
-    expect(judgeSticky(s, CALM, { id: "z", team: "ridge", text: "Spray water in T2?\nYES", createdBy: "r1", modifiedBy: "r2" }).length).toBeGreaterThan(0);
+    expect(judgeSticky(s, CALM, { id: "z", team: "ridge", text: "Start a fire in T2?\nYES", createdBy: "r1", modifiedBy: "r2" }).length).toBeGreaterThan(0);
   });
 });
 
@@ -742,6 +747,328 @@ describe("Miro misbehaving, restarts, clocks", () => {
     g.fake.playerJoin("q1", "Quinn");
     await g.tick();
     expect(g.ref.state.players.q1).toBeDefined();
+  });
+});
+
+describe("rehearsal 2 on the real board: Miro-like fake (404 on deleted items, slow full listings)", () => {
+  /** Like the live board: per-frame reads every poll, a full listing that lands ~10 polls (30 s) after it began. */
+  const miro = (o: Parameters<typeof setup>[0] = {}) => setup({ live: true, fast: true, ...o }).then((g) => ((g.fake.fullListReads = 10), g));
+  const noLockLog = (g: { logs: string[] }) => expect(g.logs.join("\n")).not.toMatch(/locked|refuses writes/);
+
+  it(T("A105", "a deleted leaderboard (PATCH -> 404) is recreated at once, never taken as locked"), async () => {
+    const g = await miro();
+    await g.ticks(12); // a slow sweep in flight, like live
+    const old = g.game.fixtureIds.leaderboard!;
+    g.fake.playerDelete(old);
+    await g.tick(); // fixtures are read by id every poll: 404 -> rebuilt in this tick
+    expect(g.game.fixtureIds.leaderboard).not.toBe(old);
+    expect(g.fx("leaderboard")).toContain("LEADERBOARD");
+    await g.ticks(25); // stale sweeps that still list the old id: no junk delete of it, no "locked"
+    noLockLog(g);
+    expect(g.logs.join("\n")).not.toMatch(new RegExp(`junk:${old}`));
+    // Without GET-by-id the write's 404 alone is enough: the banner is rewritten every tick.
+    const g2 = await miro();
+    (g2.fake as { getItem?: unknown }).getItem = undefined;
+    const b = g2.game.fixtureIds.banner!;
+    g2.fake.playerDelete(b);
+    await g2.tick();
+    expect(g2.game.fixtureIds.banner).not.toBe(b);
+    expect(g2.fx("banner")).toContain("LIVE");
+    noLockLog(g2);
+  });
+  it(T("A106", "a deleted inbox card comes back within a few polls with the player's current text"), async () => {
+    const g = await miro();
+    g.fake.playerPaint("r2", "C4", C.water);
+    await g.ticks(3);
+    // Card write path: the next card write gets 404 -> recreated in the same tick.
+    g.fake.playerDelete(g.ref.inboxCard.get("r2")!);
+    g.fake.playerPaint("r2", "C5", C.water);
+    await g.tick(6000);
+    expect(g.card("r2")).toContain("Rob · TEAM 1 · WORKER · 2 paints");
+    // Probe path: nobody writes to Pat's card, the round-robin GET finds it gone within ≤ 10 s.
+    const pat = g.ref.inboxCard.get("p1")!;
+    g.fake.playerDelete(pat);
+    await g.ticks(3);
+    expect(g.ref.inboxCard.get("p1")).not.toBe(pat);
+    expect(g.card("p1")).toContain("Pat · TEAM 2");
+    noLockLog(g);
+  });
+  it(T("A107", "a deleted square is back within 10 s; a square deleted under a fire write is rebuilt in that tick"), async () => {
+    const g = await miro();
+    await g.ticks(12);
+    const old = g.sq("C24").id;
+    g.fake.playerDelete(old);
+    await g.ticks(3); // 9 s
+    expect(g.sq("C24")?.id).toBeDefined();
+    expect(g.sq("C24").id).not.toBe(old);
+    // The engine wants D24 orange; the square is gone before the write lands: 404 -> rebuilt orange now.
+    g.ref.state.cells.D24 = "fire";
+    g.ref.state.burnLeft.D24 = 3;
+    g.fake.vanishOnWrite.add(g.sq("D24").id);
+    await g.tick();
+    expect(g.fill("D24")).toBe(C.fire);
+    noLockLog(g);
+    expectConverged(g);
+  });
+  it(T("A108", "a fixture moved 400 units is back within one poll"), async () => {
+    const g = await miro();
+    await g.ticks(12);
+    const id = g.game.fixtureIds.banner!;
+    const before = { ...g.fake.items.get(id)! };
+    g.fake.playerEdit("p1", id, { x: before.x + 400 });
+    await g.tick();
+    expect(g.fake.items.get(id)!.x).toBe(before.x);
+    expect(g.card("p1")).toContain("the banner (moved)");
+  });
+  it(T("A109", "fresh blue paints are judged before the fire writes; rehearsal stand-ins don't collide on cooldown"), async () => {
+    // A paint on a square the spread would take this tick: judged first, so it stays blue.
+    const hot = { ...RULES, pSide: 1, pDiag: 0, spreadSeconds: 3, lightningAt: [99] };
+    const g = await setup({ live: true, fast: true, rules: hot });
+    for (const [lab, u] of [["Q17", "r1"], ["R16", "r2"], ["Q18", "c1"]] as const) g.fake.playerPaint(u, lab, C.water);
+    await g.tick(3000);
+    for (const lab of ["Q17", "R16", "Q18"]) expect(g.fill(lab)).toBe(C.water);
+    // Rehearsal: one account, two paints by the same team in one poll both count (two stand-ins).
+    const fake = FakeBoard.seeded(() => 0);
+    const seats = ["Dev", "Gus", "Eli", "Chloe", "Hana", "Ben", "Ana", "Fay"].map((n) => ["acct", n] as [string, string]);
+    const r = await setup({ fake, live: false, ref: { rehearsal: true }, players: seats });
+    expect(Object.values(r.ref.state.players).filter((p) => p.team === "ridge")).toHaveLength(2);
+    await r.ref.start();
+    r.fake.playerPaint("acct", "C4", C.water);
+    r.fake.playerPaint("acct", "D4", C.water);
+    await r.tick(6000);
+    expect([r.fill("C4"), r.fill("D4")]).toEqual([C.water, C.water]);
+    expect(r.ref.state.stats.illegal.cooldown).toBe(0);
+  });
+  it(T("A111", "every accepted and refused paint is in the log with square, player and reason"), async () => {
+    const g = await setup({ live: true });
+    g.fake.playerPaint("r2", "C4", C.water);
+    g.fake.playerPaint("p1", "C5", C.water);
+    await g.tick(6000);
+    const log = g.logs.join("\n");
+    expect(log).toMatch(/paint C4 #3aa7ff by Rob \(Team 1\): accepted/);
+    expect(log).toMatch(/paint C5 #3aa7ff by Pat \(Team 2\): refused \[area\] · C5 undone: it is Team 1's area/);
+  });
+  it(T("A112", "question spam: wrong-team, non-neighbour and over-the-cap questions are removed; the leaderboard lists only valid ones"), async () => {
+    const g = await setup({ live: true });
+    for (let i = 0; i < 30; i++) g.fake.playerSticky("r1", "pine", "Start a fire in Team 2's area?"); // not Team 2's player
+    const mine = [0, 1, 2, 3, 4].map((i) => g.fake.playerSticky("r1", "ridge", "Start a fire in Team 2's area?", g.now() + i));
+    const far = g.fake.playerSticky("r2", "ridge", "Start a fire in Team 4's area?");
+    await g.ticks(2);
+    const left = [...g.fake.items.values()].filter((i) => i.type === "sticky_note");
+    expect(left.map((i) => i.id).sort()).toEqual([mine[0]!.id, mine[1]!.id].sort());
+    expect(g.fake.items.has(far.id)).toBe(false);
+    expect(g.card("r1")).toMatch(/at most 2 open questions|own team's Orders/);
+    expect(g.card("r2")).toMatch(/ask about a neighbour/i);
+    const lb = g.fx("leaderboard");
+    expect(lb.match(/waiting for a YES/g)).toHaveLength(1);
+    expect(lb).toContain("waiting for a YES: start a fire in Team 2's area");
+    // Rehearsal never deletes (one account), but still lists only valid questions.
+    const r = await setup({ live: true, ref: { rehearsal: true }, players: [["acct", "Dev"], ["acct", "Gus"], ["acct", "Eli"], ["acct", "Chloe"]] });
+    r.fake.playerSticky("acct", "ridge", "Start a fire in Team 4's area?");
+    r.fake.playerSticky("acct", "ridge", "Start a fire in Team 2's area?");
+    r.fake.playerSticky("acct", "ridge", "Start a fire in Team 2's area?");
+    await r.ticks(2);
+    expect(r.fx("leaderboard").match(/waiting for a YES[^·\n]*/g)).toEqual(["waiting for a YES: start a fire in Team 2's area"]);
+  });
+  it(T("A113", "the card header's paint count equals the player's accepted paints, even after the card is rebuilt"), async () => {
+    const g = await miro();
+    const players = ["r1", "p1", "c1", "b1", "r2"];
+    const cols = ["C", "Z", "C", "Z", "D"];
+    const rows = [4, 4, 30, 30, 5];
+    for (let k = 0; k < 4; k++) {
+      players.forEach((u, i) => g.fake.playerPaint(u, `${cols[i]}${rows[i]! + k}`, C.water));
+      if (k === 2) g.fake.playerDelete(g.ref.inboxCard.get("c1")!);
+      await g.ticks(2, 3500);
+    }
+    await g.ticks(3);
+    for (const u of players) {
+      const n = Number(/· (\d+) paints/.exec(g.card(u))?.[1]);
+      expect(n, u).toBe(g.ref.state.stats.byPlayer[u]!.water);
+      expect(n, u).toBe(4);
+    }
+  });
+});
+
+describe("fire attack, per-team water, batches, the fire model", () => {
+  const Q = "Start a fire in Team 2's area?";
+  const approve = async (g: Awaited<ReturnType<typeof setup>>, text = Q) => {
+    const q = g.fake.playerSticky("r1", "ridge", text);
+    await g.tick();
+    g.fake.playerEditSticky("r2", q.id, `${text}\nYES`);
+    await g.tick();
+  };
+  const border = (g: Awaited<ReturnType<typeof setup>>, lab: string) => g.fake.borders.get(g.sq(lab).id) ?? {};
+
+  it(T("A114", "attack: after a teammate's YES, orange on up to 3 green squares in the neighbour's area; the 4th is undone; team-colored borders"), async () => {
+    const g = await setup({ live: true });
+    await approve(g);
+    for (const lab of ["Z4", "Z5", "Z6", "Z7"]) {
+      g.fake.playerPaint("r2", lab, C.fire);
+      await g.tick(6000);
+    }
+    expect(["Z4", "Z5", "Z6", "Z7"].map(g.fill)).toEqual([C.fire, C.fire, C.fire, C.forest]);
+    expect(g.card("r2")).toContain("has lit its 3 squares");
+    const violet = TEAM_INFO.ridge.color;
+    expect(border(g, "Z4")).toEqual({ color: violet, width: 6 });
+    expect(g.fx("leaderboard")).toContain("🔥 lit 3 · burned 0 trees of others");
+    await g.ticks(25); // 75 s: 3 spreads, Z4 burns out and keeps a thinner border in Team 1's color
+    expect(g.fill("Z4")).toBe(C.burnt);
+    expect(border(g, "Z4")).toEqual({ color: violet, width: 3 });
+    expect(g.ref.state.stats.burnedOthers.ridge).toBe(3);
+    expect(g.fx("leaderboard")).toContain("🔥 lit 3 · burned 3 trees of others");
+    expect(border(g, "R17").width ?? 2).not.toBe(6); // wild fire: normal border
+    expect(g.ref.state.water.ridge).toBe(400); // orange costs no water
+    expectConverged(g);
+  });
+  it(T("A115", "a team's fire passes its origin (and border) on as it spreads, into anyone's area: blowback"), async () => {
+    const g = await setup({ live: true, rules: { ...CALM, pSide: 1 } });
+    await approve(g);
+    g.fake.playerPaint("r2", "S10", C.fire); // right at Team 1's border (R is Team 1's last column)
+    await g.tick(6000);
+    await g.ticks(7); // one spread
+    expect([g.ref.state.cells.R10, g.ref.state.origin.R10]).toEqual(["fire", "ridge"]); // into Team 1's own area
+    expect(border(g, "R10")).toEqual({ color: TEAM_INFO.ridge.color, width: 6 });
+    expect(g.ref.state.origin.T10).toBe("ridge");
+    await g.ticks(30);
+    expect(g.ref.state.stats.blowback.ridge).toBeGreaterThan(0);
+  });
+  it(T("A116", "batches: 6 squares by one player in one poll: 5 count, the 6th is undone with a line on the card"), async () => {
+    const g = await setup({ live: true, rules: { ...CALM, paintBatch: 5 } });
+    for (const lab of ["C4", "C5", "C6", "C7", "C8", "C9"]) g.fake.playerPaint("r2", lab, C.water);
+    await g.tick();
+    expect(["C4", "C5", "C6", "C7", "C8", "C9"].map(g.fill)).toEqual([C.water, C.water, C.water, C.water, C.water, C.forest]);
+    expect(g.card("r2")).toContain("at most 5 squares per paint");
+    expect(g.ref.state.water.ridge).toBe(395);
+    expect(g.card("r2")).toContain("5 paints");
+  });
+  it(T("A117", "start fires in every area (mirrored) and fair lightning: 4 strikes, 4 different areas"), async () => {
+    const starts = ["F6", "F7", "AE6", "AE7", "F28", "F29", "AE28", "AE29"];
+    const g = await setup({ live: true, rules: { ...CALM, burnTicks: 1000, startFires: starts, lightningAt: [1, 2, 3, 4] } });
+    expect(starts.map(g.fill)).toEqual(Array(8).fill(C.fire));
+    await g.ticks(85); // 4:15
+    const hit = g.ref.state.stats.strikes.map((l) => g.ref.cellList.find((c) => c.label === l)!.sector);
+    expect(new Set(hit).size).toBe(4);
+    for (const l of g.ref.state.stats.strikes) expect(g.fill(l)).toBe(C.fire);
+  });
+  it(T("A118", "wind is off by default (no wind on the banner); switched on it shows and warns 30 s before it turns"), async () => {
+    const g = await setup({ live: true });
+    expect(g.fx("banner")).not.toMatch(/wind/i);
+    const w = await setup({ live: true, rules: { ...CALM, wind: { enabled: true, pDown: 0.6, pUp: 0.1, turnAt: 1 } } });
+    expect(w.fx("banner")).toMatch(/wind \S+ [NESW]{1,2}/);
+    await w.ticks(4); // ~0:20
+    expect(w.fx("banner")).not.toContain("Wind turning");
+    await w.ticks(7); // ~0:40
+    expect(w.fx("banner")).toMatch(/Wind turning in \d+ s/);
+    await w.ticks(12);
+    expect(w.ref.state.windTurned).toBe(true);
+  });
+  it(T("A119", "a paint landing between the referee's read and its fire write is never overwritten (squares re-read by id first)"), async () => {
+    for (const recheck of [true, false]) {
+      const g = await setup({ live: true, fast: true });
+      if (!recheck) (g.fake as { getItem?: unknown }).getItem = undefined;
+      g.ref.state.cells.D24 = "fire"; // the engine just set D24 on fire; the board still shows green
+      g.ref.state.burnLeft.D24 = 3;
+      g.fake.afterGridRead = () => g.fake.playerPaint("c1", "D24", C.water); // lands after the read, before the write
+      await g.tick();
+      if (!recheck) {
+        expect(g.fill("D24")).toBe(C.fire); // without the re-read the paint is lost (the old race)
+        continue;
+      }
+      expect(g.fill("D24")).toBe(C.water); // held: not overwritten
+      expect(g.logs.join("\n")).toMatch(/D24 changed since this tick's read/);
+      await g.tick(6000);
+      expect(g.fill("D24")).toBe(C.water); // judged next tick: blue on fire in Team 3's area counts
+      expect(g.ref.state.cells.D24).toBe("water");
+      expect(g.results.at(-2)!.reads).toBeGreaterThan(0);
+    }
+  });
+  it(T("A122", "a deleted fixture is recreated in exactly the same box (agents find it by a small read there)"), async () => {
+    const fake = FakeBoard.seeded(() => 0);
+    const box = { ...center(FIXTURES.leaderboard), w: FIXTURES.leaderboard.w - 20, h: FIXTURES.leaderboard.h - 10 };
+    fake.add({ type: "shape", content: "<p>LEADERBOARD</p>", fill: "#ffffff", x: box.x + 6, y: box.y + 4, w: box.w, h: box.h }, "referee"); // MCP-built, a few units off
+    const g = await setup({ fake, live: true });
+    const old = g.fake.items.get(g.game.fixtureIds.leaderboard!)!;
+    g.fake.playerDelete(old.id);
+    await g.tick();
+    const now = g.fake.items.get(g.game.fixtureIds.leaderboard!)!;
+    expect(now.id).not.toBe(old.id);
+    expect([now.x, now.y, now.w, now.h]).toEqual([old.x, old.y, old.w, old.h]);
+  });
+  it(T("A123", "one water bucket per team: banner and leaderboard show each team's water; an empty bucket stops only that team"), async () => {
+    const g = await setup({ live: true, rules: { ...CALM, waterPerTeam: 2 } });
+    g.fake.playerPaint("r2", "C4", C.water);
+    await g.tick(6000);
+    g.fake.playerPaint("r2", "C5", C.water);
+    await g.tick(6000);
+    g.fake.playerPaint("r2", "C6", C.water);
+    g.fake.playerPaint("p1", "Z4", C.water);
+    await g.tick(6000);
+    expect([g.fill("C6"), g.fill("Z4")]).toEqual([C.forest, C.water]);
+    expect(g.card("r2")).toContain("Team 1's water is empty");
+    expect(g.fx("banner")).toContain("💧 T1 0 · T2 1 · T3 2 · T4 2");
+    expect(g.fx("leaderboard")).toMatch(/TEAM 1 .*💧 0 water left/);
+  });
+});
+
+describe("memes and junk anywhere", () => {
+  it(T("A120", "a meme image every 5 s anywhere for 10 minutes: at most 2 alive at any poll, the poster frozen longer each time, ticks stay fast"), async () => {
+    const fake = FakeBoard.seeded(() => 0);
+    const decoration = fake.add({ type: "image", content: "", x: -500, y: -500, w: 300, h: 300 }, "instructor"); // the board's own
+    const g = await setup({ fake, live: true, fast: true, statics: true, rules: { ...CALM, burnTicks: 100_000, gameMinutes: 30, lightningAt: [] } });
+    const rng = mulberry32(3);
+    const spots = [
+      () => ({ ...center(PANELS.rules) }),
+      () => ({ ...center(ORDERS[TEAMS[Math.floor(rng() * 4)]!]) }),
+      () => ({ x: PANELS.inbox.x + 200 + rng() * 3600, y: PANELS.inbox.y + 200 + rng() * 1100 }),
+      () => ({ x: 9000 + rng() * 5000, y: -4000 + rng() * 3000 }), // empty canvas, far away
+      () => ({ x: rng() * 2300, y: rng() * 2170 }), // the forest
+      () => ({ ...center(FIXTURES.banner) }),
+    ];
+    const images = () => [...g.fake.items.values()].filter((i) => i.type === "image" && i.id !== decoration.id);
+    let maxAlive = 0;
+    let maxMs = 0;
+    const frozen: number[] = [];
+    for (let s = 0; s < 600; s++) {
+      if (s % 5 === 0) g.fake.vandalAdd("c1", "image", { ...spots[s % spots.length]!(), w: 200, h: 200 });
+      if (s % 3 === 0) {
+        maxAlive = Math.max(maxAlive, images().length);
+        const t0 = performance.now();
+        await g.tick(0);
+        maxMs = Math.max(maxMs, performance.now() - t0);
+        if (frozen.length < 3 && g.ref.state.junk.c1 === frozen.length + 1) frozen.push(g.ref.state.timeoutUntil.c1! - g.now());
+      }
+      g.advance(1000);
+    }
+    expect(maxAlive).toBeLessThanOrEqual(2);
+    expect(images()).toHaveLength(0);
+    expect(g.fake.items.has(decoration.id)).toBe(true);
+    expect(g.ref.state.junk.c1).toBe(120);
+    // Escalation: 5 s, 30 s, then 2 min (measured right after each judgement, a few seconds later at most).
+    expect(frozen[0]).toBeLessThanOrEqual(5000);
+    expect(frozen[1]).toBeGreaterThan(20_000);
+    expect(frozen[2]).toBeGreaterThan(100_000);
+    expect(g.card("c1")).toContain("🚫 image removed — frozen 2 min");
+    expect(g.fx("leaderboard")).toContain("🚫 Cy: 120 junk items removed");
+    expect(maxMs).toBeLessThan(250);
+    expect(Math.max(...g.results.map((r) => r.writes))).toBeLessThanOrEqual(g.ref.maxWritesPerTick);
+  });
+  it(T("A121", "images in the Orders and the Inbox go; shapes/texts dropped on panels or in Orders frames go; stickies in Orders and decoration stay"), async () => {
+    const fake = FakeBoard.seeded(() => 0);
+    const deco = fake.add({ type: "image", content: "", ...center(PANELS.rules), w: 100, h: 100 }, "referee");
+    const g = await setup({ fake, live: true, fast: true, statics: true });
+    const junk = [
+      g.fake.vandalAdd("p1", "image", { ...center(ORDERS.pine), w: 150, h: 150 }),
+      g.fake.vandalAdd("p1", "image", { x: PANELS.inbox.x + 900, y: PANELS.inbox.y + 700, w: 150, h: 150 }),
+      g.fake.vandalAdd("b1", "embed", { x: 20_000, y: 20_000, w: 400, h: 300 }),
+      g.fake.vandalAdd("c1", "shape", { ...center(PANELS.rules), w: 120, h: 80 }, "LOL"),
+      g.fake.vandalAdd("c1", "text", { ...center(ORDERS.ridge), w: 300, h: 40 }, "ridge stinks"),
+    ];
+    const order = g.fake.playerSticky("r1", "ridge", "Rob: paint C4 C5");
+    await g.ticks(2);
+    for (const j of junk) expect(g.fake.items.has(j.id), j.type).toBe(false);
+    expect(g.fake.items.has(order.id)).toBe(true);
+    expect(g.fake.items.has(deco.id)).toBe(true);
+    expect(g.card("p1")).toContain("🚫 image removed — frozen");
   });
 });
 

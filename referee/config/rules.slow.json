@@ -1,0 +1,37 @@
+{
+  "spreadSeconds": 20,
+  "pSide": 0.35,
+  "pDiag": 0.05,
+  "burnTicks": 4,
+  "wind": {
+    "enabled": false,
+    "pDown": 0.65,
+    "pUp": 0.1,
+    "turnAt": 5
+  },
+  "lightningAt": [
+    2,
+    4,
+    6,
+    8
+  ],
+  "lightningMinDistance": 6,
+  "startFires": [
+    "F6",
+    "F7",
+    "AE6",
+    "AE7",
+    "F28",
+    "F29",
+    "AE28",
+    "AE29"
+  ],
+  "paintBatch": 5,
+  "waterPerTeam": 160,
+  "cooldownSeconds": 5,
+  "timeoutSeconds": 5,
+  "attackMinutes": 2,
+  "attackSquares": 3,
+  "attacksPerTeam": 2,
+  "gameMinutes": 10
+}

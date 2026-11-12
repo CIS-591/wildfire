@@ -1,5 +1,7 @@
 # Wildfire · the spec every part follows
 
+> **Save your forest from the fire, or set fire to your neighbour's, and a human decides when to attack.**
+
 CIS 591, Module 4. One class, one Miro board, one forest fire. Each student's Claude Code agent plays
 through Miro's MCP server. Claude agents do the fast work (reading the board, posting orders, painting
 squares). Humans make the one big call: whether to spray water outside their own area. A referee script on
@@ -28,23 +30,24 @@ All coordinates are Miro canvas units, TOP-LEFT of each box (the MCP SVG convent
 
   | Team | Id (internal) | Columns | Rows | Team color |
   |---|---|---|---|---|
-  | Team 1 | `ridge` | A–R | 1–17 | violet `#a78bfa` |
-  | Team 2 | `pine` | S–AJ | 1–17 | rose `#f472b6` |
-  | Team 3 | `cedar` | A–R | 18–34 | lemon `#fde047` |
-  | Team 4 | `birch` | S–AJ | 18–34 | frost `#e2e8f0` |
+  | Team 1 | `ridge` | A–R | 1–17 | violet `#7c3aed` |
+  | Team 2 | `pine` | S–AJ | 1–17 | pink `#db2777` |
+  | Team 3 | `cedar` | A–R | 18–34 | indigo `#4338ca` |
+  | Team 4 | `birch` | S–AJ | 18–34 | slate `#334155` |
 
   The internal ids stay (state files, code); every student-facing text says "Team N". The question
   sticky parser accepts "Team 2", "team2", "T2" and the old names. Team colors appear only on each
   area's thick edge, its "TEAM N'S AREA" label and its Orders header, never on square fills.
-- **Palette** ("night map": dark surround, only the game colors glow):
+- **Palette** (light theme: white board, the game colors pop):
 
   | Role | Hex |
   |---|---|
-  | background, band frames (gaps between squares), square borders | `#0e1311` |
-  | panels / panel border | `#161d19` / `#25302a` |
-  | titles, headings | ember `#ff7a3d` |
-  | text / muted text | `#f1efe9` / `#9aa39c` |
-  | label on tree, fire, water / label on burnt | `#0b1a10` / `#7d736a` |
+  | background / backdrop | `#f5f6f8` |
+  | band frames (gaps between squares) and square borders | `#ffffff` (border width 2) |
+  | panels / panel border | `#ffffff` / `#e2e5ea` |
+  | titles, headings | ember `#e8590c` |
+  | text / muted text | `#1f2328` / `#6b7280` |
+  | label on tree, fire, water / label on burnt | `#0b1a10` / `#c9c2bb` |
 
 - **Square colors** (fills; lowercase hex everywhere). **Only four. That is the whole game.**
 
@@ -63,7 +66,7 @@ All coordinates are Miro canvas units, TOP-LEFT of each box (the MCP SVG convent
   | Item | Box | Notes |
   |---|---|---|
   | Title text "WILDFIRE" | (0, −330, 1400, 90) | static |
-  | Banner (fixture) | (0, −220, 1100, 110) | referee writes: phase, wind, next spread, water |
+  | Banner (fixture) | (0, −220, 1100, 110) | referee writes: phase, time left, next spread, water |
   | Scoreboard (fixture) | (1160, −220, 1140, 110) | referee writes: 4 teams' % forest left |
   | Rules panel | (2440, −330, 760, 610) | static: the rules + color legend |
   | Leaderboard panel (fixture inside) | (3240, −330, 760, 610) | referee writes |
@@ -74,7 +77,7 @@ All coordinates are Miro canvas units, TOP-LEFT of each box (the MCP SVG convent
   | Inbox panel | (0, 2300, 4000, 1500) | one card per player, 5+ columns |
 
   The board should look like a game, not a spreadsheet: a dark backdrop behind the grid with row/column
-  headers, a bold title, team-colored headers, a clear color legend, compass/wind rose next to the banner.
+  headers, a bold title, team-colored headers, a clear color legend. No wind rose (there is no wind).
 
 ## 2. How students play (10-minute game)
 
@@ -89,39 +92,66 @@ All coordinates are Miro canvas units, TOP-LEFT of each box (the MCP SVG convent
      When a neighbour's fire is about to cross into its sector, asks its humans for the one big decision.
    - **Worker**: reads its ORDER, re-checks the exact square, paints it blue, repeats. No order: paint
      blue on the green square nearest the fire inside its sector.
-3. **The one human decision: "Spray water in <neighbour>'s area?"** The boss posts, in its own team's
-   Orders frame, a sticky whose first line is `Spray water in Team 2's area?` (any neighbour team
-   name; a second line may say why). A worker's `/play` sees it, **stops and asks its student** in the
-   terminal (AskUserQuestion: YES / NO), then writes a line `YES` or `NO` on the sticky. Only a teammate
-   who did not post it counts. On YES the team may paint blue in that neighbour's area for
-   `outsideMinutes` (2). It helps both teams but spends the shared water. Remembered once seen.
+3. **The one human decision: "Start a fire in <neighbour>'s area?"** (rules in 2b). The boss posts it in its
+   own team's Orders frame; a worker's `/play` sees it, **stops and asks its student** (YES / NO), then
+   writes `YES` or `NO` on the sticky. Only a teammate who did not post it counts.
 
    Stickies are plain sentences, no keywords:
 
    | Sticky | Who posts | Text |
    |---|---|---|
    | Order | boss | `Ana: paint N9 N10 N11` (worker name, colon, `paint`, labels) |
-   | Question | boss | `Spray water in Team 2's area?` / optional reason line |
+   | Question | boss | `Start a fire in Team 2's area?` / optional reason line |
    | Answer | a teammate (asked by their Claude) | a new line `YES` or `NO` on the question sticky |
 
    Students only ever type `/join Your Name` and `/play`. There is no `/approve` command.
    In everything students read, say "your team's area", never "sector".
 
+
+## 2b. Attack: set fire to a neighbour's area (replaces "stealing")
+
+- **The question** a boss posts in its own Orders frame: `Start a fire in Team 2's area?` (neighbours
+  only; same approval rule: a YES line by a teammate who did not post it). Old "Grab squares …" /
+  "Spray water in …" forms are no longer valid questions.
+- **On YES** the team may, within `attackMinutes` (2), paint **orange** `#ff5a1f` on up to
+  `attackSquares` (3) **green** squares in that neighbour's area. Max `attacksPerTeam` (2) approved
+  attacks per team per game. Painting blue in a neighbour's area is no longer allowed at all.
+- **Who lit it is always visible**: every fire square remembers its origin (`wild` for the centre fire
+  and lightning, or the attacking team). When fire spreads, the new square inherits the origin of the
+  square that lit it. Squares burning from a team's fire get a thick border (width 6) in that team's
+  color; wild fire has the normal border. Burnt squares keep the color of the fire that burned them as
+  a thinner border (width 3), so the damage stays readable. Banner announces "🔥 Team 1 set fire to Team
+  2's area!"; leaderboard shows per team "🔥 lit 3 · burned 23 trees of others".
+- **Blowback**: a team's fire spreads into anyone's area, including its own. That's the risk the human
+  weighs: fire spreads every way, including back toward the attacker.
+- **Score** = green squares left in your own area, as % of 306. Highest wins. (No ownership of blue.)
+- Rehearsal (one shared account): attribution of who painted orange uses the stand-in rule.
+
 ## 3. Rules the referee enforces (numbers in `referee/config/rules.json`, tuned with `npm run sim`)
 
-- **Fire** spreads every `spreadSeconds` to up/down/left/right green neighbours (`pSide`) and diagonals
-  (`pDiag`), faster downwind (`downwindMult`), slower upwind (`upwindMult`). A square burns for
-  `burnTicks` spreads, then turns black. Blue and black never burn.
-- **Wind**: shown on the banner with an arrow; turns 45° once, at minute 5.
-- **Lightning**: once, at minute `lightningAt` (5): a new fire far from the old one, announced on the banner.
-- **Shared water**: one pool of `waterTotal` for the whole class, shown on the banner; each accepted blue
-  paint uses 1; at 0, blue paints are refused.
-- **A blue paint is accepted only if**: the game is live; the painter joined; ≥ `cooldownSeconds` (5)
-  since their last accepted paint; the square was green or orange; it is in their sector, or in a
-  neighbour's area their team has an approved "Spray water" question for right now. Anything else is reverted, with
+- **Fire moves as a front. No wind.** Every `spreadSeconds` (20) each burning square may ignite each
+  green neighbour up/down/left/right with `pSide`, and diagonally with `pDiag` (small), the same in every
+  direction. A square burns `burnTicks` (3 spreads ≈ 1 min) then turns black, so the fire is a moving
+  ring with black behind it. Blue and black never burn. Target: unchecked, a front crosses an area
+  (~17 squares) in ~8 min.
+- **Start**: the centre fire (R17 S17 R18 S18) plus one 2-square fire inside each team's area, mirrored
+  (`startFires`), so every team is busy from second one.
+- **Lightning** at minutes `lightningAt` ([2, 4, 6, 8]): each strike hits a different team's area (each
+  team once, shuffled order), on a green square at least `lightningMinDistance` (6) from any fire.
+- **Water: one bucket per team.** Each team has its own `waterPerTeam` on the banner (e.g.
+  "💧 T1 62 · T2 40 · T3 71 · T4 55"); each accepted blue square uses 1 from the painter's team bucket;
+  at 0 that team's blue paints are refused. No sharing between teams.
+- **Wind is switched OFF, not deleted** (`rules.json` `wind.enabled: false`). The wind code stays in the
+  engine behind that flag so it can be turned back on later; with it off, fire spreads evenly.
+- **Batches**: one paint = up to `paintBatch` (5) squares changed by the same player within the same
+  poll; then `cooldownSeconds` (5). Squares beyond 5 in one batch are reverted.
+- **A paint is accepted only if**: the game is live; the painter joined; ≥ `cooldownSeconds` (5) since their
+  last accepted batch; and it is either **blue** on a green or orange square in their own area, or
+  **orange** on a green square in a neighbour's area during their team's approved attack (max 3 per
+  attack). Anything else is reverted, with
   the reason on the painter's inbox card. Moving/editing/deleting squares or fixtures is reverted
   (Color Wars tamper logic) and freezes the player for 5 s.
-- **Score**: per team = green + blue squares in its sector, as % of its start. The game ends at
+- **Score**: green squares left in your own area, as % of 306. The game ends at
   `gameMinutes` (10) or when no fire is left. Highest % wins.
 - **Tuning target**: 28 players at the pace measured in the first live rehearsal (an agent manages about
   one paint per 45–60 s; bosses paint at half that rate). The fire should still be burning at minute 8,

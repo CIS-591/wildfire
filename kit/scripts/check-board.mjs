@@ -115,14 +115,14 @@ ok("Orders frames do not overlap the grid or each other", () => {
 ok("exactly four square colors", () => {
   const { frame, ...squares } = board.colors;
   assert.deepEqual(squares, { tree: "#3fa66b", fire: "#ff5a1f", water: "#3aa7ff", burnt: "#2a2420" });
-  assert.equal(frame, "#0e1311");
+  assert.equal(frame, "#ffffff");
 });
 ok("teams are Team 1..Team 4 with their team colors and Orders titles", () => {
   const want = {
-    ridge: ["Team 1", "#a78bfa"],
-    pine: ["Team 2", "#f472b6"],
-    cedar: ["Team 3", "#fde047"],
-    birch: ["Team 4", "#e2e8f0"],
+    ridge: ["Team 1", "#7c3aed"],
+    pine: ["Team 2", "#db2777"],
+    cedar: ["Team 3", "#4338ca"],
+    birch: ["Team 4", "#334155"],
   };
   assert.deepEqual(Object.keys(board.teams).sort(), Object.keys(want).sort());
   for (const [id, [name, color]] of Object.entries(want)) {

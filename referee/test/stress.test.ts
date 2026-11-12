@@ -12,9 +12,9 @@ const OPPOSITE: Record<Team, Team> = { ridge: "birch", birch: "ridge", pine: "ce
 
 describe("stress", () => {
   it('"A110" 10-minute game, 30 bots, 20% vandals, a flaky Miro: no throw, all undone, only legal paints count, no write storm', { timeout: 120_000 }, async () => {
-    const rules = { ...RULES, waterTotal: 150, spreadSeconds: 25, pSide: 0.35, pDiag: 0.05, downwindMult: 2.5, upwindMult: 0.4 };
+    const rules = { ...RULES, waterPerTeam: 150, spreadSeconds: 20, pSide: 0.5, pDiag: 0.1, paintBatch: 5, lightningAt: [2, 4, 6, 8], startFires: ["F6", "F7", "AE6", "AE7", "F28", "F29", "AE28", "AE29"] };
     const audit: { ev: PaintEvent; ok: boolean; team?: Team; grant: boolean; phase: string }[] = [];
-    const g = await setup({ rules, players: [], fast: true, statics: true, ref: { onPaint: (ev, d) => audit.push({ ev, ok: d.accept, team: g.ref.state.players[ev.userId]?.team, grant: g.ref.state.outside.some((o) => o.team === g.ref.state.players[ev.userId]?.team && o.to === teamOf(ev.label)), phase: g.ref.state.phase }) } });
+    const g = await setup({ rules, players: [], fast: true, statics: true, ref: { onPaint: (ev, d) => audit.push({ ev, ok: d.accept, team: g.ref.state.players[ev.userId]?.team, grant: g.ref.state.attacks.some((o) => o.team === g.ref.state.players[ev.userId]?.team && o.to === teamOf(ev.label)), phase: g.ref.state.phase }) } });
     const { fake, ref } = g;
     const rng = mulberry32(Number(process.env.STRESS_SEED ?? 2026));
     const pb = new FakePlayerBoard(fake, ref, () => Math.floor(rng() * 1000));
@@ -62,7 +62,7 @@ describe("stress", () => {
         const mine = ref.inboxCard.get(u);
         if (mine && fake.items.has(mine)) fake.playerDelete(mine);
       } else if (roll < 0.72) {
-        const q = fake.playerSticky(u, team, `Spray water in ${TEAM_INFO[pick(TEAM_INFO[team].neighbours)].name}'s area?`);
+        const q = fake.playerSticky(u, team, `Start a fire in ${TEAM_INFO[pick(TEAM_INFO[team].neighbours)].name}'s area?`);
         fake.playerEditSticky(u, q.id, `${stripText(q.content)}\nYES`); // a YES on its own question
       } else if (roll < 0.76) for (let i = 0; i < 5; i++) fake.playerSticky(u, pick(TEAMS), "spam ".repeat(1 + Math.floor(rng() * 500)));
       else if (roll < 0.8) {
@@ -97,10 +97,10 @@ describe("stress", () => {
           continue;
         }
         if (g.now() < b.nextTurnAt) continue;
-        pb.lagMs = 15_000 + Math.floor(rng() * 15_000);
+        pb.lagMs = 5_000 + Math.floor(rng() * 10_000);
         await b.readInbox(pb, g.now());
         await b.act(pb, g.now());
-        b.nextTurnAt = g.now() + Math.round(45 * (b.role === "boss" ? 2 : 1) * (1 + rng() / 3) * 1000);
+        b.nextTurnAt = g.now() + Math.round((b.role === "boss" ? 25 + rng() * 10 : 15 + rng() * 5) * 1000);
       }
       for (const team of TEAMS) {
         for (const s of await pb.stickies(team)) {
@@ -125,11 +125,11 @@ describe("stress", () => {
     const perTick: number[] = [];
     for (let i = 0; i < 30; i++) await step();
     await ref.start();
-    for (const b of bots) b.nextTurnAt = g.now() + Math.round(45 * (b.role === "boss" ? 2 : 1) * (0.5 + rng()) * 1000);
+    for (const b of bots) b.nextTurnAt = g.now() + Math.round((b.role === "boss" ? 30 : 17) * (0.5 + rng()) * 1000);
     let guard = 0;
     while (ref.state.phase === "live" && guard++ < 1000) await step();
     expect(ref.state.phase).toBe("over");
-    expect(ref.state.elapsed).toBeGreaterThanOrEqual(9.9 * 60_000);
+    expect(ref.state.elapsed).toBeGreaterThanOrEqual(8 * 60_000); // ran to the end, or the fire went out after the last lightning
 
     if (process.env.STRESS_LOG) console.log(JSON.stringify({ maxWrites: Math.max(...perTick), ticks: perTick.length, illegal: ref.state.stats.illegal, accepted: ref.state.stats.accepted, failed: fake.calls.failed, calls: fake.calls, logs: g.logs.length, sample: g.logs.filter((l) => /refuses|failed|error/.test(l)).slice(0, 8) }));
     // No write storm: every tick within the cap (the frame repairs included).
@@ -138,25 +138,35 @@ describe("stress", () => {
     const illegal = ref.state.stats.illegal;
     expect(illegal.tamper + illegal.color + illegal.area).toBeGreaterThan(50);
 
-    // Only legal paints count: every accepted paint was blue, by an honest joined player, live, in their
-    // own area or one their team had a YES for, and ≥ cooldown after their previous accepted paint.
+    // Only legal paints count: every accepted paint was by an honest joined player, live, and either blue in
+    // their own area or orange in a neighbour's area their team had a YES for; at most paintBatch squares per
+    // batch, and a new batch ≥ cooldown after the previous one began.
     const accepted = audit.filter((a) => a.ok);
     expect(accepted.length).toBeGreaterThan(20);
-    const lastAt = new Map<string, number>();
+    const batch = new Map<string, { at: number; id?: number; n: number }>();
     for (const a of accepted.sort((x, y) => x.ev.at - y.ev.at)) {
       expect(vandals.has(a.ev.userId)).toBe(false);
-      expect(a.ev.fill).toBe(C.water);
       expect(a.phase).toBe("live");
-      expect(a.team === teamOf(a.ev.label) || a.grant).toBe(true);
-      const prev = lastAt.get(a.ev.userId);
-      if (prev !== undefined) expect(a.ev.at - prev).toBeGreaterThanOrEqual(rules.cooldownSeconds * 1000);
-      lastAt.set(a.ev.userId, a.ev.at);
+      if (a.ev.fill === C.water) expect(a.team).toBe(teamOf(a.ev.label));
+      else {
+        expect(a.ev.fill).toBe(C.fire);
+        expect(a.grant && a.team !== teamOf(a.ev.label)).toBe(true);
+      }
+      const b = batch.get(a.ev.userId);
+      if (b && (a.ev.at - b.at < 3000 || a.ev.batchId === b.id)) {
+        b.n++;
+        expect(b.n).toBeLessThanOrEqual(rules.paintBatch);
+      } else {
+        if (b) expect(a.ev.at - b.at).toBeGreaterThanOrEqual(rules.cooldownSeconds * 1000);
+        batch.set(a.ev.userId, { at: a.ev.at, id: a.ev.batchId, n: 1 });
+      }
     }
     for (const u of vandals) expect(ref.state.stats.byPlayer[u]?.water ?? 0).toBe(0);
     const waterCells = Object.values(ref.state.cells).filter((s) => s === "water").length;
+    const blue = accepted.filter((a) => a.ev.fill === C.water);
     expect(waterCells).toBe(ref.state.stats.accepted);
-    expect(ref.state.stats.accepted).toBe(accepted.length);
-    expect(ref.state.water).toBe(rules.waterTotal - accepted.length);
+    expect(ref.state.stats.accepted).toBe(blue.length);
+    for (const t of TEAMS) expect(ref.state.water[t]).toBe(rules.waterPerTeam - blue.filter((a) => a.team === t).length);
 
     // After the game (the referee keeps guarding), Miro calms down and the vandals unlock: the board matches the engine.
     Object.assign(fake.faults, { rate429: 0, rate5xx: 0, rateTimeout: 0, rateGhost: 0 });
@@ -169,7 +179,7 @@ describe("stress", () => {
       expect([...fake.frames.values()].some((f) => Math.abs(f.x - center(ORDERS[t]).x) < 2 && Math.abs(f.y - center(ORDERS[t]).y) < 2)).toBe(true);
     }
     // And the scores the projector shows are the board's, not anything a vandal painted.
-    const boardScore = (team: Team) => ref.cellList.filter((c) => c.sector === team && [C.forest, C.water].includes(fake.items.get(ref.cellId.get(c.label)!)!.fill!)).length;
-    for (const t of TEAMS) expect(boardScore(t)).toBe(ref.cellList.filter((c) => c.sector === t && ["forest", "water"].includes(ref.state.cells[c.label]!)).length);
+    const boardScore = (team: Team) => ref.cellList.filter((c) => c.sector === team && fake.items.get(ref.cellId.get(c.label)!)!.fill === C.forest).length;
+    for (const t of TEAMS) expect(boardScore(t)).toBe(ref.cellList.filter((c) => c.sector === t && ref.state.cells[c.label] === "forest").length);
   });
 });

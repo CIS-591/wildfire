@@ -1,5 +1,7 @@
 // Miro REST API v2 adapter (native fetch). Endpoints verified against developers.miro.com on 2026-11-10:
 //   GET    /v2/boards/{board_id}/items?limit=50&cursor=      (Level 2, cursor-paginated)
+//   GET    /v2/boards/{board_id}/items?type=image             (type filter: image, embed, document, preview, app_card, ...)
+//   GET    /v2/boards/{board_id}/items/{item_id}             (Level 1; 404 once the item is deleted)
 //   GET    /v2/boards/{board_id}/items?parent_item_id=FRAME  (children of a frame; positions relative to its top-left)
 //   POST   /v2/boards/{board_id}/frames                      (Level 2)
 //   PATCH  /v2/boards/{board_id}/shapes/{item_id}            (Level 2)
@@ -9,7 +11,7 @@
 //   GET    /v2/boards/{board_id}/members?limit=50&cursor=    (Level 1)
 //   GET    /v1/oauth-token                                   (token context: user id, team, scopes)
 // Global limit: 100,000 credits/min per user per app; 429 carries X-RateLimit-Reset.
-import { pool, type BoardAdapter, type BoardItem, type FrameBox, type NewShape, type ShapePatch } from "./board.js";
+import { MiroHttpError, pool, type BoardAdapter, type BoardItem, type FrameBox, type NewShape, type ShapePatch } from "./board.js";
 import { frameBoxes, type Box } from "./layout.js";
 
 const API = "https://api.miro.com";
@@ -82,6 +84,21 @@ export class MiroRest implements BoardAdapter {
     return out;
   }
 
+  /** Items of the given types anywhere (the `type` filter of GET /items): images, embeds, documents, previews... */
+  async listByType(types: string[]): Promise<BoardItem[]> {
+    const out: BoardItem[] = [];
+    await pool(
+      types.map((t) => async () => {
+        for (const r of await this.pages(`&type=${encodeURIComponent(t)}`)) {
+          const pid = r.parent?.id;
+          out.push(this.toItem(r, pid ? (this.frames.get(pid) ?? this.seenFrames.get(pid)) : undefined));
+        }
+      }),
+      types.length,
+    );
+    return out;
+  }
+
   async listGridItems(): Promise<BoardItem[]> {
     const out: BoardItem[] = [];
     await pool(
@@ -121,7 +138,7 @@ export class MiroRest implements BoardAdapter {
       await new Promise((r) => setTimeout(r, waitMs));
       return this.req(method, path, body, attempt + 1);
     }
-    if (!res.ok) throw new Error(`Miro ${method} ${path} -> ${res.status} ${await res.text()}`);
+    if (!res.ok) throw new MiroHttpError(res.status, method, path, await res.text());
     if (res.status === 204) return undefined as T;
     return (await res.json()) as T;
   }
@@ -145,6 +162,20 @@ export class MiroRest implements BoardAdapter {
       this.seenFrames.set(r.id, { ...box, title: r.data?.title ?? "" });
     }
     return raw.filter((r) => r.type !== "frame").map((r) => this.toItem(r, r.parent?.id ? (frameBox.get(r.parent.id) ?? this.frames.get(r.parent.id)) : undefined));
+  }
+
+  /** One item read now (fixture geometry every poll, a card that may be gone). Null on 404. */
+  async getItem(id: string): Promise<BoardItem | null> {
+    let r: RawItem;
+    try {
+      r = await this.req<RawItem>("GET", `${this.b}/items/${encodeURIComponent(id)}`);
+    } catch (e) {
+      if ((e as MiroHttpError).status === 404) return null;
+      throw e;
+    }
+    const pid = r.parent?.id;
+    const box = pid ? (this.frames.get(pid) ?? this.seenFrames.get(pid)) : undefined;
+    return this.toItem(r, box);
   }
 
   /** Frames from the last full listing (center-based, like every item). */

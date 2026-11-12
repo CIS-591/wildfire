@@ -1,10 +1,11 @@
 // Scripted players for the simulation. A bot sees only what a student's agent sees (square colors,
 // banner, scoreboard, leaderboard, its own inbox card, the Orders frames) and plays like the kit:
 // the boss keeps one order sticky per worker ("Ana: paint N9 N10"), paints at half a worker's rate, and asks
-// "Spray water in <neighbour>'s area?" when a neighbour's fire is about to cross in; workers paint one
-// square from their (maybe stale) order per turn.
+// "Start a fire in <neighbour>'s area?" when its own area is under control (and lights deep in their area,
+// far from its own border); workers paint one square from their (maybe stale) order per turn, and during an
+// approved attack the team paints orange on green squares in the neighbour's area.
 // Turn pace is set by the simulation (real agents: one paint per 45-60 s, rehearsal-1.log).
-import { STATE_COLOR, TEAMS, TEAM_INFO, WIND, type Team } from "./layout.js";
+import { NEIGHBOURS, STATE_COLOR, TEAMS, TEAM_INFO, type Team } from "./layout.js";
 import type { Rng } from "./rules.js";
 
 export interface CellView {
@@ -36,6 +37,9 @@ export interface PlayerBoard {
 
 export interface BotOptions {
   mistakeRate?: number; // chance a paint is wrong (agents misread the board)
+  waterPerTeam?: number; // a team's bucket at the start (bosses attack only while theirs is above 30% of it)
+  batch?: [number, number]; // squares painted per turn (min, max): an agent paints a batch per move
+  attacks?: boolean; // bosses ask to attack (default true)
 }
 
 const C = STATE_COLOR;
@@ -46,9 +50,11 @@ const live = (c: CellView | undefined) => !!c && (c.fill === C.forest || c.fill 
 export class Bot {
   team: Team | null = null;
   role: "boss" | "worker" | null = null;
-  /** A running spray-outside grant this bot's team got (from the inbox card). */
-  outside: { to: Team; until: number } | null = null;
-  lastOutsideAt = -Infinity;
+  /** A running attack this bot's team got (from the inbox card). */
+  attack: { to: Team; until: number } | null = null;
+  lastAskAt = -Infinity;
+  asked = 0;
+  lit = 0;
   nextTurnAt = 0;
   painted = 0;
   turns = 0;
@@ -73,9 +79,9 @@ export class Bot {
     for (const line of text.split("\n")) {
       if (this.seenLines.has(line)) continue;
       this.seenLines.add(line);
-      const yes = /said YES: you may paint blue in .*\((ridge|pine|cedar|birch)\) for (\d+) min/.exec(line);
-      if (yes) this.outside = { to: yes[1] as Team, until: now + Number(yes[2]) * 60_000 };
-      if (/^⌛ Time is up in /.test(line)) this.outside = null;
+      const yes = /said YES: you may paint orange .*\((ridge|pine|cedar|birch)\) for (\d+) min/.exec(line);
+      if (yes) this.attack = { to: yes[1] as Team, until: now + Number(yes[2]) * 60_000 };
+      if (/^⌛ Your attack on /.test(line)) this.attack = null;
     }
   }
 
@@ -85,8 +91,54 @@ export class Bot {
     return this.role === "boss" ? this.bossTurn(board, now) : this.workerTurn(board, now);
   }
 
-  private grantTo(now: number): Team | null {
-    return this.outside && now < this.outside.until ? this.outside.to : null;
+  /** The neighbour our running attack may still light squares in (leaderboard: "may light N more fires"). */
+  private attackTo(now: number, leaderboard: string): Team | null {
+    if (!this.attack || now >= this.attack.until) return null;
+    const left = new RegExp(`🔥 ${TEAM_INFO[this.team!].name} may light (\\d+) more fires? in ${TEAM_INFO[this.attack.to].name}'s area`).exec(leaderboard);
+    return left && Number(left[1]) > 0 ? this.attack.to : null;
+  }
+
+  /** Light up to `n` squares in the neighbour's area (orange): one batch. */
+  private async light(board: PlayerBoard, cells: CellView[], to: Team, n: number): Promise<number> {
+    const picks = attackTargets(cells, to, this.team!, this.rng).slice(0, n);
+    for (const pick of picks) {
+      await board.paint(pick.id, C.fire);
+      this.painted++;
+      this.lit++;
+    }
+    return picks.length;
+  }
+
+  /** How many squares this turn's batch has (3-5 by default). */
+  private batchSize(): number {
+    const [lo, hi] = this.opts.batch ?? [3, 5];
+    return lo + Math.floor(this.rng() * (hi - lo + 1));
+  }
+
+  /** How many squares our running attack may still light (from the leaderboard). */
+  private attackLeft(leaderboard: string): number {
+    const m = new RegExp(`🔥 ${TEAM_INFO[this.team!].name} may light (\\d+) more`).exec(leaderboard);
+    return m ? Number(m[1]) : 0;
+  }
+
+  /** A mistake: a random square near the fire, wherever it is (other areas, already blue or burnt). */
+  private mistake(cells: CellView[]): CellView | undefined {
+    const fires = cells.filter((c) => c.fill === C.fire);
+    const near = cells.filter((c) => fires.some((f) => cheb(c, f) <= 2));
+    return near[Math.floor(this.rng() * near.length)];
+  }
+
+  /** Paint a batch blue (each square may be a mistake). */
+  private async paintBatch(board: PlayerBoard, cells: CellView[], picks: CellView[]): Promise<number> {
+    const done = new Set<string>();
+    for (let pick of picks) {
+      if (this.rng() < (this.opts.mistakeRate ?? 0.1)) pick = this.mistake(cells) ?? pick;
+      if (done.has(pick.id)) continue;
+      done.add(pick.id);
+      await board.paint(pick.id, C.water);
+      this.painted++;
+    }
+    return done.size;
   }
 
   // ---------- boss: orders, OUTSIDE, and one paint ----------
@@ -95,44 +147,41 @@ export class Bot {
     const cells = await board.cells();
     const { banner, leaderboard } = await board.fixtures();
     if (/GAME OVER|\/join now/.test(banner)) return 0;
-    const wind = windOf(banner);
     const crew = crewOf(leaderboard, team);
     const stickies = await board.stickies(team);
 
-    // One order per worker, updated in place. Half the crew goes outside while a spray-outside grant runs.
-    const away = this.grantTo(now);
-    const outCrew = away ? crew.slice(0, Math.ceil(crew.length / 2)) : [];
-    const plans: [string[], Team][] = [[crew.filter((n) => !outCrew.includes(n)), team]];
-    if (away) plans.push([outCrew, away]);
-    const own = targetsFor(cells, team, wind, this.rng);
-    for (const [names, sector] of plans) {
-      const targets = sector === team ? own : targetsFor(cells, sector, wind, this.rng, team);
-      for (let i = 0; i < names.length; i++) {
-        const mine = targets.filter((_, k) => k % names.length === i).slice(0, 3);
-        const text = mine.length ? `${names[i]}: paint ${mine.map((c) => c.label).join(" ")}` : `${names[i]}: paint nothing yet, watch the fire`;
-        const old = stickies.find((s) => s.text.startsWith(`${names[i]}: paint`));
-        if (!old) await board.postSticky(team, text);
-        else if (old.text !== text) await board.editSticky(old.id, text);
+    // One order per worker, updated in place.
+    const own = targetsFor(cells, team, this.rng);
+    for (let i = 0; i < crew.length; i++) {
+      const mine = own.filter((_, k) => k % crew.length === i).slice(0, 5);
+      const text = mine.length ? `${crew[i]}: paint ${mine.map((c) => c.label).join(" ")}` : `${crew[i]}: paint nothing yet, watch the fire`;
+      const old = stickies.find((s) => s.text.startsWith(`${crew[i]}: paint`));
+      if (!old) await board.postSticky(team, text);
+      else if (old.text !== text) await board.editSticky(old.id, text);
+    }
+
+    // The one human decision: attack a neighbour when our own area is under control (little fire at our
+    // trees, water above 30%): the neighbour with the most green left.
+    const away = this.attackTo(now, leaderboard);
+    if (away) return this.light(board, cells, away, Math.min(this.batchSize(), this.attackLeft(leaderboard)));
+    const total = this.opts.waterPerTeam ?? 150;
+    const waiting = new RegExp(`waiting for a YES: start a fire`).test(leaderboard.split("\n").slice(leaderboard.split("\n").findIndex((l) => l.includes(`${TEAM_INFO[team].name.toUpperCase()} `)), undefined).slice(0, 5).join("\n"));
+    if ((this.opts.attacks ?? true) && !this.attack && !waiting && this.asked < 2 && now - this.lastAskAt > 120_000 && waterOf(banner, team) > 0.3 * total) {
+      const myFire = cells.filter((c) => c.sector === team && c.fill === C.fire && cells.some((g) => g.sector === team && g.fill === C.forest && cheb(g, c) <= 1)).length;
+      const green = (n: Team) => cells.filter((c) => c.sector === n && c.fill === C.forest).length;
+      const target = TEAM_INFO[team].neighbours.slice().sort((a, b) => green(b) - green(a))[0];
+      if (target && myFire <= 2) {
+        await board.postSticky(team, `Start a fire in ${TEAM_INFO[target].name}'s area?\nOur area is under control.`);
+        this.lastAskAt = now;
+        this.asked++;
       }
     }
 
-    // The one human decision: a neighbour's fire is about to cross into us.
-    if (!away && now - this.lastOutsideAt > 150_000) {
-      const threat = TEAM_INFO[team].neighbours
-        .map((n) => ({ n, k: cells.filter((c) => c.sector === n && c.fill === C.fire && cells.some((g) => g.sector === team && g.fill === C.forest && cheb(g, c) <= 2)).length }))
-        .sort((a, b) => b.k - a.k)[0]!;
-      if (threat.k >= 3) {
-        await board.postSticky(team, `Spray water in ${TEAM_INFO[threat.n].name}'s area?\nTheir fire is about to cross into ours.`);
-        this.lastOutsideAt = now;
-      }
-    }
-
-    // The boss paints too (half a worker's rate: one paint per boss turn).
-    const pick = own[0];
-    if (!pick) return 0;
-    await board.paint(pick.id, C.water);
-    this.painted++;
-    return 1;
+    // The boss paints a batch too (its turns come at about half a worker's rate).
+    const k = this.batchSize();
+    // Not the squares just given to the crew (5 each): the next most urgent ones.
+    const spare = own.slice(crew.length * 5);
+    return this.paintBatch(board, cells, (spare.length ? spare : own).slice(0, 2 * k).sort(() => this.rng() - 0.5).slice(0, k));
   }
 
   // ---------- worker: one paint from its order ----------
@@ -143,41 +192,43 @@ export class Bot {
     const byLabel = new Map(cells.map((c) => [c.label, c]));
     const stickies = await board.stickies(this.team!);
     const order = stickies.find((s) => s.text.startsWith(`${this.name}: paint`));
-    let target: CellView | undefined;
-    if (this.rng() < (this.opts.mistakeRate ?? 0.1)) {
-      // A mistake: a random square near the fire, wherever it is (other areas, already blue or burnt).
-      const fires = cells.filter((c) => c.fill === C.fire);
-      const near = cells.filter((c) => fires.some((f) => cheb(c, f) <= 2));
-      target = near[Math.floor(this.rng() * near.length)];
-    } else if (order) {
+    const k = this.batchSize();
+    // During an approved attack, most of the crew lights squares in the neighbour's area.
+    if (this.rng() < 0.6) {
+      const { leaderboard } = await board.fixtures();
+      const away = this.attackTo(now, leaderboard);
+      if (away) return this.light(board, cells, away, Math.min(k, this.attackLeft(leaderboard)));
+    }
+    const picks: CellView[] = [];
+    if (order) {
       if (order.text !== this.orderText) {
         this.orderText = order.text;
         this.orderDone = 0;
       }
       const list = parseOrder(order.text);
-      while (this.orderDone < list.length && !target) {
+      while (this.orderDone < list.length && picks.length < k) {
         const c = byLabel.get(list[this.orderDone++]!);
-        if (c && live(c)) target = c; // re-check the exact square
+        if (c && live(c)) picks.push(c); // re-check the exact square
       }
     }
-    if (!target) {
-      // No usable order: the burning square (or green next to the fire) nearest our trees.
-      const where = this.grantTo(now) ?? this.team!;
-      target = targetsFor(cells, where, windOf(banner), this.rng, this.team!)[0] ?? targetsFor(cells, this.team!, windOf(banner), this.rng)[0];
+    if (picks.length < k) {
+      // Not enough from the order: some of the burning squares (or green next to the fire) nearest our
+      // trees; each agent picks its own among the most urgent, so teammates rarely paint the same square.
+      // Squares on a teammate's order are theirs.
+      const ordered = new Set(stickies.filter((s) => s !== order).flatMap((s) => parseOrder(s.text)));
+      const more = targetsFor(cells, this.team!, this.rng).filter((c) => !picks.includes(c) && !ordered.has(c.label));
+      const pool = more.slice(0, Math.max(3 * k, 10)).sort(() => this.rng() - 0.5);
+      picks.push(...pool.slice(0, Math.min(k - picks.length, Math.ceil(k / 2))));
     }
-    if (!target) return 0;
-    await board.paint(target.id, C.water);
-    this.painted++;
-    return 1;
+    return this.paintBatch(board, cells, picks);
   }
 }
 
 /**
- * Squares a team wants blue in `sector`, most urgent first: burning squares next to green trees
- * (more green around, downwind of them, and close to `protect`'s area first), then green squares
- * right downwind of the fire.
+ * Squares a team wants blue in `sector`, most urgent first: burning squares next to the most green trees
+ * (close to `protect`'s area first), then green squares right next to the fire.
  */
-export function targetsFor(cells: CellView[], sector: Team, wind: number, rng: Rng, protect: Team = sector): CellView[] {
+export function targetsFor(cells: CellView[], sector: Team, rng: Rng, protect: Team = sector): CellView[] {
   const byPos = new Map(cells.map((c) => [`${c.col},${c.row}`, c]));
   const home = cells.filter((c) => c.sector === protect && c.fill === C.forest);
   const near = (c: CellView) => {
@@ -186,28 +237,40 @@ export function targetsFor(cells: CellView[], sector: Team, wind: number, rng: R
     for (const g of home) d = Math.min(d, cheb(c, g));
     return d;
   };
-  const threat = (c: CellView) => {
-    let v = 0;
-    WIND.forEach((w, i) => {
-      const n = byPos.get(`${c.col + w.dc},${c.row + w.dr}`);
-      if (n && n.fill === C.forest) v += i === wind ? 3 : 1;
-    });
-    return v;
-  };
+  const greenAround = (c: CellView) => NEIGHBOURS.filter((w) => byPos.get(`${c.col + w.dc},${c.row + w.dr}`)?.fill === C.forest).length;
   const mine = cells.filter((c) => c.sector === sector);
   const fires = mine
-    .filter((c) => c.fill === C.fire)
-    .map((c) => ({ c, v: threat(c) - 2 * near(c) + rng() }))
-    .filter((x) => threat(x.c) > 0)
+    .filter((c) => c.fill === C.fire && greenAround(c) > 0)
+    .map((c) => ({ c, v: greenAround(c) - 2 * near(c) + rng() }))
     .sort((a, b) => b.v - a.v)
     .map((x) => x.c);
-  const w = WIND[wind]!;
-  const front = mine.filter((c) => {
-    if (c.fill !== C.forest) return false;
-    const up = byPos.get(`${c.col - w.dc},${c.row - w.dr}`);
-    return up?.fill === C.fire;
-  });
+  const front = mine.filter((c) => c.fill === C.forest && NEIGHBOURS.some((w) => !(w.dc && w.dr) && byPos.get(`${c.col + w.dc},${c.row + w.dr}`)?.fill === C.fire));
   return [...fires, ...front];
+}
+
+/**
+ * Where to light a fire in `to`'s area: green squares deep in it (at least 6 squares from `from`'s area,
+ * so the fire is less likely to spread back), with the most green around them, away from blue.
+ */
+export function attackTargets(cells: CellView[], to: Team, from: Team, rng: Rng): CellView[] {
+  const byPos = new Map(cells.map((c) => [`${c.col},${c.row}`, c]));
+  const ours = cells.filter((c) => c.sector === from);
+  const dist = (c: CellView) => {
+    let d = Infinity;
+    for (const o of ours) d = Math.min(d, cheb(c, o));
+    return d;
+  };
+  return cells
+    .filter((c) => c.sector === to && c.fill === C.forest)
+    .map((c) => {
+      const green = NEIGHBOURS.filter((w) => byPos.get(`${c.col + w.dc},${c.row + w.dr}`)?.fill === C.forest).length;
+      const wet = cells.some((o) => o.fill === C.water && cheb(o, c) <= 2);
+      const d = dist(c);
+      return { c, v: d >= 6 ? green + Math.min(d, 12) / 4 - (wet ? 5 : 0) + rng() : -Infinity };
+    })
+    .filter((x) => x.v > -Infinity)
+    .sort((a, b) => b.v - a.v)
+    .map((x) => x.c);
 }
 
 /** Square labels on an order sticky ("Ana: paint N9 N10 N11"). */
@@ -218,15 +281,9 @@ export function parseOrder(text: string): string[] {
 
 // ---------- reading the projector ----------
 
-export function windOf(banner: string): number {
-  const m = /wind \S+ (NE|NW|SE|SW|N|E|S|W)\b/i.exec(banner) ?? /blowing \S+ (north-east|north-west|south-east|south-west|north|east|south|west)/.exec(banner);
-  if (!m) return 0;
-  const i = WIND.findIndex((w) => w.name === m[1] || w.word === m[1]);
-  return Math.max(0, i);
-}
-
-export function waterOf(banner: string): number {
-  const m = /💧 (\d+)/.exec(banner);
+/** A team's water from the banner ("💧 T1 62 · T2 40 · T3 71 · T4 55"). */
+export function waterOf(banner: string, team: Team): number {
+  const m = new RegExp(`T${TEAM_INFO[team].num} (\\d+)`).exec(banner.slice(banner.indexOf("💧")));
   return m ? Number(m[1]) : 0;
 }
 

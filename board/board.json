@@ -1,7 +1,7 @@
 {
   "boardUrl": "https://miro.com/app/board/uXjVEOlHHxs=/",
   "boardId": "uXjVEOlHHxs=",
-  "boardName": "CIS 591 · Wildfire",
+  "boardName": "CIS 591 \u00b7 Wildfire",
   "teamId": "3458764689606790786",
   "builtAt": "2026-11-12T07:06:11Z",
   "note": "Built through the Miro MCP (canvas composer SVG). Coordinates in SPEC.md section 1 are top-left. Rebuilding changes every id.",
@@ -544,7 +544,7 @@
     "X3": "3458764690210318858",
     "Y3": "3458764690210318859",
     "Z3": "3458764690210318860",
-    "AA3": "3458764690210318861",
+    "AA3": "3458764690222301473",
     "AB3": "3458764690210318862",
     "AC3": "3458764690210318895",
     "AD3": "3458764690210318896",
@@ -594,7 +594,7 @@
     "B5": "3458764690210576219",
     "C5": "3458764690210576220",
     "D5": "3458764690210576221",
-    "E5": "3458764690210576222",
+    "E5": "3458764690222301635",
     "F5": "3458764690210576223",
     "G5": "3458764690210576224",
     "H5": "3458764690210576225",
@@ -754,7 +754,7 @@
     "R9": "3458764690210576585",
     "S9": "3458764690210576586",
     "T9": "3458764690210576587",
-    "U9": "3458764690210576588",
+    "U9": "3458764690222301151",
     "V9": "3458764690210576589",
     "W9": "3458764690210576590",
     "X9": "3458764690210576591",
@@ -1225,7 +1225,7 @@
     "U22": "3458764690210748592",
     "V22": "3458764690210748593",
     "W22": "3458764690210748594",
-    "X22": "3458764690210748595",
+    "X22": "3458764690222626071",
     "Y22": "3458764690210748596",
     "Z22": "3458764690210748597",
     "AA22": "3458764690210748598",
@@ -1254,7 +1254,7 @@
     "N23": "3458764690210748633",
     "O23": "3458764690210748634",
     "P23": "3458764690210748635",
-    "Q23": "3458764690210748636",
+    "Q23": "3458764690222483174",
     "R23": "3458764690210748637",
     "S23": "3458764690210748638",
     "T23": "3458764690210748639",
@@ -1276,7 +1276,7 @@
     "AJ23": "3458764690210748665",
     "A24": "3458764690210748666",
     "B24": "3458764690210748667",
-    "C24": "3458764690210748668",
+    "C24": "3458764690222780997",
     "D24": "3458764690210748669",
     "E24": "3458764690210748670",
     "F24": "3458764690210748671",
@@ -1301,7 +1301,7 @@
     "Y24": "3458764690210748693",
     "Z24": "3458764690210748694",
     "AA24": "3458764690210748695",
-    "AB24": "3458764690210748696",
+    "AB24": "3458764690222781440",
     "AC24": "3458764690210748710",
     "AD24": "3458764690210748711",
     "AE24": "3458764690210748712",
@@ -1680,7 +1680,7 @@
   "colorCheckNote": "Written to A1 with canvas_update_from_svg, read back with canvas_read_as_svg, then A1 restored to #93d275. REST round-trip is still the referee's `verify` job.",
   "restyle": {
     "at": "2026-11-12",
-    "note": "Board restyled for the 4-color game: locked dark backdrop (sent to back), team area bands + stripes around the grid, 'HOW TO PLAY' rules panel, Orders headers, plain-sentence EXAMPLE stickies. Orders frame titles set to a single space (they rendered huge over the panels when zoomed out); the header text 'ORDERS · <TEAM>' inside each frame carries the name.",
+    "note": "Board restyled for the 4-color game: locked dark backdrop (sent to back), team area bands + stripes around the grid, 'HOW TO PLAY' rules panel, Orders headers, plain-sentence EXAMPLE stickies. Orders frame titles set to a single space (they rendered huge over the panels when zoomed out); the header text 'ORDERS \u00b7 <TEAM>' inside each frame carries the name.",
     "added": {
       "backdrop": "3458764690218145064",
       "title": "3458764690218524721",
@@ -1754,5 +1754,65 @@
   "palette": {
     "at": "2026-11-12",
     "note": "Night map palette (SPEC.md Palette): backdrop/frames/square borders #0e1311, panels #161d19 border #25302a, headings ember #ff7a3d, text #f1efe9, muted #9aa39c, square labels #0b1a10. Teams shown as Team 1..4 (violet #a78bfa, rose #f472b6, lemon #fde047, frost #e2e8f0). Squares + band frames restyled by build/restyle_squares.mjs (REST); everything else via MCP. 4 team-colored divider lines added under the Orders headers (ordersDivider*). No ids changed."
+  },
+  "lightTheme": {
+    "at": "2026-11-12",
+    "note": "Light theme (SPEC.md Palette): backdrop #f5f6f8 (unlocked, refilled, relocked), rim bars #eef0f3, panels #ffffff border #e2e5ea, headings ember #e8590c, text #1f2328, muted #6b7280; team colors T1 #7c3aed, T2 #db2777, T3 #4338ca, T4 #334155 on rim labels, area labels, stripes, Orders titles/dividers; Orders frames #ffffff, header bars #f5f6f8; fixtures white (banner ember border). Squares: border #ffffff w2, label #0b1a10; band frames #ffffff (build/restyle_squares.mjs). Rules text and example stickies rewritten for 'start a fire' attack. Area labels' rotation (270 left / 90 right) re-applied via REST after the MCP update reset it. No static ids changed. 7 square ids had changed on the live board (squares recreated) and are updated in cells: AA3 E5 U9 X22 Q23 C24 AB24; kit/board.json and referee/config/layout.json still need python3 board/build/sync_ids.py. Example stickies: 'Example: / Start a fire in Team N's area? / their trees are far from our border / \u2192 a teammate answers YES or NO'.",
+    "cellIdsUpdated": [
+      "AA3",
+      "E5",
+      "U9",
+      "X22",
+      "Q23",
+      "C24",
+      "AB24"
+    ],
+    "leaderboardFixtureLive": "3458764690222483126",
+    "windRosePendingDelete": {
+      "note": "No wind in the game any more. Wind rose not deleted yet: waiting for the user's own confirmation. Delete these, then drop them from static.",
+      "ids": [
+        "3458764690210204150",
+        "3458764690210204151",
+        "3458764690210204152",
+        "3458764690210204153",
+        "3458764690210204154",
+        "3458764690210204155",
+        "3458764690210204156"
+      ]
+    }
+  },
+  "windRoseParked": {
+    "note": "Wind rose moved 6000 units left (x -= 6000) on 2026-11-12 because wind is switched off. To restore: move these items back to these original positions.",
+    "dx": -6000,
+    "original": {
+      "3458764690210204150": {
+        "cx": -100,
+        "cy": -165
+      },
+      "3458764690210204151": {
+        "x": -108,
+        "y": -197
+      },
+      "3458764690210204152": {
+        "x": -132,
+        "y": -173
+      },
+      "3458764690210204153": {
+        "x": -115.5,
+        "y": -232.4
+      },
+      "3458764690210204154": {
+        "x": -115.5,
+        "y": -124.4
+      },
+      "3458764690210204155": {
+        "x": -165.5,
+        "y": -178.4
+      },
+      "3458764690210204156": {
+        "x": -65.5,
+        "y": -178.4
+      }
+    }
   }
 }

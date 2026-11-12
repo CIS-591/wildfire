@@ -70,7 +70,7 @@ export function loadGame(file = GAME_FILE, log: (s: string) => void = console.wa
       continue;
     }
     // A save from an older version of the game (Color Wars, or Wildfire with PLAN/cabins): start a fresh game (keep the fixture ids).
-    const state = saved.state && (saved.state as { version?: number }).version === 2 && typeof saved.state.cells === "object" ? saved.state : undefined;
+    const state = saved.state && (saved.state as { version?: number }).version === 3 && typeof saved.state.cells === "object" ? saved.state : undefined;
     return { ...emptyGame(), ...saved, fixtureIds: saved.fixtureIds ?? {}, state };
   }
   return emptyGame();
