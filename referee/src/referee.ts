@@ -1918,17 +1918,18 @@ export class Referee {
     const name = TEAM_INFO[t].name.toUpperCase();
     const clamp = (x: string) => esc(x.length > 14 ? `${x.slice(0, 13)}…` : x);
     const rows = (...ls: string[]) => ls.map((l) => `<p>${LB_INDENT}${l}</p>`).join("");
-    if (this.beforeDraw()) return rows(`<b>${name}</b>`, "Waiting for the draw");
+    const supplies = `Water ${s.water[t]}/${this.rules.waterPerTeam} · Attacks left ${Math.max(0, this.rules.attacksPerTeam - (s.attacksUsed?.[t] ?? 0))}/${this.rules.attacksPerTeam}`;
+    if (this.beforeDraw()) return rows(`<b>${name} · waiting for the draw</b>`, supplies);
     if (s.phase !== "lobby" && !this.ranked(t)) return rows(`<b>${name} · not playing</b>`);
     const players = Object.values(s.stats.byPlayer).filter((p) => p.team === t);
-    if (!players.length) return rows(`<b>${name}</b>`, "No players yet");
+    if (!players.length) return rows(`<b>${name} · no players yet</b>`, supplies);
     const boss = players.find((p) => p.role === "boss")?.name;
     const crew = players.filter((p) => p.role === "worker").map((p) => clamp(p.name));
     const mvp = players.slice().sort((a, b) => paintsOf(b) - paintsOf(a))[0]!;
     const painted = players.reduce((a, p) => a + paintsOf(p), 0);
     const lines = [
       `<b>${name} · Boss ${boss ? clamp(boss) : "-"} · MVP ${paintsOf(mvp) ? `${clamp(mvp.name)} (${paintsOf(mvp)})` : "-"}</b>`,
-      `Water ${s.water[t]}/${this.rules.waterPerTeam} · Attacks left ${Math.max(0, this.rules.attacksPerTeam - (s.attacksUsed?.[t] ?? 0))}/${this.rules.attacksPerTeam} · Painted ${painted}`,
+      `${supplies} · Painted ${painted}`,
       `Crew: ${crew.length ? crew.join(", ") : "-"}`,
     ];
     const attack = s.attacks.find((g) => g.team === t && g.left > 0 && s.phase === "live");
