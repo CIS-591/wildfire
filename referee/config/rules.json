@@ -33,7 +33,7 @@
   "timeoutSeconds": 5,
   "attackMinutes": 2,
   "attackSquares": 1,
-  "attacksPerTeam": 5,
+  "attacksPerTeam": 20,
   "gameMinutes": 10,
   "drawTeams": false,
   "autoScale": {

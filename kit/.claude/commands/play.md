@@ -121,7 +121,7 @@ workers: skip front-turn step 2 (no orders to fill) and answers its own question
 **Every 4th turn: status read** (with your Orders frame), then at most one write:
 - **The attack question: the one human decision.**
   - **Defend first.** Post only when your own area is under control (no fire within 2 squares of your
-    green), your team has used fewer than 5 attacks, and your water isn't low (at least 20% of
+    green), your team has used fewer than 20 attacks, and your water isn't low (at least 20% of
     `water0`). Then create `Start a fire in Team 2's area?&lt;br&gt;Our area is under control.` (the
     neighbour's display name from `board.json` `teams[id].name`; Team 1's neighbours are Team 2 and
     Team 3; only a neighbour that plays: its `T<n>` is in the banner's `WATER` list) in the first free

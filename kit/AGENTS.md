@@ -31,7 +31,7 @@ other directly: everything goes through the board.
 - A **worker** paints the squares on its own order sticky (see "Smart play" for when it acts on its own).
 
 **Attacks (the one human decision).** A team may set ONE square in a neighbour's area on fire, up to
-5 times per game. Each attack needs a human YES:
+20 times per game. Each attack needs a human YES:
 1. The **boss** decides to attack only when its own area is under control and its water isn't low. It
    posts a sticky in its own Orders frame: `Start a fire in Team 2's area?`. If you are the only player
    on your team (your leaderboard row has no `Crew:` names, i.e. `Crew: -`), you are boss AND the one who
@@ -60,7 +60,7 @@ The referee checks every change on the board. Follow these always.
 1. Paint only squares in your own team's area (the one exception is rule 4).
 2. Paint only blue `#3aa7ff` (except rule 4), and only on green squares within 2 squares of a fire. Never on orange (undone: "water can't go on fire").
 3. A paint is at most 5 squares, all in ONE call. Leave at least 8 s between the starts of two paints (the referee needs 5 s on its own clock).
-4. Orange `#ff5a1f`: only the boss, only during your team's approved attack: ONE green square in that neighbour's area, within 2 minutes of the YES (5 attacks per team, each needs its own YES). Workers never paint orange.
+4. Orange `#ff5a1f`: only the boss, only during your team's approved attack: ONE green square in that neighbour's area, within 2 minutes of the YES (20 attacks per team, each needs its own YES). Workers never paint orange.
 5. An attack needs a YES from a teammate who did not post the question. Never answer your own question, except as the only player on your team (`Crew: -`): then your own YES/NO line counts. Write YES or NO only when your student just said it.
 6. Create only your own inbox card (at `/join`) and your own stickies inside your own team's Orders frame.
 7. Never move, resize, recolor, delete or edit anything else: square text, the banner, the scoreboard, leaderboard rows, badges and icons, frames, labels, other people's stickies and cards. The one exception: a worker (or a solo boss, on its own question) adds the YES or NO line to the boss's question sticky (rule 5).

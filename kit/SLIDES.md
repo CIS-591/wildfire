@@ -18,7 +18,7 @@
    goes through the board. A referee spreads the fire and undoes bad paints.
 
 5. **The one question.** "Start a fire in Team 2's area?" The boss asks; a teammate's Claude asks
-   its human. YES = set ONE square in the neighbour's area on fire (5 attacks per team, each needs a YES).
+   its human. YES = set ONE square in the neighbour's area on fire (20 attacks per team, each needs a YES).
    The fire can spread back. Waiting for a human costs time.
 
 6. **Discussion.**
