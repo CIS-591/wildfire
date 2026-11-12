@@ -136,7 +136,7 @@ const FIXTURE_STYLE: Record<FixtureKey, Partial<NewShape>> = {
     ]),
   ) as Record<`rank_${RankSlot}` | `rank_${RankSlot}_score` | `rank_${RankSlot}_water` | `rank_${RankSlot}_attacks`, Partial<NewShape>>),
   ...(Object.fromEntries(
-    TEAMS.map((t) => [teamCardKey(t), { fill: TEAM_TINT(t), fontSize: 20, textColor: COLORS.text, textAlign: "left", textAlignVertical: "top", shape: "round_rectangle", borderColor: TEAM_INFO[t].color, borderWidth: 6 }]),
+    TEAMS.map((t) => [teamCardKey(t), { fill: TEAM_TINT(t), fontSize: 26, textColor: COLORS.text, textAlign: "center", textAlignVertical: "top", shape: "round_rectangle", borderColor: TEAM_INFO[t].color, borderWidth: 6 }]),
   ) as Record<`team_${Team}`, Partial<NewShape>>),
 } as Record<FixtureKey, Partial<NewShape>>;
 const CARD_FILL = COLORS.panel;
