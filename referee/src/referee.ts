@@ -125,7 +125,7 @@ const ICON_WRITES_PER_TICK = 24;
 /** Leaderboard rows are filled with their team's color (grey: not playing); the badge's text is the team color. */
 const LB_GREY = "#9ca3af";
 const FIXTURE_STYLE: Record<FixtureKey, Partial<NewShape>> = {
-  banner: { fill: COLORS.panel, fontSize: 28, textColor: COLORS.text },
+  banner: { fill: COLORS.panel, fontSize: 22, textColor: COLORS.text },
   scoreboard: { fill: COLORS.panel, fontSize: 30, textColor: COLORS.text },
   ...(Object.fromEntries(
     RANK_SLOTS.flatMap((n) => [
@@ -2014,7 +2014,7 @@ export class Referee {
     const who = out.length ? `PLAYING: ${inGame.map((t) => TEAM_INFO[t].name.toUpperCase()).join(", ")} · NOT PLAYING: ${out.map((t) => TEAM_INFO[t].name.toUpperCase()).join(", ")}` : "";
     const w = windOn(r) ? WIND[s.wind]! : null;
     const windTxt = w ? ` · wind ${w.arrow} ${w.name}` : "";
-    if (s.phase === "lobby") return p(`WILDFIRE · /join now · the fire starts soon${windTxt} · ${water}`, who || `paint blue ${STATE_COLOR.water} on green or orange squares in your team's area`);
+    if (s.phase === "lobby") return p(`WILDFIRE · /join now · the fire starts soon${windTxt} · ${water}`, who || "Type /join Your Name in Claude, then wait for GO");
     const sc = scores(s, this.cellList);
     const order = rankTeams(s, this.cellList);
     const caps = (t: Team) => TEAM_INFO[t].name.toUpperCase();
