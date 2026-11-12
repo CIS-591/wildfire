@@ -722,12 +722,15 @@ describe("Miro misbehaving, restarts, clocks", () => {
     const fake = FakeBoard.seeded(() => 0);
     const labels = [1, 3].map((n) => fake.add({ type: "shape", content: `<p><b>TEAM ${n}’S AREA</b></p>`, fill: "#f5f6f8", x: -100, y: n === 1 ? 500 : 1672, w: 1168, h: 52, rotation: 270 }, "referee"));
     for (const l of labels) fake.staticIds.push(l.id);
+    const example = fake.add({ type: "sticky_note", content: "<p>Example: Start a fire in Team 3's area?</p>", x: ORDERS.ridge.x + 600, y: ORDERS.ridge.y + 726, w: 120, h: 120 }, "referee");
+    fake.staticIds.push(example.id);
     const g = await setup({ fake, statics: true, rules: { ...RULES, teams: 2 } });
     await g.ticks(3);
     expect(stripHtml(g.fake.items.get(labels[1]!.id)!.content)).toContain("TEAM 3’S AREA · NOT PLAYING");
     expect(stripHtml(g.fake.items.get(labels[0]!.id)!.content)).not.toContain("NOT PLAYING");
     expect(g.fake.items.get(labels[1]!.id)!.rotation).toBe(270);
     expect(g.fx("banner")).toContain("NOT PLAYING: TEAM 3, TEAM 4");
+    expect(stripHtml(g.fake.items.get(example.id)!.content)).not.toContain("NOT PLAYING");
     expect(g.fx("scoreboard")).toContain("TEAM 3 not playing");
     const slot = (t: string) => g.ref.rankOrder().indexOf(t as never) + 1;
     for (const t of ["cedar", "birch"]) {

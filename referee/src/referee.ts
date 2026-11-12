@@ -1172,8 +1172,17 @@ export class Referee {
    */
   private areaLabelOps(ops: Op[]) {
     for (const [id, snap] of this.staticSnap) {
-      const m = /TEAM ([1-4])['’]S AREA/i.exec(snap.content);
-      if (!m) continue;
+      // Only the area labels themselves (a shape whose whole text is "TEAM 3'S AREA"); any other static
+      // item that picked up "· NOT PLAYING" by mistake (an example sticky naming an area) gets it removed.
+      const m = /^TEAM ([1-4])['’]S AREA( · NOT PLAYING)?$/i.exec(snap.content);
+      if (!m) {
+        if (!snap.raw.includes(" · NOT PLAYING")) continue;
+        const clean = snap.raw.replace(/ · NOT PLAYING/g, "");
+        snap.raw = clean;
+        snap.content = norm(clean);
+        ops.push({ key: `label:${id}`, id, prio: 3, run: () => this.board.updateShape(id, { content: clean }), ok: () => this.touch(id) });
+        continue;
+      }
       const t = TEAMS[Number(m[1]) - 1]!;
       const off = this.sitsOut(t);
       const raw = snap.raw.replace(/ · NOT PLAYING/g, "").replace(/(TEAM [1-4]['’]S AREA)/i, off ? "$1 · NOT PLAYING" : "$1");
