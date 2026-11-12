@@ -25,6 +25,8 @@ export interface RuleSet {
   burnTicks: number;
   lightningAt: number[]; // minutes; each strike hits a different team's area
   startFires: string[]; // lit at the start besides the centre fire (2 squares inside each area, mirrored)
+  /** Game minute the startFires are lit (default 0: with the centre fire). Later gives agents time to get going. */
+  startFiresAt?: number;
   paintBatch: number; // squares one player may change in one batch (one poll); then cooldownSeconds
   lightningMinDistance: number;
   waterPerTeam: number; // each team's own bucket of blue paints
@@ -99,6 +101,8 @@ export interface GameState {
   nextSpreadAt: number;
   spreads: number;
   lightningDone: number; // how many of rules.lightningAt have struck
+  /** The in-area start fires are lit (absent on old saves: treated as lit). */
+  startFiresLit?: boolean;
   water: Record<Team, number>; // each team's bucket
   wind: number; // index into WIND (used only when rules.wind.enabled)
   windTurned: boolean;
@@ -197,6 +201,7 @@ export function createState(cells: CellDef[], rules: RuleSet, rng: Rng): GameSta
     nextSpreadAt: rules.spreadSeconds * 1000,
     spreads: 0,
     lightningDone: 0,
+    startFiresLit: false,
     water: { ridge: rules.waterPerTeam, pine: rules.waterPerTeam, cedar: rules.waterPerTeam, birch: rules.waterPerTeam },
     wind: Math.floor(rng() * 8),
     windTurned: false,
@@ -228,10 +233,17 @@ export function startGame(state: GameState, rules: RuleSet, at: number): string[
     state.cells[lab] = "fire";
     state.burnLeft[lab] = rules.burnTicks;
   }
-  const extra = (rules.startFires ?? []).filter((l) => state.cells[l] === "forest");
-  for (const lab of extra) ignite(state, rules, lab);
+  const extra = (rules.startFiresAt ?? 0) > 0 ? [] : lightStartFires(state, rules);
   pushEvent(state, `🔥 The fire started in the centre${extra.length ? " and in every team's area" : ""}!`);
   return [...FIRST_FIRE, ...extra];
+}
+
+/** The in-area start fires (rules.startFires), at the start or at rules.startFiresAt. */
+function lightStartFires(state: GameState, rules: RuleSet): string[] {
+  state.startFiresLit = true;
+  const extra = (rules.startFires ?? []).filter((l) => state.cells[l] === "forest");
+  for (const lab of extra) ignite(state, rules, lab);
+  return extra;
 }
 
 export function stopGame(state: GameState, cells: CellDef[], at: number): void {
@@ -409,7 +421,8 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
   for (;;) {
     const nextLightning = state.lightningDone < rules.lightningAt.length ? rules.lightningAt[state.lightningDone]! * 60_000 : Infinity;
     const windAt = windOn(rules) && !state.windTurned ? rules.wind!.turnAt * 60_000 : Infinity;
-    const next = Math.min(state.nextSpreadAt, windAt, nextLightning, gameEnd);
+    const startAt = state.startFiresLit === false ? (rules.startFiresAt ?? 0) * 60_000 : Infinity;
+    const next = Math.min(state.nextSpreadAt, windAt, nextLightning, gameEnd, startAt);
     if (next > target) break;
     state.elapsed = next;
     if (next === gameEnd) {
@@ -418,7 +431,14 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
       events.push("⏱ Time is up");
       break;
     }
-    if (next === nextLightning) {
+    if (next === startAt) {
+      const lit = lightStartFires(state, rules);
+      for (const l of lit) changed.add(l);
+      if (lit.length) {
+        pushEvent(state, "🔥 New fires in every team's area!");
+        events.push(`🔥 start fires ${lit.join(" ")}`);
+      }
+    } else if (next === nextLightning) {
       state.lightningDone++;
       const hit = strike(state, rules, cells, rng);
       if (hit) {
@@ -449,7 +469,7 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
 
 /** No square burns and no lightning is still to come. */
 function fireOut(state: GameState, rules: RuleSet): boolean {
-  return state.lightningDone >= rules.lightningAt.length && !Object.values(state.cells).some((s) => s === "fire");
+  return state.lightningDone >= rules.lightningAt.length && state.startFiresLit !== false && !Object.values(state.cells).some((s) => s === "fire");
 }
 
 // ---------- paints ----------

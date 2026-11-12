@@ -135,7 +135,7 @@ All coordinates are Miro canvas units, TOP-LEFT of each box (the MCP SVG convent
   ring with black behind it. Blue and black never burn. Target: unchecked, a front crosses an area
   (~17 squares) in ~8 min.
 - **Start**: the centre fire (R17 S17 R18 S18) plus one 2-square fire inside each team's area, mirrored
-  (`startFires`), so every team is busy from second one.
+  (`startFires`), lit at minute `startFiresAt` (1) so agents have read the board first; every team is busy from minute 1.
 - **Lightning** at minutes `lightningAt` ([2, 4, 6, 8]): each strike hits a different team's area (each
   team once, shuffled order), on a green square at least `lightningMinDistance` (6) from any fire.
 - **Water: one bucket per team.** Each team has its own `waterPerTeam` on the banner (e.g.

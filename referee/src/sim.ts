@@ -1,9 +1,9 @@
 // Offline game on the fake board with a virtual clock: N bots (one boss per team, the rest workers)
-// and simulated humans who answer each "Start a fire in X's area?" after 20-60 s. Bots play at a lean
-// kit's pace (Color Wars: ~15 s per agent move): a worker turn every 15-20 s, a boss turn every 25-35 s,
-// each turn a batch of 3-5 squares from a 5-15 s old read. `slow` = the rehearsal pace (45-60 s / 90-120 s,
-// reads 15-30 s old). Answers "is the fire still burning at minute 9, how spread out are the scores,
-// how much water is used, do attacks happen?" for tuning config/rules.json.
+// and simulated humans who answer each "Start a fire in X's area?" after 20-60 s. Bot pace is calibrated
+// on rehearsal-3.log (8 real Claude agents): a turn every 14-25 s, batches of 2-5 squares on a board read
+// 20-35 s old (~4.6 accepted squares per player per minute, ~20% refused as already burnt/blue). `slow` =
+// half that pace (30-50 s turns, reads 25-40 s old). Answers "is the fire still burning at minute 8, how
+// spread out are the scores, how much water is used, do attacks happen?" for tuning config/rules*.json.
 import { stripHtml } from "./board.js";
 import { Bot, type CellView, type PlayerBoard, type StickyNote } from "./bot.js";
 import { FakeBoard } from "./fake-board.js";
@@ -14,12 +14,13 @@ import { mulberry32, scores, stickyKind, type RuleSet } from "./rules.js";
 export interface SimOptions {
   players?: number;
   seed?: number;
-  workerSec?: [number, number]; // a worker turn every this many seconds (default 15-20)
-  bossSec?: [number, number]; // a boss turn (default 25-35)
-  lagSec?: [number, number]; // how old the board a turn acts on is (default 5-15)
-  slow?: boolean; // the rehearsal pace: workers 45-60 s, bosses 90-120 s, reads 15-30 s old
+  workerSec?: [number, number]; // a worker turn every this many seconds (default 14-25)
+  bossSec?: [number, number]; // a boss turn (default 14-25; about half of them write orders only)
+  lagSec?: [number, number]; // how old the board a turn acts on is (default 20-35)
+  slow?: boolean; // half the rehearsal-3 pace: turns 30-50 s, reads 25-40 s old
   mistakeRate?: number;
   lobbySec?: number; // time before the fire starts
+  lateSec?: number; // agents start playing this long after the fire starts (rehearsal 3: joined at 1:14)
   log?: (s: string) => void;
 }
 
@@ -49,6 +50,8 @@ export interface SimResult {
   burnedOthers: Record<Team, number>;
   blowback: Record<Team, number>;
   fireOutAt: number | null; // game minute the fire went out, if it did
+  perPlayerMin: number; // accepted blue squares per player per minute of play
+  squareWastePct: number; // blue paints refused as "square" (already burnt/blue), % of accepted + those
 }
 
 export class FakePlayerBoard implements PlayerBoard {
@@ -118,9 +121,9 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
   const n = opts.players ?? 28;
   const seed = opts.seed ?? 1;
   const rng = mulberry32(seed);
-  const workerSec = opts.workerSec ?? (opts.slow ? [45, 60] : [15, 20]);
-  const bossSec = opts.bossSec ?? (opts.slow ? [90, 120] : [25, 35]);
-  const lagSec = opts.lagSec ?? (opts.slow ? [15, 30] : [5, 15]);
+  const workerSec = opts.workerSec ?? (opts.slow ? [30, 50] : [14, 25]);
+  const bossSec = opts.bossSec ?? (opts.slow ? [30, 50] : [14, 25]);
+  const lagSec = opts.lagSec ?? (opts.slow ? [25, 40] : [20, 35]);
   const turnMs = (b: Bot) => {
     const [lo, hi] = b.role === "boss" ? bossSec : workerSec;
     return Math.round((lo + rng() * (hi - lo)) * 1000);
@@ -143,7 +146,7 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
   for (const b of bots) await b.readInbox(pb, t);
   const answerAt = new Map<string, { at: number; by: string; yes: boolean }>(); // sticky id -> the human's answer
   const step = async () => {
-    // Bots: a worker turn (one paint) every 45-60 s; a boss turn (orders + one paint) every 90-120 s.
+    // Bots whose turn has come: read the (stale) board, write orders, paint a batch.
     for (const b of [...bots].sort(() => rng() - 0.5)) {
       if (t < b.nextTurnAt) continue;
       pb.current = b.userId;
@@ -187,11 +190,13 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
   while (t < lobbyEnd) await step();
   await ref.start();
   // Agents notice the LIVE banner on their next loop, then need a full turn for their first paint.
-  for (const b of bots) b.nextTurnAt = t + Math.round(turnMs(b) * (0.5 + rng()));
+  for (const b of bots) b.nextTurnAt = t + (opts.lateSec ?? 0) * 1000 + Math.round(turnMs(b) * (0.5 + rng()));
   const timeline: SimResult["timeline"] = [];
   let burningAt8 = -1;
+  let firstPaintAt: number | null = null;
   while (ref.state.phase === "live") {
     await step();
+    if (firstPaintAt === null && ref.state.stats.accepted > 0) firstPaintAt = ref.state.elapsed;
     const el = ref.state.elapsed;
     if (el >= timeline.length * 60_000 && ref.state.phase === "live") {
       const sc = scores(ref.state, ref.cellList);
@@ -207,6 +212,8 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
   const attempts = bots.reduce((a, b) => a + b.painted, 0);
   const good = s.stats.accepted + TEAMS.reduce((a, x) => a + s.stats.lit[x], 0);
   const out = s.events.find((e) => e.text.startsWith("🌧️"));
+  // Accepted blue squares per player per minute of play (from the first accepted paint to the end).
+  const playMin = Math.max(0.5, (s.elapsed - (firstPaintAt ?? s.elapsed)) / 60_000);
   return {
     seed,
     winner: s.winner ?? "-",
@@ -233,6 +240,8 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
     burnedOthers: { ...s.stats.burnedOthers },
     blowback: { ...s.stats.blowback },
     fireOutAt: s.endReason === "out" && out ? Math.round(out.at / 6000) / 10 : null,
+    perPlayerMin: Math.round((10 * s.stats.accepted) / n / playMin) / 10,
+    squareWastePct: Math.round((100 * s.stats.illegal.square) / Math.max(1, s.stats.accepted + s.stats.illegal.square)),
   };
 }
 
@@ -240,7 +249,8 @@ export function formatSim(r: SimResult, full = true): string {
   const pct = (p: Record<Team, number>) => TEAMS.map((t) => String(p[t]).padStart(6)).join("");
   const lines = [
     `seed ${r.seed}: ${r.winner} wins (${r.endReason}${r.fireOutAt !== null ? ` at ${r.fireOutAt} min` : ""}) after ${r.minutes} min · burning at min 8: ${r.burningAt8} squares · final % ridge/pine/cedar/birch:${pct(r.pct)}`,
-    `  squares ${r.paints} blue accepted of ${r.attempts} tried (${r.wastedPct}% wasted) · water used ${r.waterUsedPct}% (per team ${TEAMS.map((t) => r.waterUsedByTeam[t]).join("/")}) · lightning ${r.strikes.join(" ") || "-"} · max writes/tick ${r.maxWritesPerTick} · by-id reads/tick avg ${r.avgReadsPerTick} max ${r.maxReadsPerTick}`,
+    `  squares ${r.paints} blue accepted of ${r.attempts} tried (${r.wastedPct}% wasted; ${r.squareWastePct}% refused as already burnt/blue) · ${r.perPlayerMin}/min/player`,
+    `  water used ${r.waterUsedPct}% (per team ${TEAMS.map((t) => r.waterUsedByTeam[t]).join("/")}) · lightning ${r.strikes.join(" ") || "-"} · max writes/tick ${r.maxWritesPerTick} · by-id reads/tick avg ${r.avgReadsPerTick} max ${r.maxReadsPerTick}`,
     `  attacks ${r.attacks} · lit ${TEAMS.map((t) => r.lit[t]).join("/")} · burned others' trees ${TEAMS.map((t) => r.burnedOthers[t]).join("/")} · blowback ${TEAMS.map((t) => r.blowback[t]).join("/")}`,
     `  approvals: ${Object.entries(r.approvals).map(([k, v]) => `${k} ${v}`).join(", ") || "none"} · refused: ${Object.entries(r.refused).map(([k, v]) => `${k} ${v}`).join(", ") || "none"}`,
   ];

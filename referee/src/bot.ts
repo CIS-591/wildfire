@@ -4,7 +4,8 @@
 // "Start a fire in <neighbour>'s area?" when its own area is under control (and lights deep in their area,
 // far from its own border); workers paint one square from their (maybe stale) order per turn, and during an
 // approved attack the team paints orange on green squares in the neighbour's area.
-// Turn pace is set by the simulation (real agents: one paint per 45-60 s, rehearsal-1.log).
+// Turn pace is set by the simulation (calibrated on rehearsal-3.log: 8 Claude agents, ~4.6 accepted
+// squares per player per minute, ~20% of blue paints on squares already burnt or blue).
 import { NEIGHBOURS, STATE_COLOR, TEAMS, TEAM_INFO, type Team } from "./layout.js";
 import type { Rng } from "./rules.js";
 
@@ -40,6 +41,10 @@ export interface BotOptions {
   waterPerTeam?: number; // a team's bucket at the start (bosses attack only while theirs is above 30% of it)
   batch?: [number, number]; // squares painted per turn (min, max): an agent paints a batch per move
   attacks?: boolean; // bosses ask to attack (default true)
+  /** Share of picks that are not on the front line but one or two squares from the fire (rehearsal 3: agents often paint just beside it). */
+  offFront?: number;
+  /** Share of a boss's turns spent only on orders and questions (no paint). */
+  bossOrderTurns?: number;
 }
 
 const C = STATE_COLOR;
@@ -109,9 +114,9 @@ export class Bot {
     return picks.length;
   }
 
-  /** How many squares this turn's batch has (3-5 by default). */
+  /** How many squares this turn's batch has (1-4 by default: rehearsal 3, after the turns that paint nothing). */
   private batchSize(): number {
-    const [lo, hi] = this.opts.batch ?? [3, 5];
+    const [lo, hi] = this.opts.batch ?? [2, 5];
     return lo + Math.floor(this.rng() * (hi - lo + 1));
   }
 
@@ -126,6 +131,30 @@ export class Bot {
     const fires = cells.filter((c) => c.fill === C.fire);
     const near = cells.filter((c) => fires.some((f) => cheb(c, f) <= 2));
     return near[Math.floor(this.rng() * near.length)];
+  }
+
+  /**
+   * `n` picks from `best` (most urgent first), each replaced with chance offFront by a green square of our
+   * area one or two squares beside/behind the front (2 from the fire), as real agents often pick.
+   */
+  private sloppy(cells: CellView[], best: CellView[], n: number): CellView[] {
+    const share = this.opts.offFront ?? 0.4;
+    const fires = cells.filter((c) => c.fill === C.fire);
+    let near: CellView[] | null = null;
+    const out: CellView[] = [];
+    for (const c of best) {
+      if (out.length >= n) break;
+      if (this.rng() < share) {
+        near ??= cells.filter((g) => g.sector === this.team && g.fill === C.forest && fires.some((f) => cheb(g, f) === 2));
+        const alt = near[Math.floor(this.rng() * near.length)];
+        if (alt && !out.includes(alt)) {
+          out.push(alt);
+          continue;
+        }
+      }
+      if (!out.includes(c)) out.push(c);
+    }
+    return out;
   }
 
   /** Paint a batch blue (each square may be a mistake). */
@@ -177,11 +206,12 @@ export class Bot {
       }
     }
 
-    // The boss paints a batch too (its turns come at about half a worker's rate).
+    // Some boss turns go entirely to orders and questions; the others paint a batch too.
+    if (this.rng() < (this.opts.bossOrderTurns ?? 0.5)) return 0;
     const k = this.batchSize();
     // Not the squares just given to the crew (5 each): the next most urgent ones.
     const spare = own.slice(crew.length * 5);
-    return this.paintBatch(board, cells, (spare.length ? spare : own).slice(0, 2 * k).sort(() => this.rng() - 0.5).slice(0, k));
+    return this.paintBatch(board, cells, this.sloppy(cells, (spare.length ? spare : own).slice(0, 2 * k).sort(() => this.rng() - 0.5), k));
   }
 
   // ---------- worker: one paint from its order ----------
@@ -218,7 +248,7 @@ export class Bot {
       const ordered = new Set(stickies.filter((s) => s !== order).flatMap((s) => parseOrder(s.text)));
       const more = targetsFor(cells, this.team!, this.rng).filter((c) => !picks.includes(c) && !ordered.has(c.label));
       const pool = more.slice(0, Math.max(3 * k, 10)).sort(() => this.rng() - 0.5);
-      picks.push(...pool.slice(0, Math.min(k - picks.length, Math.ceil(k / 2))));
+      picks.push(...this.sloppy(cells, pool, Math.min(k - picks.length, Math.ceil(k / 2))));
     }
     return this.paintBatch(board, cells, picks);
   }

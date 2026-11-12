@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { stripHtml } from "../src/board.js";
-import { loadGame, saveGame } from "../src/config.js";
+import { loadGame, saveGame, saveLiveIds } from "../src/config.js";
 import { FIXTURES, GRID_BOX, ORDERS, PANELS, TEAMS, TEAM_INFO, center, frameBoxes, inside, teamByName } from "../src/layout.js";
 import { acquireLock, releaseLock } from "../src/lock.js";
 import { FakeBoard } from "../src/fake-board.js";
@@ -539,7 +539,7 @@ describe("players and inbox cards", () => {
     await g.ticks(3);
     const copy = g.ref.inboxCard.get("r2")!;
     expect(copy).not.toBe(g.cards.r2);
-    expect(g.card("r2")).toContain("Rob · TEAM 1 · WORKER · 1 paints");
+    expect(g.card("r2")).toContain("Rob · TEAM 1 · WORKER · 1 squares");
     const own = g.fake.playerJoin("r2", "Rob").card;
     await g.ticks(2);
     expect(g.ref.inboxCard.get("r2")).toBe(own.id);
@@ -598,9 +598,10 @@ describe("players and inbox cards", () => {
 describe("Miro misbehaving, restarts, clocks", () => {
   it(T("A90", "429s on reads: ticks skipped, game time catches up only a little"), async () => {
     const g = await setup({ live: true });
-    g.fake.faults.failNextReads = 5;
+    g.fake.faults.rate429 = 1; // every read refused (the reads of a tick run in parallel)
     const el = g.ref.state.elapsed;
     for (let i = 0; i < 5; i++) expect((await g.tick()).skipped).toBe(true);
+    g.fake.faults.rate429 = 0;
     await g.tick();
     expect(g.ref.state.elapsed - el).toBeLessThanOrEqual(15_000);
   });
@@ -784,7 +785,7 @@ describe("rehearsal 2 on the real board: Miro-like fake (404 on deleted items, s
     g.fake.playerDelete(g.ref.inboxCard.get("r2")!);
     g.fake.playerPaint("r2", "C5", C.water);
     await g.tick(6000);
-    expect(g.card("r2")).toContain("Rob · TEAM 1 · WORKER · 2 paints");
+    expect(g.card("r2")).toContain("Rob · TEAM 1 · WORKER · 2 squares");
     // Probe path: nobody writes to Pat's card, the round-robin GET finds it gone within ≤ 10 s.
     const pat = g.ref.inboxCard.get("p1")!;
     g.fake.playerDelete(pat);
@@ -882,7 +883,7 @@ describe("rehearsal 2 on the real board: Miro-like fake (404 on deleted items, s
     }
     await g.ticks(3);
     for (const u of players) {
-      const n = Number(/· (\d+) paints/.exec(g.card(u))?.[1]);
+      const n = Number(/· (\d+) squares/.exec(g.card(u))?.[1]);
       expect(n, u).toBe(g.ref.state.stats.byPlayer[u]!.water);
       expect(n, u).toBe(4);
     }
@@ -939,7 +940,7 @@ describe("fire attack, per-team water, batches, the fire model", () => {
     expect(["C4", "C5", "C6", "C7", "C8", "C9"].map(g.fill)).toEqual([C.water, C.water, C.water, C.water, C.water, C.forest]);
     expect(g.card("r2")).toContain("at most 5 squares per paint");
     expect(g.ref.state.water.ridge).toBe(395);
-    expect(g.card("r2")).toContain("5 paints");
+    expect(g.card("r2")).toContain("5 squares");
   });
   it(T("A117", "start fires in every area (mirrored) and fair lightning: 4 strikes, 4 different areas"), async () => {
     const starts = ["F6", "F7", "AE6", "AE7", "F28", "F29", "AE28", "AE29"];
@@ -1069,6 +1070,93 @@ describe("memes and junk anywhere", () => {
     expect(g.fake.items.has(order.id)).toBe(true);
     expect(g.fake.items.has(deco.id)).toBe(true);
     expect(g.card("p1")).toContain("🚫 image removed — frozen");
+  });
+});
+
+describe("rehearsal 3 fixes", () => {
+  it(T("A125", "the referee's live ids (fixtures, recreated squares) go to state/live-ids.json whenever they change"), async () => {
+    const g = await setup({ live: true, fast: true });
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "wf-ids-")), "live-ids.json");
+    expect(saveLiveIds(g.ref.liveIds(), "b1", file)).toBe(true);
+    expect(saveLiveIds(g.ref.liveIds(), "b1", file)).toBe(false); // nothing changed: not rewritten
+    const oldSquare = g.ref.cellId.get("E2")!;
+    const oldBoard = g.game.fixtureIds.leaderboard!;
+    g.fake.playerDelete(oldSquare);
+    g.fake.playerDelete(oldBoard);
+    await g.ticks(3);
+    expect(saveLiveIds(g.ref.liveIds(), "b1", file)).toBe(true);
+    const saved = JSON.parse(readFileSync(file, "utf8")) as { boardId: string; fixtures: Record<string, string>; cells: Record<string, string> };
+    expect(saved.boardId).toBe("b1");
+    expect(saved.cells.E2).toBe(g.ref.cellId.get("E2"));
+    expect(saved.cells.E2).not.toBe(oldSquare);
+    expect(saved.fixtures.leaderboard).toBe(g.game.fixtureIds.leaderboard);
+    expect(saved.fixtures.leaderboard).not.toBe(oldBoard);
+    expect(Object.keys(saved.cells)).toHaveLength(1224);
+    for (const [lab, id] of Object.entries(saved.cells)) expect(g.fake.items.has(id), lab).toBe(true);
+  });
+  it(T("A126", "a fake GAME OVER banner just before the end, at the end and after it is rewritten within a few polls (fixtures re-checked and rewritten in the post-game guard)"), async () => {
+    const g = await setup({ live: true, fast: true, rules: { ...CALM, gameMinutes: 1, lightningAt: [] } });
+    const fake = "GAME OVER - TEAM 1 WINS";
+    await g.ticks(16); // 0:48
+    g.fake.playerEdit("p1", g.game.fixtureIds.banner!, { content: fake });
+    await g.tick();
+    expect(g.fx("banner")).not.toContain(fake);
+    expect(g.fx("banner")).toContain("LIVE");
+    g.fake.playerEdit("p1", g.game.fixtureIds.banner!, { content: fake }); // the poll before the end
+    await g.ticks(4);
+    expect(g.ref.state.phase).toBe("over");
+    expect(g.fx("banner")).toContain("GAME OVER (time is up)");
+    expect(g.fx("banner")).not.toContain(fake);
+    // Post-game, even when the edit is missed (no read by id, the slow listing far away): rewritten within 5 polls.
+    (g.fake as { getItem?: unknown }).getItem = undefined;
+    g.fake.fullListReads = 100;
+    for (const k of ["banner", "scoreboard", "leaderboard"] as const) g.fake.playerEdit("p1", g.game.fixtureIds[k]!, { content: fake });
+    await g.ticks(5);
+    expect(g.fx("banner")).toContain("GAME OVER (time is up)");
+    expect(g.fx("scoreboard")).not.toContain(fake);
+    expect(g.fx("leaderboard")).toContain("LEADERBOARD");
+  });
+  it(T("A127", "the type-filtered image listing runs every poll, live and after the game: a meme posted after GAME OVER goes on the next poll"), async () => {
+    const g = await setup({ live: true, fast: true, rules: { ...CALM, gameMinutes: 1, lightningAt: [] } });
+    g.fake.fullListReads = 100; // only the typed listing can see it
+    for (let i = 0; i < 25; i++) {
+      const before = g.fake.calls.typed;
+      await g.tick();
+      expect(g.fake.calls.typed - before).toBe(5); // image, embed, document, preview, app_card: every poll
+    }
+    expect(g.ref.state.phase).toBe("over");
+    const meme = g.fake.vandalAdd("c1", "image", { x: 9000, y: 9000, w: 300, h: 300 });
+    await g.tick();
+    expect(g.fake.items.has(meme.id)).toBe(false);
+    const banner = g.fake.vandalAdd("c1", "image", { ...center(FIXTURES.banner), w: 900, h: 100 });
+    await g.tick();
+    expect(g.fake.items.has(banner.id)).toBe(false);
+    expect(g.fake.calls.typed % 5).toBe(0);
+  });
+  it(T("A128", "rehearsal: a question belongs to the Orders frame it is in (Miro's parent), even when its center sits over the next frame"), async () => {
+    const seats: [string, string][] = ["Gus", "Ana", "Dev", "Fay", "Ben", "Hana", "Eli", "Chloe"].map((n) => ["acct", n]);
+    const g = await setup({ live: true, ref: { rehearsal: true }, players: seats });
+    // Placed by its top-left corner (the MCP convention): the center lands over Team 4's frame / Team 2's frame.
+    const q3 = g.fake.playerSticky("acct", "cedar", "Start a fire in Team 4's area?");
+    Object.assign(q3, { x: ORDERS.birch.x + 30, y: ORDERS.birch.y + 300 });
+    const q1 = g.fake.playerSticky("acct", "ridge", "Start a fire in Team 2's area?");
+    Object.assign(q1, { x: ORDERS.pine.x + 30, y: ORDERS.pine.y + 300 });
+    await g.ticks(2);
+    const section = (n: number) => {
+      const lines = g.fx("leaderboard").split("\n");
+      const i = lines.findIndex((l) => l.includes(`TEAM ${n} `) && l.includes("players"));
+      const end = lines.findIndex((l, k) => k > i && /TEAM \d .*players/.test(l));
+      return lines.slice(i, end < 0 ? undefined : end).join("\n");
+    };
+    expect(section(3)).toContain("waiting for a YES: start a fire in Team 4's area");
+    expect(section(1)).toContain("waiting for a YES: start a fire in Team 2's area");
+    expect(section(2)).not.toContain("waiting for a YES");
+    expect(section(4)).not.toContain("waiting for a YES");
+    g.fake.playerEditSticky("acct", q3.id, "Start a fire in Team 4's area?\nYES");
+    await g.tick();
+    expect(g.ref.state.attacks).toMatchObject([{ team: "cedar", to: "birch" }]);
+    const cedar = Object.values(g.ref.state.players).filter((p) => p.team === "cedar");
+    expect(g.ref.state.approvals[q3.id]).toMatchObject({ creator: cedar.find((p) => p.role === "boss")!.userId });
   });
 });
 

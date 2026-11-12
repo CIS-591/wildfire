@@ -72,6 +72,18 @@ export class FakeBoard implements BoardAdapter {
   /** Runs right after a fast (per-frame) read returns: a player acting between the referee's read and its write. */
   afterGridRead?: () => void;
   rng: Rng = mulberry32(99);
+  /**
+   * Real Miro round trips (ms, [min, max]) for each API call, in real time (the game clock doesn't move).
+   * A paged listing pays one round trip per page in a row: a grid band (144 squares) is 3 pages of 50.
+   */
+  latencyMs: [number, number] | null = null;
+  private latRng: Rng = mulberry32(7);
+
+  private async lag(pages = 1): Promise<void> {
+    if (!this.latencyMs) return;
+    const [lo, hi] = this.latencyMs;
+    for (let i = 0; i < pages; i++) await new Promise((r) => setTimeout(r, lo + this.latRng() * (hi - lo)));
+  }
 
   constructor(now: () => number) {
     this.now = now;
@@ -169,6 +181,7 @@ export class FakeBoard implements BoardAdapter {
   // ---- adapter (acts as the referee) ----
   async listItems(): Promise<BoardItem[]> {
     this.calls.list++;
+    if (!this.fullListReads) await this.lag();
     this.readFault("items");
     // The snapshot is taken when the listing begins; on a real board it lands many polls later.
     let all = [...this.items.values()].map((i) => ({ ...i }));
@@ -186,12 +199,14 @@ export class FakeBoard implements BoardAdapter {
   /** Like GET /items?type=X (one listing per type): only those types, anywhere, current. */
   async listByType(types: string[]): Promise<BoardItem[]> {
     this.calls.typed += types.length;
+    await this.lag(); // one listing per type, in parallel
     this.readFault("items?type=");
     return [...this.items.values()].filter((i) => types.includes(i.type)).map((i) => ({ ...i }));
   }
 
   async getItem(id: string): Promise<BoardItem | null> {
     this.calls.get++;
+    await this.lag();
     this.readFault(`items/${id}`);
     const it = this.items.get(id) ?? this.frames.get(id);
     return it ? { ...it } : null;
@@ -201,6 +216,7 @@ export class FakeBoard implements BoardAdapter {
   enableFastReads(): void {
     this.listGridItems = async () => {
       this.calls.grid++;
+      await this.lag(3); // the 9 bands in parallel, 3 pages each in a row
       this.readFault("grid");
       const out: BoardItem[] = [];
       for (const fid of this.gridFrameIds) {
@@ -229,6 +245,7 @@ export class FakeBoard implements BoardAdapter {
 
   async createFrame(box: FrameBox, fill: string, title: string): Promise<string> {
     this.calls.frame++;
+    await this.lag();
     if (this.writeFault("POST frames")) {
       this.addFrame(box, fill, title);
       throw miroErr(504, "POST frames");
@@ -238,6 +255,7 @@ export class FakeBoard implements BoardAdapter {
 
   async updateFrame(id: string, box: FrameBox): Promise<void> {
     this.calls.frame++;
+    await this.lag();
     this.writeFault("PATCH frames", id);
     this.moveFrameTo(id, box, REFEREE_USER);
   }
@@ -248,6 +266,7 @@ export class FakeBoard implements BoardAdapter {
 
   async updateShape(id: string, patch: ShapePatch): Promise<void> {
     this.calls.update++;
+    await this.lag();
     const kind = this.items.get(id)?.type === "sticky_note" ? "sticky_notes" : this.items.get(id)?.type === "text" ? "texts" : "shapes";
     const ghost = this.writeFault(`PATCH ${kind}`, id);
     const it = this.items.get(id)!;
@@ -257,6 +276,7 @@ export class FakeBoard implements BoardAdapter {
 
   async deleteItem(id: string): Promise<void> {
     this.calls.delete++;
+    await this.lag();
     if (this.frames.has(id)) {
       this.writeFault("DELETE items", id);
       this.deleteFrame(id);
@@ -270,6 +290,7 @@ export class FakeBoard implements BoardAdapter {
 
   async createShapes(shapes: NewShape[]): Promise<string[]> {
     this.calls.create++;
+    await this.lag(Math.ceil(shapes.length / 20));
     for (const s of shapes) if (s.parentId && !this.frames.has(s.parentId)) throw (this.calls.failed++, miroErr(404, `POST items/bulk`, `{"status":404,"message":"parent ${s.parentId} not found"}`));
     const ghost = this.writeFault("POST items/bulk");
     const ids = shapes.map((s) => this.add({ type: "shape", content: `<p>${s.content}</p>`, fill: s.fill, x: s.x, y: s.y, w: s.w, h: s.h, parentId: s.parentId }, REFEREE_USER).id);

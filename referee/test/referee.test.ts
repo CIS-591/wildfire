@@ -45,7 +45,7 @@ describe("discovery and joining", () => {
     expect(ref.state.players.r1).toMatchObject({ team: "ridge", role: "boss" });
     expect(ref.state.players.r2).toMatchObject({ team: "ridge", role: "worker" });
     expect(ref.state.players.b1?.team).toBe("birch");
-    expect(text(cards.r1!)).toContain("Rita · TEAM 1 · BOSS · 0 paints");
+    expect(text(cards.r1!)).toContain("Rita · TEAM 1 · BOSS · 0 squares");
     expect(text(cards.r2!)).toContain("You are a WORKER");
     const card = fake.items.get(cards.r1!)!;
     expect([card.x, card.y]).toEqual(Object.values(center(inboxSlot(0))));

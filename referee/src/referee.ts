@@ -69,6 +69,8 @@ interface Op {
   fail?: (e: Error, lockedTimes: number) => void;
   /** A fire/burnt fill write to this square label: re-read the square by id right before writing. */
   recheck?: string;
+  /** Runs right before the write (in the same pooled task): false = skip the write this tick. */
+  guard?: () => Promise<boolean>;
   /** The item this op writes: a 404 on it means it was deleted (never "locked"). */
   id?: string;
   /** Miro answered 404: forget the item so it is rebuilt at once (this tick). */
@@ -101,13 +103,15 @@ const MISSING_READS = 2;
 /** A write refused as locked (403) this many times in a row: the item is replaced. Only 403 means locked; 404 means deleted. */
 const STUCK_AFTER = 3;
 /** Inbox cards checked by id per tick (round robin), so a deleted card comes back within a few polls. */
-const CARD_PROBES_PER_TICK = 4;
+const CARD_PROBES_PER_TICK = 2;
 /** Item types that never belong to the game wherever they are (memes): listed by type every poll. */
 const JUNK_TYPES = ["image", "embed", "document", "preview", "app_card"];
 /** Junk deletions per tick at most (newest first); the rest go next tick. */
 const JUNK_DELETES_PER_TICK = 20;
 /** Fire/burnt fill writes re-read by id right before writing, per tick (the rest wait a tick). */
 const RECHECK_MAX = 60;
+/** Fixtures are rewritten every this many ticks even when they look right (a missed or stale read never leaves a fake banner up). */
+const FIXTURE_REFRESH_TICKS = 5;
 const STICKY_TEXT_MAX = 2000;
 const FIXTURE_STYLE: Record<FixtureKey, Partial<NewShape>> = {
   banner: { fill: COLORS.panel, fontSize: 28, textColor: COLORS.text },
@@ -229,7 +233,7 @@ export class Referee {
     this.now = opts.now ?? Date.now;
     this.log = opts.log ?? console.log;
     this.staticIds = opts.staticIds ?? new Set();
-    this.concurrency = opts.concurrency ?? 10;
+    this.concurrency = opts.concurrency ?? 24;
     this.presets = opts.presets ?? {};
     this.frameIds = [...(game.frames?.length === 9 ? game.frames : (opts.frameIds ?? []))];
     this.ordersIds = { ...(opts.ordersIds ?? {}), ...(game.orders ?? {}) };
@@ -315,6 +319,22 @@ export class Referee {
     if (this.frameIds.length === 9 && this.frameIds.every(Boolean)) this.game.frames = [...this.frameIds];
     this.game.orders = { ...this.ordersIds };
     this.game.stuck = [...this.stuck].slice(-500);
+  }
+
+  /**
+   * The ids agents need, as they are on the board right now (state/live-ids.json): the fixtures and every
+   * square, including the ones the referee recreated with a new id. board/build/sync_ids.py merges them into
+   * board/board.json, kit/board.json and config/layout.json.
+   */
+  liveIds(): { fixtures: Partial<Record<FixtureKey, string>>; cells: Record<string, string> } {
+    const fixtures: Partial<Record<FixtureKey, string>> = {};
+    for (const k of FIXTURE_KEYS) if (this.game.fixtureIds[k]) fixtures[k] = this.game.fixtureIds[k];
+    const cells: Record<string, string> = {};
+    for (const c of this.cellList) {
+      const id = this.cellId.get(c.label);
+      if (id) cells[c.label] = id;
+    }
+    return { fixtures, cells };
   }
 
   // ---------- discovery ----------
@@ -503,7 +523,7 @@ export class Referee {
         continue;
       }
       if (fixtureIds.has(it.id) || this.staticIds.has(it.id)) continue;
-      const junk = this.isInboxCard(it) || (it.type === "sticky_note" && ordersTeamAt(it.x, it.y)) || this.isJunk(it);
+      const junk = this.isInboxCard(it) || (it.type === "sticky_note" && this.ordersTeamOf(it)) || this.isJunk(it);
       if (junk) {
         writes.push(() => this.board.deleteItem(it.id));
         this.shadow.delete(it.id);
@@ -591,11 +611,24 @@ export class Referee {
     if (geometry) this.geomWriteAt.set(id, this.now());
   }
 
+  /**
+   * Whose Orders frame an item is in: the frame it is a child of (Miro's parent), else where its center is.
+   * The parent wins: an agent that placed a sticky by its top-left corner (the MCP convention) can leave its
+   * center over the next frame or the gap between two, while Miro still has it in the frame it was dropped in.
+   */
+  private ordersTeamOf(it: BoardItem): Team | null {
+    if (it.parentId) {
+      const byParent = TEAMS.find((t) => this.ordersIds[t] === it.parentId);
+      if (byParent) return byParent;
+    }
+    return ordersTeamAt(it.x, it.y);
+  }
+
   private readStickies(items: BoardItem[]): StickyView[] {
     const out: StickyView[] = [];
     for (const it of items) {
       if (it.type !== "sticky_note") continue;
-      const team = ordersTeamAt(it.x, it.y);
+      const team = this.ordersTeamOf(it);
       if (!team || this.staticIds.has(it.id) || this.removedStickies.has(it.id)) continue;
       // A giant sticky costs nothing: only its start is read.
       const text = stripHtml(String(it.content ?? "").slice(0, STICKY_TEXT_MAX * 4)).slice(0, STICKY_TEXT_MAX).split("\n").map((l) => l.slice(0, 200)).slice(0, 20).join("\n");
@@ -651,9 +684,14 @@ export class Referee {
   private async tickInner(): Promise<TickResult> {
     const state = this.state;
     let read: { items: BoardItem[]; full: boolean; since: number };
+    // The independent reads run at once: the squares (and the slow sweep), the fixtures and a few cards by
+    // id, and the type-filtered junk listing. A tick costs about one paged grid read, not the sum of all.
+    const byIdRead = this.fetchById();
+    const typedRead = this.fetchTypedJunk();
     try {
       read = await this.readBoard();
     } catch (e) {
+      await Promise.all([byIdRead, typedRead]);
       // Miro is down or rate limiting: judge nothing, write nothing; game time waits (capped catch-up next tick).
       this.log(`board read failed (${errMsg(e)}); trying again next tick`);
       return { paints: 0, tampers: 0, joins: 0, fire: this.burning(), changed: 0, writes: 0, deferred: 0, skipped: true };
@@ -665,7 +703,7 @@ export class Referee {
     const byId = new Map<string, BoardItem>();
     for (const i of items) if (i && typeof i.id === "string") byId.set(i.id, i);
     // The fixtures (and a few cards) read by id now: a slow full listing may be many seconds old.
-    await this.readById(byId);
+    this.applyById(await byIdRead, byId);
     // Squares and items read by id are always fresh. Anything else only when the sweep began after we last touched that aspect of it.
     const fresh = (m: Map<string, number>, id: string) => this.idCell.has(id) || this.freshIds.has(id) || (full && (m.get(id) ?? -Infinity) < since);
     const paints: (PaintEvent & { stale?: boolean })[] = [];
@@ -674,7 +712,7 @@ export class Referee {
     let joins = 0;
     // Memes: images (and embeds, documents...) anywhere on the board, by a cheap type-filtered listing every poll.
     const junk = new Map<string, { at: number; it: BoardItem }>();
-    await this.scanTypedJunk(junk, tampers, now);
+    this.scanTypedJunk(await typedRead, junk, tampers, now);
 
     const fixtureKeyOf = (id: string) => FIXTURE_KEYS.find((k) => this.game.fixtureIds[k] === id);
     const cardOwnerOf = (id: string) => [...this.inboxCard].find(([, cid]) => cid === id)?.[0];
@@ -859,7 +897,7 @@ export class Referee {
     // A square is written only when this tick's read showed it as the engine last wrote/saw it, or its change
     // was judged above: a player's newer blue is never overwritten by a fire change planned on an older look.
     const writable = (lab: string) => readFill.has(lab) && (judged.has(lab) || readFill.get(lab) === preFill.get(lab));
-    ops.push(...(await this.recheckFireWrites(this.cellOps(new Set(adv.changed), writable), readFill)), ...this.rebuildOps(), ...this.fixtureOps(), ...this.cardOps());
+    ops.push(...this.guardFireWrites(this.cellOps(new Set(adv.changed), writable), readFill), ...this.rebuildOps(), ...this.fixtureOps(), ...this.cardOps());
     let { deferred } = await this.execute(ops);
     // Miro said 404 (deleted) for something: rebuild it now, not on a later tick.
     if (this.goneThisTick) deferred += (await this.execute([...this.rebuildOps(), ...this.fixtureOps(), ...this.cardOps()])).deferred;
@@ -871,7 +909,7 @@ export class Referee {
   private isJunk(it: BoardItem): boolean {
     if (this.idCell.has(it.id) || this.staticIds.has(it.id) || Object.values(this.game.fixtureIds).includes(it.id)) return false;
     if ([...this.inboxCard.values()].includes(it.id)) return false;
-    if (it.type === "sticky_note" && ordersTeamAt(it.x, it.y)) return false;
+    if (it.type === "sticky_note" && this.ordersTeamOf(it)) return false;
     const w = Math.max(0, it.w || 0);
     const h = Math.max(0, it.h || 0);
     const onGrid = intersects({ x: it.x, y: it.y, w, h }, GRID_BOX);
@@ -908,16 +946,18 @@ export class Referee {
     return "item on a panel";
   }
 
-  /** Every poll: images, embeds, documents, previews anywhere on the board (one cheap listing per type). */
-  private async scanTypedJunk(junk: Map<string, { at: number; it: BoardItem }>, tampers: TamperEvent[], now: number) {
-    if (!this.board.listByType) return;
-    let items: BoardItem[];
+  /** Every poll, in every phase (the post-game guard too): images, embeds, documents, previews anywhere (one cheap listing per type). */
+  private async fetchTypedJunk(): Promise<BoardItem[]> {
+    if (!this.board.listByType) return [];
     this.readsThisTick += JUNK_TYPES.length;
     try {
-      items = await this.board.listByType(JUNK_TYPES);
+      return await this.board.listByType(JUNK_TYPES);
     } catch {
-      return; // next poll
+      return []; // next poll
     }
+  }
+
+  private scanTypedJunk(items: BoardItem[], junk: Map<string, { at: number; it: BoardItem }>, tampers: TamperEvent[], now: number) {
     for (const it of items) {
       if (!it || !this.isMeme(it)) continue;
       this.seen.add(it.id);
@@ -1043,14 +1083,14 @@ export class Referee {
   }
 
   /** The 3 fixtures every tick (cheap: 3 GETs) and a few inbox cards round robin, read by id. A 404 rebuilds now. */
-  private async readById(byId: Map<string, BoardItem>) {
+  private async fetchById(): Promise<{ fixtures: string[]; got: Map<string, BoardItem | null> }> {
     this.freshIds.clear();
-    if (!this.board.getItem) return;
+    const got = new Map<string, BoardItem | null>();
+    if (!this.board.getItem) return { fixtures: [], got };
     const fixtures = FIXTURE_KEYS.map((k) => this.game.fixtureIds[k]).filter((x): x is string => !!x && !this.stuck.has(x));
     const cards = [...this.inboxCard.values()].filter((id) => !this.placing.has(id));
     const probes = cards.length <= CARD_PROBES_PER_TICK ? cards : Array.from({ length: CARD_PROBES_PER_TICK }, (_, i) => cards[(this.probeAt + i) % cards.length]!);
     this.probeAt = cards.length ? (this.probeAt + CARD_PROBES_PER_TICK) % cards.length : 0;
-    const got = new Map<string, BoardItem | null>();
     await pool(
       [...fixtures, ...probes].map((id) => async () => {
         this.readsThisTick++;
@@ -1062,6 +1102,10 @@ export class Referee {
       }),
       10,
     );
+    return { fixtures, got };
+  }
+
+  private applyById({ fixtures, got }: { fixtures: string[]; got: Map<string, BoardItem | null> }, byId: Map<string, BoardItem>) {
     for (const [id, it] of got) {
       if (!it) {
         this.itemGone(id);
@@ -1220,35 +1264,35 @@ export class Referee {
   }
 
   /**
-   * Right before writing a fire/burnt fill, read those squares by id (pooled, at most RECHECK_MAX per tick):
-   * a square whose fill changed since this tick's read (a player's fresh paint) is not written now; its
-   * change is judged on the next tick. Ops over the cap wait for the next tick. A 404 rebuilds the square.
+   * Right before writing a fire/burnt fill, read that square by id (at most RECHECK_MAX per tick): a square
+   * whose fill changed since this tick's read (a player's fresh paint) is not written now; its change is
+   * judged on the next tick. The re-read and the write run in the same pooled task, so the re-reads cost
+   * about one round trip, not a round of their own. Ops over the cap wait for the next tick. A 404 rebuilds the square.
    */
-  private async recheckFireWrites(ops: Op[], readFill: Map<string, string>): Promise<Op[]> {
+  private guardFireWrites(ops: Op[], readFill: Map<string, string>): Op[] {
     if (!this.board.getItem) return ops;
     const todo = ops.filter((o) => o.recheck).sort((a, b) => a.prio - b.prio);
-    const checked = new Set(todo.slice(0, RECHECK_MAX));
     const drop = new Set<Op>(todo.slice(RECHECK_MAX));
-    await pool(
-      [...checked].map((op) => async () => {
+    for (const op of todo.slice(0, RECHECK_MAX)) {
+      op.guard = async () => {
         this.readsThisTick++;
+        let it: BoardItem | null;
         try {
-          const it = await this.board.getItem!(op.id!);
-          if (!it) {
-            drop.add(op);
-            this.itemGone(op.id!);
-            return;
-          }
-          if ((it.fill ?? "").toLowerCase() !== readFill.get(op.recheck!)) {
-            drop.add(op);
-            this.log(`\n${op.recheck} changed since this tick's read: fire write held, judged next tick`);
-          }
+          it = await this.board.getItem!(op.id!);
         } catch {
-          drop.add(op); // unknown: don't risk overwriting a paint; next tick
+          return false; // unknown: don't risk overwriting a paint; next tick
         }
-      }),
-      20,
-    );
+        if (!it) {
+          this.itemGone(op.id!);
+          return false;
+        }
+        if ((it.fill ?? "").toLowerCase() !== readFill.get(op.recheck!)) {
+          this.log(`\n${op.recheck} changed since this tick's read: fire write held, judged next tick`);
+          return false;
+        }
+        return true;
+      };
+    }
     return ops.filter((o) => !drop.has(o));
   }
 
@@ -1280,9 +1324,35 @@ export class Referee {
     return ops;
   }
 
-  /** Fixtures: recreate a missing one, rewrite the text that changed. */
+  private fixturePhase?: string;
+  private fixtureForceLeft = 0;
+  private fixtureForcedAt = 0;
+  private fixtureForceTick = -1;
+  private fixtureForce = false;
+  /**
+   * This tick, rewrite every fixture even if it looks right: for 2 ticks after the phase changes (the moment
+   * of game over), and every FIXTURE_REFRESH_TICKS ticks in any phase (the post-game guard too), so a fake
+   * "GAME OVER" a stale or failed read missed is gone within seconds.
+   */
+  private forceFixtures(): boolean {
+    if (this.fixtureForceTick === this.tickNo) return this.fixtureForce;
+    this.fixtureForceTick = this.tickNo;
+    if (this.fixturePhase !== this.state.phase) {
+      this.fixturePhase = this.state.phase;
+      this.fixtureForceLeft = 2;
+    }
+    this.fixtureForce = this.fixtureForceLeft > 0 || this.tickNo - this.fixtureForcedAt >= FIXTURE_REFRESH_TICKS;
+    if (this.fixtureForce) {
+      this.fixtureForcedAt = this.tickNo;
+      this.fixtureForceLeft = Math.max(0, this.fixtureForceLeft - 1);
+    }
+    return this.fixtureForce;
+  }
+
+  /** Fixtures: recreate a missing one, rewrite the text that changed (and all of them now and then). */
   private fixtureOps(): Op[] {
     const ops: Op[] = [];
+    const force = this.forceFixtures();
     for (const key of FIXTURE_KEYS) {
       const html = this.fixtureHtml(key);
       const id = this.game.fixtureIds[key];
@@ -1305,7 +1375,7 @@ export class Referee {
         continue;
       }
       const sh = this.shadow.get(id);
-      if (this.written[key] === html && sh?.content === norm(html)) continue;
+      if (!force && this.written[key] === html && sh?.content === norm(html)) continue;
       ops.push({
         key: `fx:${key}`,
         id,
@@ -1383,6 +1453,10 @@ export class Referee {
     await pool(
       run.map((op) => async () => {
         try {
+          if (op.guard && !(await op.guard())) {
+            this.writesThisTick -= op.calls ?? 1; // held: no write made
+            return;
+          }
           await op.run();
           this.failures.delete(op.key);
           if (op.key.startsWith("junk:")) this.gone.add(op.key.slice(5)); // deleted: an older listing may still show it
@@ -1403,7 +1477,9 @@ export class Referee {
             const n = (prev?.n ?? 0) + 1;
             const locked = isLocked(e) ? (prev?.locked ?? 0) + 1 : 0;
             // Retry next tick, then back off (2, 4, ... 16 ticks): a locked item must not cost a write every poll.
-            this.failures.set(op.key, { n, locked, next: this.tickNo + (n < STUCK_AFTER ? 1 : Math.min(16, 2 ** (n - STUCK_AFTER + 1))) });
+            // Fixtures never back off (one write each, and a wrong banner must not stay up for minutes).
+            const fixture = op.key.startsWith("fx:") || op.key.startsWith("mkfx:");
+            this.failures.set(op.key, { n, locked, next: this.tickNo + (n < STUCK_AFTER || fixture ? 1 : Math.min(16, 2 ** (n - STUCK_AFTER + 1))) });
             if (n === 1 || n === STUCK_AFTER) this.log(`write ${op.key} failed (${errMsg(e)})${n >= STUCK_AFTER ? `; ${n} times in a row` : ""}`);
             if (locked) op.fail?.(e as Error, locked);
           } catch (e2) {
@@ -1525,7 +1601,7 @@ export class Referee {
     const p = this.state.players[userId];
     const ps = this.state.stats.byPlayer[userId];
     const paints = paintsOf(ps);
-    const head = p ? `<b>${esc(p.name)} · ${TEAM_INFO[p.team].name.toUpperCase()} · ${p.role.toUpperCase()} · ${paints} paints</b>` : "<b>Inbox</b>";
+    const head = p ? `<b>${esc(p.name)} · ${TEAM_INFO[p.team].name.toUpperCase()} · ${p.role.toUpperCase()} · ${paints} squares</b>` : "<b>Inbox</b>";
     const lines = this.feedback.get(userId) ?? [];
     return [head, ...lines].map((l) => `<p>${l}</p>`).join("");
   }

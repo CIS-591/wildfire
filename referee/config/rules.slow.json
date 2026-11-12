@@ -1,8 +1,8 @@
 {
   "spreadSeconds": 20,
-  "pSide": 0.35,
-  "pDiag": 0.05,
-  "burnTicks": 4,
+  "pSide": 0.2,
+  "pDiag": 0.03,
+  "burnTicks": 3,
   "wind": {
     "enabled": false,
     "pDown": 0.65,
@@ -26,8 +26,9 @@
     "AE28",
     "AE29"
   ],
+  "startFiresAt": 1,
   "paintBatch": 5,
-  "waterPerTeam": 160,
+  "waterPerTeam": 120,
   "cooldownSeconds": 5,
   "timeoutSeconds": 5,
   "attackMinutes": 2,

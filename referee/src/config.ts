@@ -92,6 +92,26 @@ export function saveGame(game: GameFile, file = GAME_FILE): void {
   renameSync(tmp, file);
 }
 
+export const LIVE_IDS_FILE = path.join(ROOT, "state/live-ids.json");
+let lastLiveIds = "";
+
+/**
+ * Write the board's live ids (fixtures, squares) to state/live-ids.json when they changed since the last
+ * write: board/build/sync_ids.py merges them into board/board.json and the kit, so agents never peek at an
+ * id the referee replaced. Returns true when the file was written.
+ */
+export function saveLiveIds(ids: { fixtures: Record<string, string | undefined>; cells: Record<string, string> }, boardId?: string, file = LIVE_IDS_FILE): boolean {
+  const body = JSON.stringify({ boardId: boardId ?? null, fixtures: ids.fixtures, cells: ids.cells });
+  if (body === lastLiveIds && existsSync(file)) return false;
+  mkdirSync(path.dirname(file), { recursive: true });
+  const out = { boardId: boardId ?? null, updatedAt: new Date().toISOString(), note: "Live ids written by the referee (fixtures and squares it recreated). Merge with: python3 board/build/sync_ids.py", fixtures: ids.fixtures, cells: ids.cells };
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(out, null, 2) + "\n");
+  renameSync(tmp, file);
+  lastLiveIds = body;
+  return true;
+}
+
 /** Minimal .env loader: KEY=VALUE lines, no quotes handling beyond trimming. */
 export function loadEnv(file = path.join(ROOT, ".env")): void {
   if (!existsSync(file)) return;

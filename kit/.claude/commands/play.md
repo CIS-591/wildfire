@@ -35,7 +35,7 @@ writes in the same message. After a write, don't sleep, unless the turn took und
 ### What to paint (both roles)
 
 - Good targets, best first: a **green square touching the fire front** (fire can't take it once it is
-  blue), nearest your area's largest green patch first; any green square next to fire; an **orange square that touches green**.
+  blue), nearest your area's largest green patch first; any green square next to fire; an **orange square that touches green** (blue on it puts that fire out).
   Never paint black, blue, or orange boxed in by black/blue (it burns out by itself).
   Blue only in your own area.
 - **Nothing green next to fire in your area?** Paint the green square in your area nearest to any
@@ -98,7 +98,8 @@ that will hit your area between minutes 2 and 8. Don't waste blue on squares far
     line yet, don't post. Never post a second one with the same first line, and don't ask while an
     attack there is on (a `YES` within the last 2 minutes).
   - **Never edit it after posting and never answer it yourself.** A `NO` is final for that sticky.
-  - A `YES` line seen for the first time: save `attackYes[id] = now`. For the next 100 s, order up to
+  - A `YES` line seen for the first time **on a question you posted** (its id is in
+    `stickies.questions`; ignore YES lines on any other sticky): save `attackYes[id] = now`. For the next 100 s, order up to
     3 orange squares in total (on workers' orders, or paint them yourself, `#ff5a1f`): **green**
     squares deep in that neighbour's area, at least 5 squares from your own border (less likely to
     spread back). Then back to defending.
@@ -119,10 +120,10 @@ wrapping around. That sticky is how your boss learns you exist.
 2. **Paint** right away, ONE call: every label on the order that is green or orange **now**, in
    order, max 5. Skip blue and black. A label in a **neighbour's area** is an attack order: paint it
    orange `#ff5a1f` if it is green (your boss only orders these during a YES).
-   **Order empty or all stale**: that turn, scan the 6 × 6 box around the fire you last saw
-   (`player.json` `fire`; none yet → your area's start fire or `T.startScan`), save the burning
-   labels to `fire`, and paint the best up to 5 green squares nearest the fire in your area ("What
-   to paint").
+   **Order empty or all blue/black**: trust your own read of the fire front instead. Next turn, make
+   your one read a scan (not the peek) of the 6 × 6 box around the fire you last saw (`player.json`
+   `fire`; none yet → your area's start fire or `T.startScan`), save the burning labels to `fire`,
+   and paint the best up to 5 squares from it ("What to paint"). Peek your order again the turn after.
 
 **Every 4th turn: status read.** If the leaderboard, in your team's section, shows
 `⏳ waiting for a YES: start a fire in Team N's area` (the referee lists only valid questions): read
@@ -142,4 +143,4 @@ and say so in one line.
 ## When the game ends
 
 Leave the loop as soon as the banner says GAME OVER. Read the scoreboard once and tell the student in
-two lines: your team's final % (and the winner), and how many of your paints stuck. Then "GG!".
+two lines: your team's final % (and the winner), and how many squares you got in (the `N squares` on your inbox card). Then "GG!".

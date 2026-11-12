@@ -36,6 +36,9 @@ Options: `--poll 3` (seconds between reads), `--seed N` (repeatable fire), `--mi
 square's team member who painted least recently, a question sticky's creator is the team's boss and its
 YES/NO comes from another member; never in class). The game is saved to `state/game.json` every
 poll, so a crashed or paused referee resumes; only one referee runs at a time (`state/referee.lock`).
+Whenever a fixture or square gets a new id (and on `reset`), the referee writes the live ids to
+`state/live-ids.json`; run `python3 ../board/build/sync_ids.py` to merge them into `board/board.json`,
+`kit/board.json` and `config/layout.json`, so agents never peek at a replaced id.
 
 ## Rules (numbers in `config/rules.json`, colors in `config/colors.json`)
 
@@ -63,26 +66,49 @@ poll, so a crashed or paused referee resumes; only one referee runs at a time (`
   burns and all the lightning has struck.
 - Junk: images, embeds, documents and previews anywhere on the board are found every poll by a
   type-filtered listing and deleted; shapes/texts dropped on the forest, a panel, a fixture or an Orders
-  frame too. The poster is frozen 5 s, then 30 s, then 2 min per item.
+  frame too. The poster is frozen 5 s, then 30 s, then 2 min per item. This runs in every phase, the
+  post-game guard included.
 - Fixtures (banner, scoreboard, leaderboard) are read by id every poll; a deleted one is recreated in
   **exactly the same box** it had (saved in `state/game.json` as `fixtureBoxes`), with a new id. Agents
-  that lose a fixture id should re-find it with a small read of that box (SPEC.md §1 panel boxes).
+  that lose a fixture id should re-find it with a small read of that box (SPEC.md §1 panel boxes). All three
+  are also rewritten for 2 polls when the game ends and every 5 polls (live and post-game), so a fake banner
+  never stays up.
+- Speed: a tick's reads run in parallel (paged per-frame grid read, fixtures + 2 cards by id, the typed junk
+  listing), each fire write's re-read (A119) runs in the write's own task, 24 calls in flight. With
+  150–300 ms per Miro call: ~1 s ticks, ~2 s on spread ticks (~70 reads + ~65 writes), 8 or 30 players
+  (`test/stress.test.ts` A124). Rehearsal 3 had 11–12 s ticks.
 
 ## Tuning (`npm run sim -- --seeds 5`)
 
-Bots play at a lean kit's pace (Color Wars: ~15 s per agent move): a worker turn every 15–20 s, a boss
-turn every 25–35 s, each turn a batch of 3–5 squares on a board read 5–15 s old, 5% mistakes; a simulated
-human answers each attack question after 20–60 s (15% NO). `--slow` = the old rehearsal pace (45–60 s /
-90–120 s, reads 15–30 s old). The tuning depends on players × pace, so there are three files:
+Bots are calibrated on live rehearsal 3 (`results/rehearsal-3.log`, 8 real Claude agents): a turn every
+14–25 s (bosses spend about half their turns on orders only), batches of 2–5 squares on a board read
+20–35 s old (the agent's read plus the referee's tick), 40% of picks one or two squares beside/behind the
+front instead of on it, 5% mistakes; a simulated human answers each attack question after 20–60 s (15% NO).
+`--slow` = half that pace (30–50 s turns, reads 25–40 s old). `--late 74` starts the agents 74 s after the
+fire, as in rehearsal 3.
 
-| File | For | Typical result (5 seeds) |
+Calibration (rehearsal-3 rules: `startFiresAt` 0, `pSide` 0.35, `pDiag` 0.1, `burnTicks` 3, water 100; 8 bots, `--late 74`, 5 seeds):
+
+| | Real (rehearsal 3) | Bots |
 | --- | --- | --- |
-| `config/rules.json` | 28 players, lean kit | scores mostly 60–80%, fire to minute 9–10, water ~60–75% used, 6–8 attacks |
-| `config/rules.8players.json` | 8 players (rehearsal size) | scores 16–87%, water 59–85% used, 4–7 attacks |
-| `config/rules.slow.json` | 28 slow agents (45–60 s) | scores 0–79% (spread out), fire to minute 10, water 56–83% used |
+| accepted squares | 258 | 241–287 |
+| accepted / player / min | 4.6 | 3.9–5.0 |
+| blue paints refused as already burnt/blue | 21% | 17–25% |
+| final scores | 0 / 3 / 1 / 0% | 0–3% |
+| fire out | 8.7 min | 8.7–9.3 min (one seed: time) |
+| water used | 64% | 60–72% |
 
-With `config/rules.json`, 8 players or slow agents lose everything (all teams 0%): pick the file that
-matches the class (`--rules config/rules.8players.json` on any command).
+The tuning depends on players × pace, so there are three files. All light the in-area start fires at
+minute 1 (`startFiresAt`), so agents are reading the board before their area burns:
+
+| File | For | Rules | Result (5 seeds) |
+| --- | --- | --- | --- |
+| `config/rules.json` | 28 players | pSide 0.35, pDiag 0.05, burnTicks 3, water 180 | scores 18–79% (17/20 in 30–80), fire to minute 8.7–10, water 60–84% used, 5–7 attacks |
+| `config/rules.8players.json` | 8 players | pSide 0.2, pDiag 0.03, burnTicks 3, water 90 | scores 34–85% (18/20 in 30–80), fire to minute 9.7–10, water 65–86% used, 5–7 attacks |
+| `config/rules.slow.json` | 28 slow agents | pSide 0.2, pDiag 0.03, burnTicks 3, water 120 | scores 22–83% (18/20 in 30–80), fire to minute 9–10, water 59–76% used, 4–7 attacks |
+
+The fire is sensitive: +0.05 on `pSide` roughly halves the scores. Pick the file that matches the class
+(`--rules config/rules.8players.json` on any command); with fewer players than the file assumes, teams lose everything.
 
 ## Code
 

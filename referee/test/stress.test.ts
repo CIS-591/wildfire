@@ -183,3 +183,58 @@ describe("stress", () => {
     for (const t of TEAMS) expect(boardScore(t)).toBe(ref.cellList.filter((c) => c.sector === t && ref.state.cells[c.label] === "forest").length);
   });
 });
+
+// A124: tick time on a Miro that answers every call in 150-300 ms (real time; a paged listing pays one round
+// trip per page), with 8 and 30 bots playing on a big fire. Rehearsal 3 had 11-12 s ticks at ~70 reads + ~65
+// writes; the reads of a tick now run in parallel and each fire write's re-read rides in the write's own task.
+describe("tick time with real Miro latency", () => {
+  for (const players of [8, 30]) {
+    it(`"A124" ${players} players, 150-300 ms per Miro call: every tick ≤ 4 s, also on spread ticks`, { timeout: 180_000 }, async () => {
+      // A fire the players can't put out by minute 3 (so the measured ticks include big spreads).
+      const rules = { ...RULES, waterPerTeam: 150, pSide: players > 10 ? 0.95 : 0.5, pDiag: players > 10 ? 0.3 : 0.15, paintBatch: 5, burnTicks: players > 10 ? 4 : 3, lightningAt: [2, 4, 6, 8], startFires: ["F6", "F7", "AE6", "AE7", "F28", "F29", "AE28", "AE29"] };
+      const g = await setup({ rules, players: [], fast: true, statics: true });
+      g.fake.fullListReads = 10; // the slow sweep lands ~10 polls after it began, like live
+      const rng = mulberry32(5);
+      const pb = new FakePlayerBoard(g.fake, g.ref, () => Math.floor(rng() * 1000));
+      const bots = Array.from({ length: players }, (_, i) => new Bot(`u${i + 1}`, `Bot ${i + 1}`, mulberry32(500 + i), { mistakeRate: 0.1 }));
+      for (const b of bots) {
+        pb.current = b.userId;
+        await pb.join(b.userId, b.name);
+      }
+      await g.tick();
+      for (const b of bots) await b.readInbox(pb, g.now());
+      await g.ref.start();
+      const ticks: { ms: number; reads: number; writes: number; fire: number }[] = [];
+      let s = 0;
+      const step = async (measure: boolean) => {
+        for (const b of bots) {
+          if (g.now() < b.nextTurnAt) continue;
+          pb.current = b.userId;
+          pb.lagMs = 15_000;
+          await b.readInbox(pb, g.now());
+          await b.act(pb, g.now());
+          b.nextTurnAt = g.now() + Math.round((b.role === "boss" ? 30 : 18) * (0.8 + 0.4 * rng()) * 1000);
+        }
+        if (s % 5 === 0) pb.snapshot(g.now());
+        if (s % 3 === 0) {
+          const t0 = performance.now();
+          const r = await g.tick(0);
+          if (measure) ticks.push({ ms: performance.now() - t0, reads: r.reads ?? 0, writes: r.writes, fire: r.fire });
+        }
+        g.advance(1000);
+        s++;
+      };
+      for (let i = 0; i < 90; i++) await step(false); // 1.5 min: a big fire
+      g.fake.latencyMs = [150, 300];
+      for (let i = 0; i < 66; i++) await step(true); // 22 ticks, 3 spreads
+      const ms = ticks.map((t) => t.ms).sort((a, b) => a - b);
+      const heavy = ticks.filter((t) => t.writes >= 20);
+      console.log(
+        `A124 ${players} players: ${ticks.length} ticks, fire ${ticks.at(-1)!.fire}; tick ms median ${Math.round(ms[Math.floor(ms.length / 2)]!)} p95 ${Math.round(ms[Math.floor(ms.length * 0.95)]!)} max ${Math.round(ms.at(-1)!)}; ` +
+          `spread ticks (≥20 writes): ${heavy.map((t) => `${Math.round(t.ms)}ms/${t.reads}r/${t.writes}w`).join(" ")}; reads/tick max ${Math.max(...ticks.map((t) => t.reads))}, writes/tick max ${Math.max(...ticks.map((t) => t.writes))}`,
+      );
+      expect(heavy.length).toBeGreaterThan(0);
+      expect(ms.at(-1)!).toBeLessThanOrEqual(4000);
+    });
+  }
+});

@@ -27,7 +27,7 @@ student reads (your replies, stickies) say "your team's area", never "sector".
 
 Fire (orange) spreads by itself every ~20 s to neighbouring green squares, the same in every direction. Players
 paint **blue** (water) on green or orange squares **in their own team's area**; fire can't cross blue
-and blue stays. Score per team = green squares left in its own area, as % of its start. The game
+and blue stays. **Blue on an orange square puts that fire out.** Score per team = green squares left in its own area, as % of its start. The game
 lasts 10 minutes. The one human decision is the **attack**: the boss asks
 `Start a fire in Team 2's area?`; when a teammate's student answers YES, the team may paint **orange**
 `#ff5a1f` on up to 3 **green** squares in that neighbour's area within 2 minutes (at most 2 attacks
@@ -134,7 +134,8 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
 - **Paint** = a batch of up to **5 squares in ONE `canvas_update_from_svg`**, one `rect` per square,
   only the id and the fill (`#ff5a1f` for an attack):
   `<svg xmlns="http://www.w3.org/2000/svg"><rect data-miro-id="ID1" fill="#3aa7ff"/><rect data-miro-id="ID2" fill="#3aa7ff"/></svg>`
-  More than 5 in one batch: the extras are reverted.
+  More than 5 in one batch: the extras are reverted. The result may say "0 updated" when a square
+  already had that fill: that's fine, don't retry.
   Never change the label text, never send x/y/width/height for a square.
 - **Create a sticky in your frame**: `canvas_update_from_svg` (not `canvas_create_from_svg`, which nudges
   new items away from existing ones) with the sticky nested in a sparse wrapper of the frame. The
@@ -165,7 +166,7 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
   returns nothing for a square, or a paint says not found: scan the 1-square box at its label
   (x = colIndex × 64, y = (row − 1) × 64, w = h = 64), take the `rect` whose text is that label, save
   `cellIds[label] = its id` in `player.json` and use it from now on.
-- **Stale fixture ids**: the referee may also recreate the banner, scoreboard or leaderboard with a NEW
+- **Stale fixture ids** (the instructor keeps `board.json` in sync, but just in case): the referee may also recreate the banner, scoreboard or leaderboard with a NEW
   id in the same box. Use `player.json` `fixtureIds` first, then `board.json` `fixtures`. If a peek by
   a fixture id returns nothing, scan its box (banner 0, −220, 1100, 110; scoreboard 1160, −220,
   1140, 110; leaderboard: the large text item inside 3240, −330, 760, 610), and save
@@ -199,7 +200,8 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
 
 ## Inbox card
 
-The referee writes your team, role and welcome on it, and one line per reverted paint with the reason.
+The referee writes your team, role and welcome on it, a header with `N squares` (your accepted
+squares so far), and one line per reverted paint with the reason.
 It shows only the last ~6 lines. A square you painted that is green or orange again with no line about
 it was most likely overwritten by the fire: just move on.
 Rehearsal note: when several agents share one Miro account (instructor rehearsal), the card can mix

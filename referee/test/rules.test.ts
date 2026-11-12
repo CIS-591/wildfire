@@ -90,6 +90,22 @@ describe("fire", () => {
     for (const l of lit) if (!["R17", "S17", "R18", "S18"].includes(l)) per[cells.get(l)!.sector] = (per[cells.get(l)!.sector] ?? 0) + 1;
     expect(per).toEqual({ ridge: 2, pine: 2, cedar: 2, birch: 2 });
   });
+  it("startFiresAt: the in-area start fires are lit at that minute (skipping squares already blue), and the game can't end 'out' before", () => {
+    const rules = { ...calm, startFires: ["F6", "F7", "AE6", "AE7"], startFiresAt: 1, lightningAt: [] };
+    const s = createState(list, rules, mulberry32(1));
+    expect(startGame(s, rules, T0).sort()).toEqual(["R17", "R18", "S17", "S18"]);
+    expect(s.cells.F6).toBe("forest");
+    s.cells.F7 = "water";
+    for (const l of ["R17", "R18", "S17", "S18"]) s.cells[l] = "water"; // centre put out: no fire anywhere
+    advance(s, rules, list, byPos, mulberry32(2), 59_000);
+    expect(s.phase).toBe("live");
+    expect(s.cells.F6).toBe("forest");
+    const r = advance(s, rules, list, byPos, mulberry32(2), 1_000);
+    expect(r.changed.sort()).toEqual(["AE6", "AE7", "F6"]);
+    expect(s.cells.F6).toBe("fire");
+    expect(s.cells.F7).toBe("water");
+    expect(s.phase).toBe("live");
+  });
   it("blue and black never burn", () => {
     const rules = { ...base, pSide: 1, pDiag: 1, downwindMult: 1, upwindMult: 1 };
     const s = createState(list, rules, mulberry32(1));

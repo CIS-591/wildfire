@@ -3,7 +3,7 @@
 import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pool } from "./board.js";
-import { GAME_FILE, ROOT, loadEnv, loadGame, loadLayoutIds, loadRules, loadTeams, saveGame } from "./config.js";
+import { GAME_FILE, LIVE_IDS_FILE, ROOT, loadEnv, loadGame, loadLayoutIds, loadRules, loadTeams, saveGame, saveLiveIds } from "./config.js";
 import {
   BACKDROP, CELL_FONT, COLORS, FIXTURES, GRID, ORDERS, PANELS, STATE_COLOR, TEAMS, TEAM_INFO, buildCells, cellStroke, center, colName, frameBoxes, frameOfRow, ordersTitle,
   sectorText, startFill, startState, textColorFor, type Box, type CellState,
@@ -121,6 +121,7 @@ async function loop(ref: Referee, game: ReturnType<typeof loadGame>, done: () =>
     }
     try {
       saveGame(game);
+      if (saveLiveIds(ref.liveIds(), process.env.MIRO_BOARD_ID)) console.log(`\nlive ids changed: ${path.relative(process.cwd(), LIVE_IDS_FILE)} (merge into the kit with python3 board/build/sync_ids.py)`);
     } catch (e) {
       console.error(`\nsaving the game failed: ${(e as Error).message}`);
     }
@@ -220,7 +221,7 @@ async function main() {
     case "sim": {
       const seeds = opt("seeds") ? Array.from({ length: Number(opt("seeds")) }, (_, i) => i + 1) : [Number(opt("seed", "1"))];
       for (const seed of seeds) {
-        const res = await runSimulation(loadRules(rulesFile()), { players: Number(opt("players", "28")), seed, slow: process.argv.includes("--slow"), mistakeRate: opt("mistakes") ? Number(opt("mistakes")) : undefined });
+        const res = await runSimulation(loadRules(rulesFile()), { players: Number(opt("players", "28")), seed, slow: process.argv.includes("--slow"), mistakeRate: opt("mistakes") ? Number(opt("mistakes")) : undefined, lateSec: opt("late") ? Number(opt("late")) : undefined });
         console.log(formatSim(res, seeds.length === 1));
       }
       return;
@@ -251,6 +252,8 @@ async function main() {
       const { ref, game } = await makeReferee(miro());
       const r = await ref.reset();
       saveGame(game);
+      saveLiveIds(ref.liveIds(), process.env.MIRO_BOARD_ID);
+      console.log(`live ids: ${LIVE_IDS_FILE} (python3 ../board/build/sync_ids.py copies them to the kit)`);
       console.log(`new game: ${r.repainted} squares repainted, ${r.deleted} items deleted (inbox cards, stickies, junk)`);
       return;
     }
@@ -318,7 +321,7 @@ async function main() {
     }
     default:
       console.log(`wildfire referee
-  npm run sim [-- --players 28 --seed 1 | --seeds 5 --slow]   offline game with bots (tuning; --slow = rehearsal pace)
+  npm run sim [-- --players 28 --seed 1 | --seeds 5 --slow --late 75]   offline game with bots (tuning; --slow = half the rehearsal-3 pace; --late = agents start N s after the fire)
   any command: --rules config/rules.8players.json             another tuning (8 players; rules.slow.json for slow agents)
   npm run referee build      WIPE the board and build it (SPEC.md geometry): grid, panels, Orders frames
   npm run referee verify     token + board + color check
