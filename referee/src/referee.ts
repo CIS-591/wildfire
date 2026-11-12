@@ -1765,6 +1765,9 @@ export class Referee {
             const fixture = op.key.startsWith("fx:") || op.key.startsWith("mkfx:");
             this.failures.set(op.key, { n, locked, next: this.tickNo + (n < STUCK_AFTER || fixture ? 1 : Math.min(16, 2 ** (n - STUCK_AFTER + 1))) });
             if (n === 1 || n === STUCK_AFTER) this.log(`write ${op.key} failed (${errMsg(e)})${n >= STUCK_AFTER ? `; ${n} times in a row` : ""}`);
+            // A player locked their junk: Miro's API can't unlock, only a person in the Miro app can.
+            if (op.key.startsWith("junk:") && isLocked(e) && n === 2)
+              this.log(`\n🔒 JUNK IS LOCKED: item ${op.key.slice(5)} can't be deleted until someone unlocks it in Miro (select it, right-click, Unlock). The referee deletes it right after.`);
             if (locked) op.fail?.(e as Error, locked);
           } catch (e2) {
             this.log(`repair of ${op.key} failed: ${errMsg(e2)}`);
