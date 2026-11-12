@@ -1166,7 +1166,37 @@ export class Referee {
   }
 
   /** Static items (panels, title, rules, headers): edits and moves are put back; deletes are logged (rebuild between games). */
+  /**
+   * The area labels on the grid ("TEAM 3'S AREA") say whether that team plays: a team sitting out gets
+   * "· NOT PLAYING" in grey. The label's snapshot follows, so the guard keeps the new text.
+   */
+  private areaLabelOps(ops: Op[]) {
+    for (const [id, snap] of this.staticSnap) {
+      const m = /TEAM ([1-4])['’]S AREA/i.exec(snap.content);
+      if (!m) continue;
+      const t = TEAMS[Number(m[1]) - 1]!;
+      const off = this.sitsOut(t);
+      const raw = snap.raw.replace(/ · NOT PLAYING/g, "").replace(/(TEAM [1-4]['’]S AREA)/i, off ? "$1 · NOT PLAYING" : "$1");
+      const color = off ? LB_GREY : TEAM_INFO[t].color;
+      if (raw === snap.raw && this.labelColor.get(id) === color) continue;
+      snap.raw = raw;
+      snap.content = norm(raw);
+      ops.push({
+        key: `label:${id}`,
+        id,
+        prio: 3,
+        run: () => this.board.updateShape(id, { content: raw, textColor: color, ...(snap.rotation ? { rotation: snap.rotation } : {}) }),
+        ok: () => {
+          this.labelColor.set(id, color);
+          this.touch(id);
+        },
+      });
+    }
+  }
+  private labelColor = new Map<string, string>();
+
   private guardStatics(byId: Map<string, BoardItem>, fresh: (m: Map<string, number>, id: string) => boolean, tampers: TamperEvent[], ops: Op[], now: number) {
+    this.areaLabelOps(ops);
     for (const [id, snap] of this.staticSnap) {
       const it = byId.get(id);
       if (!it) {
@@ -1900,10 +1930,13 @@ export class Referee {
     const s = this.state;
     const r = this.rules;
     const p = (a: string, b: string) => `<p><b>${a}</b></p><p>${b}</p>`;
-    const water = `WATER ${(s.phase === "lobby" ? TEAMS : playingTeams(s)).map((t) => `T${TEAM_INFO[t].num} ${s.water[t]}`).join(" · ")}`;
+    const inGame = TEAMS.filter((t) => !this.sitsOut(t));
+    const water = `WATER ${inGame.map((t) => `T${TEAM_INFO[t].num} ${s.water[t]}`).join(" · ")}`;
+    const out = TEAMS.filter((t) => this.sitsOut(t));
+    const who = out.length ? `PLAYING: ${inGame.map((t) => TEAM_INFO[t].name.toUpperCase()).join(", ")} · NOT PLAYING: ${out.map((t) => TEAM_INFO[t].name.toUpperCase()).join(", ")}` : "";
     const w = windOn(r) ? WIND[s.wind]! : null;
     const windTxt = w ? ` · wind ${w.arrow} ${w.name}` : "";
-    if (s.phase === "lobby") return p(`WILDFIRE · /join now · the fire starts soon${windTxt} · ${water}`, `paint blue ${STATE_COLOR.water} on green or orange squares in your team's area`);
+    if (s.phase === "lobby") return p(`WILDFIRE · /join now · the fire starts soon${windTxt} · ${water}`, who || `paint blue ${STATE_COLOR.water} on green or orange squares in your team's area`);
     const sc = scores(s, this.cellList);
     const order = rankTeams(s, this.cellList);
     const caps = (t: Team) => TEAM_INFO[t].name.toUpperCase();
@@ -1938,12 +1971,11 @@ export class Referee {
   scoreboardHtml(): string {
     const s = this.state;
     const sc = scores(s, this.cellList);
-    const playing = playingTeams(s);
     const order = rankTeams(s, this.cellList);
     // The leader is marked only when it is strictly ahead (no LEAD on a tie).
     const best = s.phase !== "lobby" && order.length > 1 && aheadOf(s, this.cellList, order[0]!, order[1]!) ? order[0] : undefined;
     const cell = (t: Team) =>
-      s.phase !== "lobby" && !playing.includes(t)
+      this.sitsOut(t)
         ? `${TEAM_INFO[t].name.toUpperCase()} not playing`
         : `${TEAM_INFO[t].name.toUpperCase()} ${sc[t].pct}%${t === best ? " LEAD" : ""}${sc[t].fire ? ` · ON FIRE ${sc[t].fire}` : ""}`;
     return `<p><b>${cell("ridge")}   |   ${cell("pine")}</b></p><p><b>${cell("cedar")}   |   ${cell("birch")}</b></p>`;

@@ -719,8 +719,16 @@ describe("Miro misbehaving, restarts, clocks", () => {
     expectConverged(g);
   });
   it(T("A133", "--teams 2: in the lobby Teams 3 and 4 are grey 'not playing' rows with '-' chips, and their centre squares are green"), async () => {
-    const g = await setup({ rules: { ...RULES, teams: 2 } });
-    await g.ticks(2);
+    const fake = FakeBoard.seeded(() => 0);
+    const labels = [1, 3].map((n) => fake.add({ type: "shape", content: `<p><b>TEAM ${n}’S AREA</b></p>`, fill: "#f5f6f8", x: -100, y: n === 1 ? 500 : 1672, w: 1168, h: 52, rotation: 270 }, "referee"));
+    for (const l of labels) fake.staticIds.push(l.id);
+    const g = await setup({ fake, statics: true, rules: { ...RULES, teams: 2 } });
+    await g.ticks(3);
+    expect(stripHtml(g.fake.items.get(labels[1]!.id)!.content)).toContain("TEAM 3’S AREA · NOT PLAYING");
+    expect(stripHtml(g.fake.items.get(labels[0]!.id)!.content)).not.toContain("NOT PLAYING");
+    expect(g.fake.items.get(labels[1]!.id)!.rotation).toBe(270);
+    expect(g.fx("banner")).toContain("NOT PLAYING: TEAM 3, TEAM 4");
+    expect(g.fx("scoreboard")).toContain("TEAM 3 not playing");
     const slot = (t: string) => g.ref.rankOrder().indexOf(t as never) + 1;
     for (const t of ["cedar", "birch"]) {
       const n = slot(t);
