@@ -48,7 +48,15 @@ async function makeReferee(board: MiroRest) {
   const presets = loadTeams();
   if (Object.keys(presets).length) console.log(`preset teams: ${Object.entries(presets).map(([n, t]) => `${n}=${t}`).join(", ")}`);
   const seed = opt("seed");
-  const ref = new Referee(board, game, loadRules(), { staticIds: new Set(layout?.static), presets, frameIds: frames, rng: seed ? mulberry32(Number(seed)) : undefined });
+  const rules = loadRules();
+  const minutes = opt("minutes");
+  if (minutes) {
+    rules.gameMinutes = Number(minutes);
+    rules.lightningAt = rules.lightningAt.filter((m) => m < rules.gameMinutes);
+  }
+  const rehearsal = args.includes("--rehearsal");
+  if (rehearsal) console.log("REHEARSAL: one Miro account plays every seat (each inbox card is a player). Not for class.");
+  const ref = new Referee(board, game, rules, { staticIds: new Set(layout?.static), presets, frameIds: frames, rng: seed ? mulberry32(Number(seed)) : undefined, rehearsal });
   return { ref, game };
 }
 
@@ -317,7 +325,8 @@ async function main() {
   npm run referee run        light the fire and referee it (Ctrl-C pauses; run again resumes)
   npm run referee stop       end now: highest % wins
   npm run referee results    print the result
-  options: --poll 3 (seconds between board reads), --seed N (repeatable fire)
+  options: --poll 3 (seconds between board reads), --seed N (repeatable fire), --minutes N (shorter game),
+           --rehearsal (test with ONE Miro account: every inbox card is its own player; never in class)
 state: ${GAME_FILE}`);
   }
 }

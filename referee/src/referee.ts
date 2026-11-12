@@ -6,7 +6,7 @@ import type { BoardAdapter, BoardItem, NewShape } from "./board.js";
 import { pool, stripHtml } from "./board.js";
 import {
   CELL_FONT, FIXTURES, GRID, GRID_BOX, PANELS, STATE_COLOR, TEAMS, TEAM_INFO, WIND, buildCells, cellBox, cellStroke, center, frameOfRow, inboxSlot, inside,
-  ordersTeamAt, ordersTitle, parseLabel, sectorText, startFill, textColorFor, type CellDef, type Team,
+  ordersTeamAt, ordersTitle, parseLabel, sectorText, startFill, teamByName, textColorFor, type CellDef, type Team,
 } from "./layout.js";
 import {
   advance, applyJoin, createState, decidePaint, decideTamper, judgeSticky, mulberry32, pendingStickies, scores, startGame, stopGame, teamName, type GameState, type PaintEvent,
@@ -58,6 +58,12 @@ export interface RefereeOptions {
   frameIds?: string[];
   /** Fire randomness. Seed it for a repeatable game. */
   rng?: Rng;
+  /**
+   * Rehearsal with one Miro account: each inbox card is its own player (keyed "card:<id>"), a paint
+   * counts for the least-recently-painting player of the square's team, and a sticky's creator/answerer
+   * are stand-ins from the right teams. Never use it in class: it trusts everyone.
+   */
+  rehearsal?: boolean;
 }
 
 export class Referee {
@@ -107,6 +113,27 @@ export class Referee {
     this.presets = opts.presets ?? {};
     this.frameIds = opts.frameIds ?? [];
     this.rng = opts.rng ?? mulberry32(Date.now() % 2 ** 31);
+    this.rehearsal = opts.rehearsal ?? false;
+  }
+  rehearsal: boolean;
+
+  /** Who owns an inbox card: its creator, or in rehearsal the card itself. */
+  private cardOwner(it: BoardItem): string {
+    return this.rehearsal ? `card:${it.id}` : it.createdBy;
+  }
+
+  private teamPlayers(team: Team): string[] {
+    return Object.values(this.state.players).filter((p) => p.team === team).map((p) => p.userId);
+  }
+
+  /** Rehearsal: a paint belongs to the square's team member who painted least recently. */
+  private painterOf(label: string, realUser: string): string {
+    if (!this.rehearsal) return realUser;
+    const team = this.cells.get(label)?.sector;
+    const ids = team ? this.teamPlayers(team) : [];
+    if (!ids.length) return realUser;
+    const last = this.state.lastPaintAt;
+    return ids.sort((a, b) => (last[a] ?? -Infinity) - (last[b] ?? -Infinity))[0]!;
   }
 
   get state(): GameState {
@@ -135,7 +162,7 @@ export class Referee {
     const state = this.state;
     for (const it of items) {
       // An inbox card from someone not yet on a team was made while no referee ran: a join, for the first tick.
-      const pendingJoin = this.isInboxCard(it) && !state.players[it.createdBy];
+      const pendingJoin = this.isInboxCard(it) && !state.players[this.cardOwner(it)];
       if (!pendingJoin) this.seen.add(it.id);
       if (it.type !== "shape" || this.staticIds.has(it.id)) continue;
       const text = stripHtml(it.content);
@@ -170,8 +197,8 @@ export class Referee {
     }
     if (created.length) this.log(`created missing fixtures: ${created.join(", ")}`);
     for (const it of items) {
-      if (this.isInboxCard(it) && state.players[it.createdBy] && !this.inboxCard.has(it.createdBy)) {
-        this.inboxCard.set(it.createdBy, it.id);
+      if (this.isInboxCard(it) && state.players[this.cardOwner(it)] && !this.inboxCard.has(this.cardOwner(it))) {
+        this.inboxCard.set(this.cardOwner(it), it.id);
         this.shadow.set(it.id, { content: stripHtml(it.content), fill: it.fill, x: it.x, y: it.y, w: it.w, h: it.h });
       }
     }
@@ -300,9 +327,27 @@ export class Referee {
     for (const it of items) {
       if (it.type !== "sticky_note") continue;
       const team = ordersTeamAt(it.x, it.y);
-      if (team && !this.staticIds.has(it.id)) out.push({ id: it.id, team, text: stripHtml(it.content), createdBy: it.createdBy, modifiedBy: it.modifiedBy });
+      if (!team || this.staticIds.has(it.id)) continue;
+      const text = stripHtml(it.content);
+      out.push({ id: it.id, team, text, ...this.stickyPeople(team, text, it) });
     }
     return out;
+  }
+
+  /**
+   * Rehearsal: the creator is the boss of the team that would post this sticky (the named team for HELP),
+   * and once it carries a YES/NO line the answerer is another member of the frame's team.
+   */
+  private stickyPeople(team: Team, text: string, it: BoardItem): { createdBy: string; modifiedBy: string } {
+    if (!this.rehearsal) return { createdBy: it.createdBy, modifiedBy: it.modifiedBy };
+    const first = text.split("\n")[0]!.trim();
+    const help = /^HELP\s+(.+)/i.exec(first);
+    const poster = (help ? teamByName(help[1]!) : null) ?? team;
+    const posters = this.teamPlayers(poster);
+    const createdBy = posters.find((u) => this.state.players[u]?.role === "boss") ?? posters[0] ?? it.createdBy;
+    const answered = text.split("\n").slice(1).some((l) => /^(YES|NO)$/i.test(l.trim()));
+    const answerer = this.teamPlayers(team).find((u) => u !== createdBy);
+    return { createdBy, modifiedBy: answered && answerer ? answerer : createdBy };
   }
 
   /** Bring one square on the board in line with the engine (fill + readable label color). */
@@ -390,7 +435,7 @@ export class Referee {
           // Replace a moved/edited square rather than moving it back (Miro refuses moves out of a frame).
           writes.set(id, () => this.board.deleteItem(id));
         } else if (fillOff) {
-          paints.push({ label: lab, fill: (it.fill ?? "").toLowerCase(), userId: it.modifiedBy, at: it.modifiedAt });
+          paints.push({ label: lab, fill: (it.fill ?? "").toLowerCase(), userId: this.painterOf(lab, it.modifiedBy), at: it.modifiedAt });
         }
         continue;
       }
@@ -407,25 +452,26 @@ export class Referee {
       if (this.seen.has(it.id)) continue;
       this.seen.add(it.id);
       if (this.isInboxCard(it)) {
-        if (this.inboxCard.has(it.createdBy)) {
+        const owner = this.cardOwner(it);
+        if (this.inboxCard.has(owner)) {
           writes.set(it.id, () => this.board.deleteItem(it.id));
-          this.pushFeedback(it.createdBy, "ℹ️ You already have an inbox card; the extra one was removed.");
+          this.pushFeedback(owner, "ℹ️ You already have an inbox card; the extra one was removed.");
           continue;
         }
-        this.inboxCard.set(it.createdBy, it.id);
+        this.inboxCard.set(owner, it.id);
         const slot = inboxSlot(this.inboxCard.size - 1);
         const c = center(slot);
-        if (!state.players[it.createdBy]) {
+        if (!state.players[owner]) {
           joins++;
           await this.join(it);
         }
-        const content = this.cardContent(it.createdBy);
+        const content = this.cardContent(owner);
         const sticky = it.type === "sticky_note";
         writes.set(it.id, () => this.board.updateShape(it.id, sticky ? { content, x: c.x, y: c.y } : { content, x: c.x, y: c.y, w: slot.w, h: slot.h, fill: "#ffffff" }));
         this.touch(it.id, true);
         this.knownAt.set(it.id, now);
         this.shadow.set(it.id, sticky ? { content: stripHtml(content), x: c.x, y: c.y, w: it.w, h: it.h } : { content: stripHtml(content), fill: "#ffffff", x: c.x, y: c.y, w: slot.w, h: slot.h });
-        this.dirty.delete(it.createdBy);
+        this.dirty.delete(owner);
         continue;
       }
       if ((inside(GRID_BOX, it.x, it.y) && it.w <= 400 && it.h <= 400) || FIXTURE_KEYS.some((k) => inside(FIXTURES[k], it.x, it.y))) {
@@ -506,10 +552,11 @@ export class Referee {
   /** A new inbox card is a join: its text is "Inbox · NAME". */
   private async join(it: BoardItem) {
     const name = stripHtml(it.content).replace(/^inbox\s*[·:-]?\s*/i, "");
-    const { player } = applyJoin(this.state, { userId: it.createdBy, name, at: it.createdAt }, await this.presetFor(it.createdBy, name));
-    this.log(`\njoin: ${player.name} -> ${player.team} ${player.role} (${it.createdBy})`);
-    this.pushFeedback(it.createdBy, this.welcome(player.name, player.team, player.role));
-    if (this.state.plan[player.team]) this.pushFeedback(it.createdBy, `✅ ${teamName(player.team)} already has an approved PLAN: you may paint.`);
+    const owner = this.cardOwner(it);
+    const { player } = applyJoin(this.state, { userId: owner, name, at: it.createdAt }, await this.presetFor(it.createdBy, name));
+    this.log(`\njoin: ${player.name} -> ${player.team} ${player.role} (${owner})`);
+    this.pushFeedback(owner, this.welcome(player.name, player.team, player.role));
+    if (this.state.plan[player.team]) this.pushFeedback(owner, `✅ ${teamName(player.team)} already has an approved PLAN: you may paint.`);
   }
 
   private async presetFor(userId: string, name: string): Promise<Team | undefined> {
