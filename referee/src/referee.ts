@@ -1593,7 +1593,7 @@ export class Referee {
   strokeFor(lab: string): { color: string; width: number } {
     const st = this.state.cells[lab];
     const o = this.state.origin?.[lab];
-    if (o && o !== "wild" && (st === "fire" || st === "burnt")) return { color: TEAM_INFO[o].color, width: st === "fire" ? 10 : 8 };
+    if (o && o !== "wild" && (st === "fire" || st === "burnt")) return { color: TEAM_INFO[o].color, width: st === "fire" ? 14 : 12 };
     return cellStroke(this.cells.get(lab)!);
   }
 

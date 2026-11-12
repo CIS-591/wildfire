@@ -1001,14 +1001,14 @@ describe("fire attack, per-team water, batches, the fire model", () => {
     expect(["Z4", "Z5", "Z6", "Z7"].map(g.fill)).toEqual([C.fire, C.fire, C.fire, C.forest]);
     expect(g.card("r2")).toContain("has lit its 3 squares");
     const violet = TEAM_INFO.ridge.color;
-    expect(border(g, "Z4")).toEqual({ color: violet, width: 10 });
+    expect(border(g, "Z4")).toEqual({ color: violet, width: 14 });
     expect(g.ref.state.stats.lit.ridge).toBe(3);
     expect(g.fx(`rank_${g.ref.rankOrder().indexOf("ridge") + 1}_attacks` as "rank_1_attacks")).toContain("1 left");
     await g.ticks(25); // 75 s: 3 spreads, Z4 burns out and keeps a thinner border in Team 1's color
     expect(g.fill("Z4")).toBe(C.burnt);
-    expect(border(g, "Z4")).toEqual({ color: violet, width: 8 });
+    expect(border(g, "Z4")).toEqual({ color: violet, width: 12 });
     expect(g.ref.state.stats.burnedOthers.ridge).toBe(3);
-    expect(border(g, "R17").width ?? 2).not.toBe(10); // wild fire: normal border
+    expect(border(g, "R17").width ?? 2).not.toBe(14); // wild fire: normal border
     expect(g.ref.state.water.ridge).toBe(400); // orange costs no water
     expectConverged(g);
   });
@@ -1019,7 +1019,7 @@ describe("fire attack, per-team water, batches, the fire model", () => {
     await g.tick(6000);
     await g.ticks(7); // one spread
     expect([g.ref.state.cells.R10, g.ref.state.origin.R10]).toEqual(["fire", "ridge"]); // into Team 1's own area
-    expect(border(g, "R10")).toEqual({ color: TEAM_INFO.ridge.color, width: 10 });
+    expect(border(g, "R10")).toEqual({ color: TEAM_INFO.ridge.color, width: 14 });
     expect(g.ref.state.origin.T10).toBe("ridge");
     await g.ticks(30);
     expect(g.ref.state.stats.blowback.ridge).toBeGreaterThan(0);

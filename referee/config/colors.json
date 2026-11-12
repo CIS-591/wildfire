@@ -14,7 +14,7 @@
     "borderWidth": 2,
     "label": "#0b1a10",
     "labelBurnt": "#c9c2bb",
-    "teamBorderWidth": 6
+    "teamBorderWidth": 10
   },
   "frame": "#ffffff",
   "backdrop": "#f5f6f8",
