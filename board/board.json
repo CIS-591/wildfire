@@ -1,7 +1,7 @@
 {
   "boardUrl": "https://miro.com/app/board/uXjVEOlHHxs=/",
   "boardId": "uXjVEOlHHxs=",
-  "boardName": "CIS 591 \u00b7 Wildfire",
+  "boardName": "CIS 591 · Wildfire",
   "teamId": "3458764689606790786",
   "builtAt": "2026-11-12T07:06:11Z",
   "note": "Built through the Miro MCP (canvas composer SVG). Coordinates in SPEC.md section 1 are top-left. Rebuilding changes every id.",
@@ -17,14 +17,14 @@
     "3458764690210204117"
   ],
   "fixtures": {
-    "banner": "3458764690210204157",
+    "banner": "3458764690299931694",
     "scoreboard": "3458764690210204158",
-    "rank_1": "3458764690282607991",
-    "rank_1_score": "3458764690282607998",
+    "rank_1": "3458764690294422088",
+    "rank_1_score": "3458764690294422102",
     "rank_2": "3458764690282608022",
     "rank_2_score": "3458764690282608028",
     "rank_3": "3458764690282608050",
-    "rank_3_score": "3458764690282608052",
+    "rank_3_score": "3458764690285396710",
     "rank_4": "3458764690282608058",
     "rank_4_score": "3458764690282608087"
   },
@@ -488,7 +488,7 @@
     "AG1": "3458764690210318761",
     "AH1": "3458764690210318762",
     "AI1": "3458764690210318763",
-    "AJ1": "3458764690210318764",
+    "AJ1": "3458764690299828939",
     "A2": "3458764690210318765",
     "B2": "3458764690210318766",
     "C2": "3458764690228058070",
@@ -523,7 +523,7 @@
     "AF2": "3458764690210318817",
     "AG2": "3458764690210318818",
     "AH2": "3458764690210318819",
-    "AI2": "3458764690210318820",
+    "AI2": "3458764690299746880",
     "AJ2": "3458764690210318821",
     "A3": "3458764690210318822",
     "B3": "3458764690210318823",
@@ -561,7 +561,7 @@
     "AH3": "3458764690210318900",
     "AI3": "3458764690210318901",
     "AJ3": "3458764690210318902",
-    "A4": "3458764690210318903",
+    "A4": "3458764690298947046",
     "B4": "3458764690210318904",
     "C4": "3458764690210318905",
     "D4": "3458764690210318906",
@@ -632,7 +632,7 @@
     "AG5": "3458764690210576287",
     "AH5": "3458764690210576288",
     "AI5": "3458764690210576289",
-    "AJ5": "3458764690210576290",
+    "AJ5": "3458764690300123406",
     "A6": "3458764690210576291",
     "B6": "3458764690210576292",
     "C6": "3458764690210576293",
@@ -701,7 +701,7 @@
     "AD7": "3458764690210576417",
     "AE7": "3458764690210576418",
     "AF7": "3458764690210576419",
-    "AG7": "3458764690210576420",
+    "AG7": "3458764690300027727",
     "AH7": "3458764690210576421",
     "AI7": "3458764690210576422",
     "AJ7": "3458764690210576423",
@@ -737,7 +737,7 @@
     "AD8": "3458764690210576494",
     "AE8": "3458764690210576495",
     "AF8": "3458764690210576496",
-    "AG8": "3458764690210576549",
+    "AG8": "3458764690300027728",
     "AH8": "3458764690210576550",
     "AI8": "3458764690210576551",
     "AJ8": "3458764690210576552",
@@ -774,7 +774,7 @@
     "AE9": "3458764690210576598",
     "AF9": "3458764690210576599",
     "AG9": "3458764690210576600",
-    "AH9": "3458764690210576601",
+    "AH9": "3458764690299746400",
     "AI9": "3458764690210576602",
     "AJ9": "3458764690210576603",
     "A10": "3458764690210576635",
@@ -916,7 +916,7 @@
     "AC13": "3458764690210612962",
     "AD13": "3458764690210612963",
     "AE13": "3458764690210612964",
-    "AF13": "3458764690210612965",
+    "AF13": "3458764690299931875",
     "AG13": "3458764690210613014",
     "AH13": "3458764690210613015",
     "AI13": "3458764690210613016",
@@ -1687,7 +1687,7 @@
   "colorCheckNote": "Written to A1 with canvas_update_from_svg, read back with canvas_read_as_svg, then A1 restored to #93d275. REST round-trip is still the referee's `verify` job.",
   "restyle": {
     "at": "2026-11-12",
-    "note": "Board restyled for the 4-color game: locked dark backdrop (sent to back), team area bands + stripes around the grid, 'HOW TO PLAY' rules panel, Orders headers, plain-sentence EXAMPLE stickies. Orders frame titles set to a single space (they rendered huge over the panels when zoomed out); the header text 'ORDERS \u00b7 <TEAM>' inside each frame carries the name.",
+    "note": "Board restyled for the 4-color game: locked dark backdrop (sent to back), team area bands + stripes around the grid, 'HOW TO PLAY' rules panel, Orders headers, plain-sentence EXAMPLE stickies. Orders frame titles set to a single space (they rendered huge over the panels when zoomed out); the header text 'ORDERS · <TEAM>' inside each frame carries the name.",
     "added": {
       "backdrop": "3458764690218145064",
       "title": "3458764690218524721",
@@ -1764,7 +1764,7 @@
   },
   "lightTheme": {
     "at": "2026-11-12",
-    "note": "Light theme (SPEC.md Palette): backdrop #f5f6f8 (unlocked, refilled, relocked), rim bars #eef0f3, panels #ffffff border #e2e5ea, headings ember #e8590c, text #1f2328, muted #6b7280; team colors T1 #7c3aed, T2 #db2777, T3 #4338ca, T4 #334155 on rim labels, area labels, stripes, Orders titles/dividers; Orders frames #ffffff, header bars #f5f6f8; fixtures white (banner ember border). Squares: border #ffffff w2, label #0b1a10; band frames #ffffff (build/restyle_squares.mjs). Rules text and example stickies rewritten for 'start a fire' attack. Area labels' rotation (270 left / 90 right) re-applied via REST after the MCP update reset it. No static ids changed. 7 square ids had changed on the live board (squares recreated) and are updated in cells: AA3 E5 U9 X22 Q23 C24 AB24; kit/board.json and referee/config/layout.json still need python3 board/build/sync_ids.py. Example stickies: 'Example: / Start a fire in Team N's area? / their trees are far from our border / \u2192 a teammate answers YES or NO'.",
+    "note": "Light theme (SPEC.md Palette): backdrop #f5f6f8 (unlocked, refilled, relocked), rim bars #eef0f3, panels #ffffff border #e2e5ea, headings ember #e8590c, text #1f2328, muted #6b7280; team colors T1 #7c3aed, T2 #db2777, T3 #4338ca, T4 #334155 on rim labels, area labels, stripes, Orders titles/dividers; Orders frames #ffffff, header bars #f5f6f8; fixtures white (banner ember border). Squares: border #ffffff w2, label #0b1a10; band frames #ffffff (build/restyle_squares.mjs). Rules text and example stickies rewritten for 'start a fire' attack. Area labels' rotation (270 left / 90 right) re-applied via REST after the MCP update reset it. No static ids changed. 7 square ids had changed on the live board (squares recreated) and are updated in cells: AA3 E5 U9 X22 Q23 C24 AB24; kit/board.json and referee/config/layout.json still need python3 board/build/sync_ids.py. Example stickies: 'Example: / Start a fire in Team N's area? / their trees are far from our border / → a teammate answers YES or NO'.",
     "cellIdsUpdated": [
       "AA3",
       "E5",
@@ -1822,5 +1822,5 @@
       }
     }
   },
-  "liveIdsMergedAt": "2026-11-12T16:32:58.076Z"
+  "liveIdsMergedAt": "2026-11-12T18:59:17.044Z"
 }

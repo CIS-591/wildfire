@@ -4,3 +4,4 @@ state/
 kit/player.json
 .DS_Store
 __pycache__/
+.claude/worktrees/
