@@ -70,7 +70,7 @@ Follow `AGENTS.md` "Smart play" (it decides known/small fire vs order vs your ow
   burning square that is deepest into your area, or closest to your largest green patch (x = (colIndex − 2) × 64,
   y = (row − 3) × 64, w = h = 384, clipped to the grid). Rotate between a few such boxes so you follow
   the whole edge. To check a handful of known squares, **peek them by id** from `cells` instead.
-- Lightning on the banner (`LIGHTNING! New fire at K4 (Team 2's area)`, minutes 2, 4, 6, 8): if it is
+- A new fire on the banner (`NEW FIRE at K4 (Team 2's area)!`, minutes 2, 4, 6, 8): if it is
   in your area or within 2 squares of it, scan the 6 × 6 box around it once.
 
 ## Status read (both roles, every 4th turn)
@@ -80,7 +80,7 @@ leaderboard row whose first line starts `TEAM <your team number>` (rows swap slo
 by text). Fewer than 4 `TEAM ` rows came back: CLAUDE.md "Stale fixture ids".
 - GAME OVER → CLAUDE.md "Reading the banner"; confirmed → "When the game ends". PAUSED → no paints;
   wait 15 s, read again until LIVE.
-- Note your team's water and lightning (scan around it once if it is in or within 2 squares of your area).
+- Note your team's water and any `NEW FIRE at` square (scan around it once if it is in or within 2 squares of your area).
 - Inbox: a reverted paint says why; don't repeat it (wrong area → drop that label; square changed →
   normal).
 

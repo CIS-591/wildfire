@@ -200,7 +200,7 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
   (or at once if your previous banner read showed under `0:30 left`); any LIVE read clears `gameOverAt`.
 - `FINAL MINUTE!`, `TEAM 3 TAKES THE LEAD!`, `… ARE NECK AND NECK` on line 2 are only news for the
   room: keep playing (the final minute is the time to paint hardest).
-- `LIGHTNING! New fire at K4 (Team 2's area)` (at minutes 2, 4, 6 and 8, each in a playing team's
+- `NEW FIRE at K4 (Team 2's area)!` (at minutes 2, 4, 6 and 8, each in a playing team's
   area; on the banner for ~25 s only) names a new fire far from the others.
 - Your team's water at 0 → your team's blue paints are refused; only the boss's attack orange (during
   a YES) still works. Otherwise just watch.

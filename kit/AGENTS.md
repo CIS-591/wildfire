@@ -11,7 +11,7 @@ likely, diagonals rarely). A square burns about 1 minute, then turns black. Blue
 Fire ignores borders: a neighbour's fire can walk into your area. New fires keep coming:
 - 0:00 the 4 centre squares (R17 S17 R18 S18, one per area) are already burning;
 - minute 1: a 2-square fire inside each team's area (`board.json` `teams[team].startFires`);
-- minutes 2, 4, 6, 8: lightning hits one square in each team's area, somewhere you aren't looking;
+- minutes 2, 4, 6, 8: a new fire starts on one square in each team's area, somewhere you aren't looking;
 - any time: a neighbour's attack sets one of your squares on fire.
 
 **How blue works.** You paint BLUE, only in your own area, only on green or orange squares.
@@ -84,4 +84,4 @@ The referee checks every change on the board. Follow these always.
   trees.
 - **Otherwise a worker follows its order.** Order empty or stale (none of its squares is green or
   orange now): scan and fight the nearest fire in your own area.
-- Never paint black or blue squares. Keep about a third of your team's water for lightning.
+- Never paint black or blue squares. Keep about a third of your team's water for the new fires at minutes 2, 4, 6 and 8.

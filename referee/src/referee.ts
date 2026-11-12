@@ -2032,7 +2032,7 @@ export class Referee {
     if (left <= 60_000) line2 = `FINAL MINUTE! ${recent ? recent.text : close || (a ? `${caps(a)} LEADS WITH ${sc[a].pct}%` : "")}`.trim();
     else if (windIn <= 30_000) line2 = `Wind turning in ${Math.ceil(windIn / 1000)} s!`;
     else if (recent) line2 = recent.text;
-    else if (nextBolt <= 60_000) line2 = `LIGHTNING in ${mmss(nextBolt)}: a new fire in a team's area`;
+    else if (nextBolt <= 60_000) line2 = `NEW FIRE in ${mmss(nextBolt)}: one more fire starts in a team's area`;
     else if (close) line2 = close;
     else {
       const low = TEAMS.filter((t) => s.water[t] <= r.waterPerTeam / 5).map((t) => `T${TEAM_INFO[t].num}`);

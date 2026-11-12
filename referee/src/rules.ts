@@ -634,7 +634,7 @@ export function strike(state: GameState, rules: RuleSet, cells: CellDef[], rng: 
   state.struck.push(hit.sector);
   ignite(state, rules, hit.label);
   state.stats.strikes.push(hit.label);
-  pushEvent(state, `LIGHTNING! New fire at ${hit.label} (${teamName(hit.sector)}'s area)`);
+  pushEvent(state, `NEW FIRE at ${hit.label} (${teamName(hit.sector)}'s area)!`);
   return hit.label;
 }
 
@@ -673,7 +673,7 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
       const hit = strike(state, rules, cells, rng);
       if (hit) {
         changed.add(hit);
-        events.push(`⚡ lightning at ${hit}`);
+        events.push(`new fire at ${hit}`);
       }
     } else if (next === windAt) {
       state.windTurned = true;
