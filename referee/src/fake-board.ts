@@ -69,6 +69,17 @@ export class FakeBoard implements BoardAdapter {
   private framesSeen: BoardItem[] | null = null;
   /** Square borders as written (what the projector shows): id -> color, width. */
   borders = new Map<string, { color?: string; width?: number }>();
+  /** Text style of shapes (font size, family, text color) as created or set by a test. */
+  styles = new Map<string, { fontSize?: number; fontFamily?: string; textColor?: string }>();
+  /** Listings and GET-by-id also return each shape's border and text style (style.borderColor ...), like Miro's REST style object. Off: never read back. */
+  listStyle = false;
+  /** An item as a read returns it (a copy; with its style when listStyle is on). */
+  private view(i: BoardItem): BoardItem {
+    if (!this.listStyle || (i.type !== "shape" && i.type !== "text")) return { ...i };
+    const b = this.borders.get(i.id);
+    const st = this.styles.get(i.id);
+    return { ...i, borderColor: b?.color, borderWidth: b?.width, fontSize: st?.fontSize, fontFamily: st?.fontFamily, textColor: st?.textColor };
+  }
   /** Runs right after a fast (per-frame) read returns: a player acting between the referee's read and its write. */
   afterGridRead?: () => void;
   rng: Rng = mulberry32(99);
@@ -184,7 +195,7 @@ export class FakeBoard implements BoardAdapter {
     if (!this.fullListReads) await this.lag();
     this.readFault("items");
     // The snapshot is taken when the listing begins; on a real board it lands many polls later.
-    let all = [...this.items.values()].map((i) => ({ ...i }));
+    let all = [...this.items.values()].map((i) => this.view(i));
     const frames = [...this.frames.values()].map((f) => ({ ...f }));
     if (this.faults.partialNextLists > 0) {
       this.faults.partialNextLists--;
@@ -201,15 +212,17 @@ export class FakeBoard implements BoardAdapter {
     this.calls.typed += types.length;
     await this.lag(); // one listing per type, in parallel
     this.readFault("items?type=");
-    return [...this.items.values()].filter((i) => types.includes(i.type)).map((i) => ({ ...i }));
+    return [...this.items.values()].filter((i) => types.includes(i.type)).map((i) => this.view(i));
   }
 
   async getItem(id: string): Promise<BoardItem | null> {
     this.calls.get++;
     await this.lag();
     this.readFault(`items/${id}`);
-    const it = this.items.get(id) ?? this.frames.get(id);
-    return it ? { ...it } : null;
+    const it = this.items.get(id);
+    if (it) return this.view(it);
+    const f = this.frames.get(id);
+    return f ? { ...f } : null;
   }
 
   /** Per-frame reads, like MiroRest: positions come back relative to each frame, placed on its BUILT box. */
@@ -225,7 +238,7 @@ export class FakeBoard implements BoardAdapter {
         const built = this.builtBox.get(fid)!;
         const dx = f.x - f.w / 2 - built.x;
         const dy = f.y - f.h / 2 - built.y;
-        for (const i of this.items.values()) if (i.parentId === fid) out.push({ ...i, x: i.x - dx, y: i.y - dy });
+        for (const i of this.items.values()) if (i.parentId === fid) out.push({ ...this.view(i), x: i.x - dx, y: i.y - dy });
       }
       // Each fast read brings the slow full listings in flight one step closer to landing.
       for (const p of this.pendingLists) p.left--;
@@ -303,7 +316,10 @@ export class FakeBoard implements BoardAdapter {
     for (const s of shapes) if (s.parentId && !this.frames.has(s.parentId)) throw (this.calls.failed++, miroErr(404, `POST items/bulk`, `{"status":404,"message":"parent ${s.parentId} not found"}`));
     const ghost = this.writeFault("POST items/bulk");
     const ids = shapes.map((s) => this.add({ type: "shape", content: `<p>${s.content}</p>`, fill: s.fill, x: s.x, y: s.y, w: s.w, h: s.h, parentId: s.parentId }, REFEREE_USER).id);
-    shapes.forEach((s, k) => this.borders.set(ids[k]!, { color: s.borderColor, width: s.borderWidth }));
+    shapes.forEach((s, k) => {
+      this.borders.set(ids[k]!, { color: s.borderColor, width: s.borderWidth });
+      this.styles.set(ids[k]!, { fontSize: s.fontSize, fontFamily: s.fontFamily, textColor: s.textColor });
+    });
     if (ghost) throw miroErr(504, "POST items/bulk");
     return ids;
   }
@@ -343,11 +359,12 @@ export class FakeBoard implements BoardAdapter {
     if (patch.w !== undefined) it.w = patch.w;
     if (patch.h !== undefined) it.h = patch.h;
     if (patch.rotation !== undefined) it.rotation = patch.rotation;
-    // Borders are kept (the projector shows them) but, like Miro's listing, never read back by the referee.
+    // Borders are kept (the projector shows them); reads return them only with listStyle on.
     const b = this.borders.get(it.id) ?? {};
     if (patch.borderColor !== undefined) b.color = patch.borderColor;
     if (patch.borderWidth !== undefined) b.width = patch.borderWidth;
     this.borders.set(it.id, b);
+    if (patch.textColor !== undefined || patch.fontSize !== undefined) this.styles.set(it.id, { ...this.styles.get(it.id), ...(patch.textColor !== undefined ? { textColor: patch.textColor } : {}), ...(patch.fontSize !== undefined ? { fontSize: patch.fontSize } : {}) });
     it.modifiedBy = user;
     it.modifiedAt = at;
   }

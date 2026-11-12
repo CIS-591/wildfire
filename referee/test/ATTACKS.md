@@ -119,6 +119,16 @@ listings. `tick()` catches everything and never throws.
 | A126 | A fake "GAME OVER - TEAM 1 WINS" banner written just before the end (rehearsal 3: up ~60 s) | Fixtures are read by id every poll and rewritten when changed; besides, all three are rewritten for 2 polls when the phase changes (game over) and every 5 polls in any phase, the post-game guard included, so a missed or stale read never leaves it up; fixture writes never back off more than a poll |
 | A127 | A meme image posted after GAME OVER (rehearsal 3: never removed) | The type-filtered listing runs every poll in every phase (live, lobby, the post-game guard): removed on the next poll |
 | A128 | Rehearsal: a question sticky placed by its top-left corner, its center over the next Orders frame (rehearsal 3: Team 3's question about Team 4 never listed, one of Team 1's listed under Team 2) | A sticky belongs to the Orders frame Miro has it in (its parent), else to the frame under its center; the rehearsal stand-in creator is that frame's boss |
+| A135 | A sticky in another team's Orders naming its own poster; a sticky or edit there by someone who never joined | Removed (a player of another team gets the junk line; a non-player's sticky goes during the game, their edit is put back); the referee's/instructor's own stickies stay |
+| A136 | Recolor a square's border (e.g. Team 1's violet: "Team 1 lit this") | Put back: from the listing's border style, the painter told; if the listing has no border, a modifiedAt change by someone else re-asserts the border |
+| A137 | A 6-square paint then a 1-square paint 1.5 s later, Miro's clock ahead of the referee's, slow ticks | Stamps are corrected by the learnt clock skew (not clamped to the previous read), so only 5 squares count |
+| A138 | Delete the banner or scoreboard | Rebuilt with the board's own style (border, font as first listed); without listed style the banner keeps its ember border, font 22 |
+| A139 | Delete a square | Rebuilt; the log says it was deleted and that Miro doesn't say who did it (no card line) |
+| A140 | Junk counts across games | Counted for the item's creator; reset starts with none (no junk lines on cards or the leaderboard) |
+| A141 | Drag a square off the forest onto a panel | A moved square: put back, "Put back C4 (moved)", not counted as junk |
+| A142 | Paint during the cooldown or over the batch | The undo line says "wait a few seconds (8 s is safe)" |
+| A143 | Freeze off (class rules), even with a freeze left in a saved game | Nobody is blocked; no message (card or banner) says frozen |
+| A144 | Slow ticks (6-8 s, or 18-25 s with a slow Miro) | Game time follows real time: a 10-minute game ends at about 10 minutes real |
 
 ## What Miro cannot prevent (the referee survives it instead)
 
@@ -137,7 +147,7 @@ listings. `tick()` catches everything and never throws.
   note (Miro has no conditional writes). Paints seen in the read are always judged before any fire
   write, so only the read-to-write gap (≈ the fast read, 1–3 s) is exposed. The agent sees the new color
   and tries again.
-- **Square border and label colors** aren't part of what the REST listing gives back, so restyling
-  them is not detected. It's cosmetic only; fills, positions, sizes and labels are what count.
+- **Square borders**: compared when the REST listing gives the shape's style (A136); otherwise a
+  change by someone else that left the fill alone re-asserts the border. Label colors are not checked.
 - **"Adopting" a YES**: if the asker writes YES on their own question and a teammate later edits the
   sticky for any reason, the last editor is that teammate, so it counts as their YES (A64 semantics).

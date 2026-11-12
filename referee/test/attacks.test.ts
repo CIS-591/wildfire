@@ -106,7 +106,7 @@ describe("paints", () => {
     g.fake.playerPaint("r2", "C5", C.water);
     await g.tick(3000);
     expect(g.fill("C5")).toBe(C.forest);
-    expect(g.card("r2")).toContain("wait 5 s");
+    expect(g.card("r2")).toContain("wait a few seconds (8 s is safe)");
   });
   it(T("A10", "many paints in one poll by one player: only the first counts"), async () => {
     const g = await setup({ live: true });
@@ -746,9 +746,9 @@ describe("Miro misbehaving, restarts, clocks", () => {
   });
   it(T("A134", "another team's player can't write in an Orders frame: their sticky there is removed, their edit to an order there is put back; the team's own edits stay"), async () => {
     const g = await setup({ live: true });
-    // r2 (Team 1) posts a fake order in Team 2's Orders; p2 (Team 2) writes its own order there.
+    // r2 (Team 1) posts a fake order in Team 2's Orders; p1 (Team 2) writes its own order there.
     const fake = g.fake.playerSticky("r2", "pine", "Pia: paint A1 A2 A3");
-    const own = g.fake.playerSticky("p2", "pine", "Pia: paint S9 S10");
+    const own = g.fake.playerSticky("p1", "pine", "Pia: paint S9 S10");
     await g.ticks(2);
     expect(g.fake.items.has(fake.id)).toBe(false);
     expect(g.card("r2")).toContain("write only in your own team's Orders");
@@ -1260,6 +1260,152 @@ describe("rehearsal 3 fixes", () => {
     expect(g.ref.state.attacks).toMatchObject([{ team: "cedar", to: "birch" }]);
     const cedar = Object.values(g.ref.state.players).filter((p) => p.team === "cedar");
     expect(g.ref.state.approvals[q3.id]).toMatchObject({ creator: cedar.find((p) => p.role === "boss")!.userId });
+  });
+});
+
+describe("tester fixes (human test, 12 Nov)", () => {
+  const borderOf = (g: Awaited<ReturnType<typeof setup>>, lab: string) => g.fake.borders.get(g.sq(lab).id) ?? {};
+  it(T("A135", "Orders frames: a sticky naming its own poster in another team's frame goes; a non-player's sticky there goes and their edit is put back; the referee's own stays"), async () => {
+    const g = await setup({ live: true });
+    // Rob (r2, Team 1) writes his OWN name in Team 2's Orders: still another team's frame.
+    const named = g.fake.playerSticky("r2", "pine", "Rob: paint A1 A2 A3");
+    // Hong never joined (not a player): his sticky in Team 1's Orders goes too.
+    const guest = g.fake.playerSticky("hong", "ridge", "Hong: paint A1 A2 A3");
+    const mine = g.fake.playerSticky("referee", "ridge", "Rita: paint C4");
+    const own = g.fake.playerSticky("r1", "ridge", "Rob: paint C4 C5");
+    await g.ticks(2);
+    expect(g.fake.items.has(named.id)).toBe(false);
+    expect(g.card("r2")).toContain("write only in your own team's Orders");
+    expect(g.fake.items.has(guest.id)).toBe(false);
+    expect(g.fake.items.has(mine.id)).toBe(true);
+    expect(g.fake.items.has(own.id)).toBe(true);
+    g.fake.playerEditSticky("hong", own.id, "Hong: paint A1 A2 A3");
+    await g.ticks(2);
+    expect(stripHtml(g.fake.items.get(own.id)!.content)).toContain("Rob: paint C4 C5");
+  });
+  it(T("A136", "a square's border recolored (a fake 'Team 1 lit this') is put back: from the listing's border, or by the change of modifiedAt when the listing has none"), async () => {
+    const violet = TEAM_INFO.ridge.color;
+    for (const listStyle of [true, false]) {
+      const g = await setup({ live: true, fast: true });
+      g.fake.listStyle = listStyle;
+      g.fake.playerEdit("p1", g.sq("Z4").id, { borderColor: violet, borderWidth: 14 });
+      await g.ticks(2);
+      expect(borderOf(g, "Z4"), `listStyle ${listStyle}`).toEqual(g.ref.strokeFor("Z4"));
+      expect(g.fill("Z4")).toBe(C.forest);
+      if (listStyle) expect(g.card("p1")).toContain("Put back the border of Z4");
+    }
+  });
+  it(T("A137", "cooldown: a 6-square paint and a 1-square paint 1.5 s later, with Miro's clock 2 s ahead and 6 s ticks: only 5 squares count"), async () => {
+    const g = await setup({ live: true, rules: { ...CALM, paintBatch: 5 } });
+    g.advance(5500);
+    for (const lab of ["C4", "C5", "C6", "C7", "C8", "C9"]) g.fake.playerPaint("r2", lab, C.water, g.now() + 2000);
+    await g.tick(500);
+    g.advance(1500);
+    g.fake.playerPaint("r2", "C10", C.water, g.now() + 2000);
+    await g.tick(6000);
+    expect(["C4", "C5", "C6", "C7", "C8", "C9", "C10"].map(g.fill)).toEqual([C.water, C.water, C.water, C.water, C.water, C.forest, C.forest]);
+    expect(g.ref.state.water.ridge).toBe(395);
+    // A legal next paint (8 s after the first) still counts.
+    g.advance(2000);
+    g.fake.playerPaint("r2", "C11", C.water, g.now() + 2000);
+    await g.tick(6000);
+    expect(g.fill("C11")).toBe(C.water);
+  });
+  it(T("A138", "a deleted banner is rebuilt with the board's own style (ember border, font) and the scoreboard with its own"), async () => {
+    const fake = FakeBoard.seeded(() => 0);
+    const at = (k: "banner" | "scoreboard") => fake.find((i) => i.type === "shape" && inside(FIXTURES[k], i.x, i.y))!.id;
+    fake.borders.set(at("banner"), { color: "#e8590c", width: 3 });
+    fake.styles.set(at("banner"), { fontSize: 24, fontFamily: "open_sans", textColor: "#1f2328" });
+    fake.borders.set(at("scoreboard"), { color: "#e2e5ea", width: 2 });
+    fake.styles.set(at("scoreboard"), { fontSize: 30 });
+    fake.listStyle = true;
+    const g = await setup({ fake, live: true });
+    for (const k of ["banner", "scoreboard"] as const) g.fake.playerDelete(g.game.fixtureIds[k]!);
+    await g.ticks(2);
+    const b = g.game.fixtureIds.banner!;
+    expect(g.fake.borders.get(b)).toEqual({ color: "#e8590c", width: 3 });
+    expect(g.fake.styles.get(b)).toMatchObject({ fontSize: 24, fontFamily: "open_sans" });
+    expect(g.fake.styles.get(g.game.fixtureIds.scoreboard!)).toMatchObject({ fontSize: 30 });
+    // A board whose listing gives no style: the banner still comes back with the ember border and font 22.
+    const h = await setup({ live: true });
+    h.fake.playerDelete(h.game.fixtureIds.banner!);
+    await h.ticks(2);
+    expect(h.fake.borders.get(h.game.fixtureIds.banner!)).toEqual({ color: "#e8590c", width: 4 });
+    expect(h.fake.styles.get(h.game.fixtureIds.banner!)).toMatchObject({ fontSize: 22 });
+  });
+  it(T("A139", "a deleted square: the log line says it was deleted and that Miro doesn't say by whom; no card line"), async () => {
+    const g = await setup({ live: true, fast: true });
+    g.fake.playerDelete(g.sq("C4").id);
+    await g.ticks(3);
+    expect(g.logs.join("\n")).toContain("put back: C4 (deleted; Miro doesn't say who deleted it)");
+    for (const [u] of [["r1"], ["r2"]]) expect(g.card(u!)).not.toContain("C4");
+  });
+  it(T("A140", "junk counts belong to the item's creator and start at zero in a fresh game: no junk lines on cards or the leaderboard after reset"), async () => {
+    const g = await setup({ live: true, fast: true });
+    for (let i = 0; i < 3; i++) {
+      const j = g.fake.vandalAdd("c1", "shape", { x: GRID_BOX.x + 200 + i * 70, y: GRID_BOX.y + 200, w: 50, h: 50 }, "LOL");
+      g.fake.playerEdit("p1", j.id, { content: "LOL!" }); // edited by someone else: still Cy's junk
+      await g.ticks(2);
+    }
+    expect(g.ref.state.junk).toEqual({ c1: 3 });
+    expect(g.fx("leaderboard")).toContain("Junk removed: Cy (3)");
+    await g.ref.reset();
+    expect(g.ref.state.junk).toEqual({});
+    for (const [u, n] of [["r1", "Rita"], ["p1", "Pat"], ["c1", "Cy"], ["b1", "Bea"]] as const) g.fake.playerJoin(u, n);
+    await g.ticks(2);
+    await g.ref.start();
+    await g.ticks(2);
+    expect(g.fx("leaderboard")).not.toContain("Junk");
+    for (const u of ["r1", "p1", "c1", "b1"]) expect(g.card(u)).not.toContain("removed");
+  });
+  it(T("A141", "a square dragged off the forest onto a panel is a moved square: put back with 'Put back C4 (moved)', not counted as junk"), async () => {
+    const g = await setup({ live: true, fast: true, statics: true });
+    const id = g.sq("C4").id;
+    g.fake.playerEdit("r2", id, { ...center(PANELS.rules) });
+    await g.ticks(4);
+    expect(g.fake.items.has(id)).toBe(false);
+    expect(g.fill("C4")).toBe(C.forest);
+    expect(g.card("r2")).toContain("Put back C4 (moved)");
+    expect(g.card("r2")).not.toContain("removed");
+    expect(g.ref.state.junk.r2 ?? 0).toBe(0);
+    expectConverged(g);
+  });
+  it(T("A142", "undo lines for the cooldown and the batch say 'wait a few seconds (8 s is safe)', never 'wait 5 s'"), async () => {
+    const g = await setup({ live: true, rules: { ...CALM, paintBatch: 2 } });
+    for (const lab of ["C4", "C5", "C6"]) g.fake.playerPaint("r2", lab, C.water);
+    await g.tick(1000);
+    expect(g.card("r2")).toContain("at most 2 squares per paint, then wait a few seconds (8 s is safe)");
+    g.advance(3000);
+    g.fake.playerPaint("r2", "C7", C.water);
+    await g.tick(500);
+    expect(g.card("r2")).toContain("C7 undone: wait a few seconds (8 s is safe) between paints");
+    expect(g.card("r2")).not.toMatch(/wait \d+ s/);
+  });
+  it(T("A143", "freeze off (class rules): no message ever says 'frozen' and nobody is blocked, even with a freeze left in a saved game"), async () => {
+    const g = await setup({ live: true, rules: { ...CALM, freeze: false } });
+    g.ref.state.timeoutUntil.r2 = g.now() + 600_000; // from an older game with freezes on
+    g.fake.playerPaint("r2", "C4", C.water);
+    g.fake.vandalAdd("c1", "image", { ...center(ORDERS.pine), w: 150, h: 150 });
+    g.fake.playerEdit("p1", g.game.fixtureIds.banner!, { content: "GAME OVER" });
+    await g.ticks(2);
+    expect(g.fill("C4")).toBe(C.water);
+    for (const u of ["r1", "r2", "p1", "c1", "b1"]) expect(g.card(u)).not.toMatch(/frozen/i);
+    await g.ref.pause();
+    expect(g.fx("banner")).not.toMatch(/frozen/i);
+  });
+  it(T("A144", "game time follows real time: ticks of 6-8 s (and slow 18-25 s ticks) end a 10-minute game within 10 min ± 10 s"), async () => {
+    for (const [lo, hi] of [[6000, 8000], [18_000, 25_000]] as const) {
+      const g = await setup({ live: true, rules: { ...CALM, burnTicks: 1_000_000 } });
+      const rng = mulberry32(5);
+      let real = 0;
+      while (g.ref.state.phase === "live" && real < 20 * 60_000) {
+        const ms = Math.round(lo + rng() * (hi - lo));
+        real += ms;
+        await g.tick(ms);
+      }
+      expect(g.ref.state.phase).toBe("over");
+      expect(Math.abs(real - 600_000), `ticks ${lo}-${hi} ms: ${real} ms real`).toBeLessThanOrEqual(Math.max(10_000, hi));
+    }
   });
 });
 

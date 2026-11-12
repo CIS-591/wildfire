@@ -20,7 +20,7 @@ interface RawItem {
   id: string;
   type: string;
   data?: { content?: string; title?: string };
-  style?: { fillColor?: string };
+  style?: { fillColor?: string; borderColor?: string; borderWidth?: string | number; fontSize?: string | number; fontFamily?: string; color?: string };
   position?: { x: number; y: number; relativeTo?: string };
   geometry?: { width?: number; height?: number; rotation?: number };
   parent?: { id?: string };
@@ -69,6 +69,12 @@ export class MiroRest implements BoardAdapter {
       modifiedAt: Date.parse(r.modifiedAt ?? "") || 0,
       parentId: r.parent?.id,
       rotation: r.geometry?.rotation || undefined,
+      // Shapes' style comes back in the listing (fillColor is already read from it); undefined when Miro leaves it out.
+      borderColor: r.style?.borderColor,
+      borderWidth: r.style?.borderWidth !== undefined && r.style.borderWidth !== "" ? Number(r.style.borderWidth) : undefined,
+      fontSize: r.style?.fontSize !== undefined && r.style.fontSize !== "" ? Number(r.style.fontSize) : undefined,
+      fontFamily: r.style?.fontFamily,
+      textColor: r.style?.color,
     };
   }
 
@@ -299,6 +305,7 @@ export class MiroRest implements BoardAdapter {
           fontSize: String(s.fontSize ?? 14),
           textAlign: s.textAlign ?? "center",
           textAlignVertical: s.textAlignVertical ?? "middle",
+          ...(s.fontFamily ? { fontFamily: s.fontFamily } : {}),
         },
         position: s.parentId && this.frames.get(s.parentId) ? { x: s.x - this.frames.get(s.parentId)!.x, y: s.y - this.frames.get(s.parentId)!.y } : { x: s.x, y: s.y },
         geometry: { width: s.w, height: s.h },

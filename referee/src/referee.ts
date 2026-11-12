@@ -40,6 +40,8 @@ export interface GameFile {
   resetAt?: number;
   /** Icon key ("medal_1", "trophy") -> the image placed for it and the url it shows. */
   icons?: Record<string, { id: string; url: string }>;
+  /** The board's own style of the banner and scoreboard (border, font) as first listed: a rebuilt one looks the same. */
+  fixtureStyle?: Partial<Record<FixtureKey, Partial<NewShape>>>;
   /** Items that refused every write (locked): never adopted again, deleted when Miro lets us. */
   stuck?: string[];
 }
@@ -104,6 +106,12 @@ const FEEDBACK_LINES = 6;
 const TOL = 1.5;
 /** Game time never jumps more than this per tick (a paused or crashed referee doesn't fast-forward the fire). */
 const MAX_STEP_MS = 15_000;
+/** A normal (not skipped) tick credits all the real time since the last one, up to this (a slow Miro makes 20-30 s ticks; the watchdog kills a hung referee after 60 s). */
+const MAX_TICK_STEP_MS = 60_000;
+/** Miro's clock may run ahead of ours by up to this much (learnt from timestamps in the future); more is a bogus stamp. */
+const MAX_SKEW_MS = 30_000;
+/** What a deleted item's log line says (Miro records no deleter, so nobody's card gets a line). */
+const DELETED = "deleted; Miro doesn't say who deleted it";
 /** A tracked item must be missing from this many reads in a row before it is rebuilt (a partial page is not a delete). */
 const MISSING_READS = 2;
 /** A write refused as locked (403) this many times in a row: the item is replaced. Only 403 means locked; 404 means deleted. */
@@ -125,7 +133,7 @@ const ICON_WRITES_PER_TICK = 24;
 /** Leaderboard rows are filled with their team's color (grey: not playing); the badge's text is the team color. */
 const LB_GREY = "#9ca3af";
 const FIXTURE_STYLE: Record<FixtureKey, Partial<NewShape>> = {
-  banner: { fill: COLORS.panel, fontSize: 22, textColor: COLORS.text },
+  banner: { fill: COLORS.panel, fontSize: 22, textColor: COLORS.text, borderColor: COLORS.heading, borderWidth: 4 }, // white with the ember border, like the board's
   scoreboard: { fill: COLORS.panel, fontSize: 30, textColor: COLORS.text },
   ...(Object.fromEntries(
     RANK_SLOTS.flatMap((n) => [
@@ -211,6 +219,14 @@ export class Referee {
   private memberNames: Record<string, string> | null = null;
   private written: Partial<Record<FixtureKey, string>> = {};
   private lastAdvanceAt: number | null = null;
+  /** A tick was skipped (read failed) or threw since game time last moved: the next catch-up is capped. */
+  private outage = false;
+  /** Square id -> label, for squares the referee stopped tracking (moved off, missing): found again, they are a moved square, not junk. */
+  private formerCells = new Map<string, string>();
+  /** Square id -> modifiedAt last seen (borders: when the listing has no border style). */
+  private cellMod = new Map<string, number>();
+  /** Border changes already told to the player ("id@modifiedAt"). */
+  private borderNoted = new Set<string>();
   frameIds: string[];
   private ordersIds: Partial<Record<Team, string>>;
   private sweep: Promise<unknown> | null = null;
@@ -337,9 +353,21 @@ export class Referee {
    */
   private when(ms: number, now: number): number {
     if (!Number.isFinite(ms) || ms <= 0) return now;
-    return ms > now ? Math.min(now, this.prevReadAt ?? now) : ms;
+    // Miro's clock ahead of ours: every stamp moves back by the same learnt skew, so the gap between two
+    // paints stays true (clamping each one to "our previous read" stretched them: a 1.5 s gap became 7 s and
+    // passed the cooldown).
+    const t = ms - this.skew;
+    if (t <= now) return t;
+    return t - now <= MAX_SKEW_MS ? now : Math.min(now, this.prevReadAt ?? now);
   }
   private prevReadAt: number | null = null;
+  private skew = 0;
+  private learnSkew(items: BoardItem[], now: number) {
+    for (const i of items) {
+      const d = (i?.modifiedAt ?? 0) - now;
+      if (d > this.skew && d <= MAX_SKEW_MS) this.skew = d;
+    }
+  }
 
   private learnSelf(items: BoardItem[]) {
     if (this.selfId || this.rehearsal || !this.createdIds.size) return;
@@ -455,6 +483,15 @@ export class Referee {
       this.shadow.set(fx[key]!, { content: it ? norm(it.content) : "", fill: FIXTURE_STYLE[key].fill, ...box });
       (this.game.fixtureBoxes ??= {})[key] = { ...box };
       if (it && it.fill?.toLowerCase() !== FIXTURE_STYLE[key].fill) this.shadow.get(fx[key]!)!.fill = it.fill ?? FIXTURE_STYLE[key].fill; // keep the board's own style
+      if (it && (key === "banner" || key === "scoreboard") && !created.includes(key)) {
+        const st: Partial<NewShape> = {};
+        if (it.borderColor) st.borderColor = it.borderColor;
+        if (it.borderWidth && Number.isFinite(it.borderWidth)) st.borderWidth = it.borderWidth;
+        if (it.fontSize && Number.isFinite(it.fontSize)) st.fontSize = it.fontSize;
+        if (it.fontFamily) st.fontFamily = it.fontFamily;
+        if (it.textColor) st.textColor = it.textColor;
+        if (Object.keys(st).length) (this.game.fixtureStyle ??= {})[key] = st;
+      }
     }
     if (created.length) this.log(`created missing fixtures: ${created.join(", ")}`);
     // Inbox cards: the saved map first (it knows cards the referee recreated), then each player's own card.
@@ -650,7 +687,7 @@ export class Referee {
 
   /** Shown while no referee is running, so agents wait instead of painting into the void. */
   async pause(): Promise<void> {
-    if (this.state.phase !== "over") await this.writeFixture("banner", "<p><b>PAUSED · the fire is frozen</b></p><p>wait for the referee</p>");
+    if (this.state.phase !== "over") await this.writeFixture("banner", "<p><b>PAUSED · the fire is on hold</b></p><p>wait for the referee</p>");
   }
 
   // ---------- the loop ----------
@@ -763,6 +800,7 @@ export class Referee {
     } catch (e) {
       // Last line of defence: a bug or a board shape nobody foresaw must not stop the game.
       this.log(`tick error (the game goes on): ${errMsg(e)}`);
+      this.outage = true;
       return { paints: 0, tampers: 0, joins: 0, fire: this.burning(), changed: 0, writes: this.writesThisTick, deferred: 0, error: errMsg(e) };
     } finally {
       this.lastWrites = this.writesThisTick;
@@ -796,12 +834,14 @@ export class Referee {
       await Promise.all([byIdRead, typedRead]);
       // Miro is down or rate limiting: judge nothing, write nothing; game time waits (capped catch-up next tick).
       this.log(`board read failed (${errMsg(e)}); trying again next tick`);
+      this.outage = true;
       return { paints: 0, tampers: 0, joins: 0, fire: this.burning(), changed: 0, writes: 0, deferred: 0, skipped: true };
     }
     const { items, full, since } = read;
     const now = this.now();
     this.goneThisTick = 0;
     this.learnSelf(items);
+    this.learnSkew(items, now);
     const byId = new Map<string, BoardItem>();
     for (const i of items) if (i && typeof i.id === "string") byId.set(i.id, i);
     // The fixtures (and a few cards) read by id now: a slow full listing may be many seconds old.
@@ -840,6 +880,7 @@ export class Referee {
       if (lab) {
         this.idCell.delete(id);
         this.cellId.delete(lab); // rebuilt below, in batches
+        this.formerCells.set(id, lab); // dragged out of its frame (the fast read lost it): judged as moved if seen again
         tampers.push({ userId: "unknown", what: "deleted", target: lab, at: now });
         continue;
       }
@@ -883,6 +924,7 @@ export class Referee {
           continue;
         }
         const bf = (it.fill ?? "").toLowerCase();
+        this.checkBorder(lab, id, it, bf === (sh.fill ?? "").toLowerCase());
         if (bf === (sh.fill ?? "").toLowerCase()) continue;
         sh.fill = bf; // what the board shows now; reconciliation below brings it back to the engine
         judged.add(lab);
@@ -932,7 +974,15 @@ export class Referee {
         }
         if (!this.isJunk(it)) continue;
         // Junk on the forest, the fixtures, a panel or an Orders frame: removed (retried with backoff while it is locked).
-        if (!this.stuck.has(it.id) && !this.createdIds.has(it.id)) {
+        const former = this.formerCells.get(it.id);
+        if (former && it.type === "shape" && parseLabel(norm(it.content))) {
+          // One of our squares dragged off the forest (onto a panel...): a moved square, put back, not junk.
+          if (!this.stuck.has(it.id)) {
+            this.penalize(tampers, it.modifiedBy, "moved", former, it.id, this.when(it.modifiedAt, now));
+            this.log(`\nput back: ${former} (moved off the forest)`);
+          }
+          this.stuck.add(it.id);
+        } else if (!this.stuck.has(it.id) && !this.createdIds.has(it.id)) {
           const who = parseLabel(norm(it.content)) && it.w < 2 * GRID.pitch ? it.modifiedBy : it.createdBy;
           this.penalize(tampers, who, "added", this.junkWhat(it), it.id, this.when(it.createdAt, now));
         }
@@ -986,14 +1036,17 @@ export class Referee {
     this.stale.clear(); // only the first look after a restart can tell an unwatched paint
     for (const t of tampers) {
       if (t.userId === "unknown") {
-        this.log(`\nput back: ${t.target} (${t.what})`);
+        this.log(`\nput back: ${t.target} (${t.what === "deleted" ? DELETED : t.what})`);
         continue;
       }
       this.pushFeedback(t.userId, (t.what === "added" ? decideJunk(state, { userId: t.userId, what: t.target, at: t.at }, this.rules) : decideTamper(state, this.rules, t)).feedback);
     }
 
     // 6. the fire: game time moves on (spread, burn-out, lightning, attacks running out, the end)
-    const dt = this.lastAdvanceAt === null ? 0 : Math.min(MAX_STEP_MS, Math.max(0, now - this.lastAdvanceAt));
+    // Game time follows real time while the referee runs (a slow 25 s tick counts 25 s); only after skipped
+    // ticks (Miro down) is the catch-up capped, so an outage or pause never fast-forwards the fire.
+    const dt = this.lastAdvanceAt === null ? 0 : Math.min(this.outage ? MAX_STEP_MS : MAX_TICK_STEP_MS, Math.max(0, now - this.lastAdvanceAt));
+    this.outage = false;
     this.lastAdvanceAt = now;
     const adv = advance(state, this.rules, this.cellList, this.byPos, this.rng, dt, now);
     for (const e of adv.events) this.log(`\n${e}`);
@@ -1011,6 +1064,32 @@ export class Referee {
     if (this.goneThisTick) deferred += (await this.execute([...this.rebuildOps(), ...this.fixtureOps(), ...this.cardOps()])).deferred;
     this.prevReadAt = now;
     return { paints: paints.length, tampers: tampers.length, joins, fire: this.burning(), changed: adv.changed.length, writes: this.writesThisTick, reads: this.readsThisTick, deferred };
+  }
+
+  /**
+   * A square's border recolored (a fake "Team 1 lit this"): with the border in the listing, compared with
+   * what we last wrote and put back (the player is told); without it, a change of modifiedAt by someone
+   * else that left the fill alone re-asserts the border (one cheap write).
+   */
+  private checkBorder(lab: string, id: string, it: BoardItem, fillSame: boolean) {
+    const prevMod = this.cellMod.get(id);
+    this.cellMod.set(id, it.modifiedAt);
+    if (this.isSelf(it.modifiedBy)) return;
+    if (it.borderColor !== undefined || it.borderWidth !== undefined) {
+      const seen = `${(it.borderColor ?? "").toLowerCase()}/${Number(it.borderWidth)}`;
+      const was = this.borderWritten.get(lab);
+      if (was === undefined || seen === was.toLowerCase()) return;
+      this.borderWritten.set(lab, seen); // cellOps writes the right one back
+      const want = this.strokeFor(lab);
+      if (seen === `${want.color.toLowerCase()}/${want.width}`) return;
+      const k = `${id}@${it.modifiedAt}`;
+      if (this.borderNoted.has(k)) return;
+      this.borderNoted.add(k);
+      this.log(`\nput back: the border of ${lab} (recolored${it.modifiedBy ? ` by ${this.state.players[it.modifiedBy]?.name ?? it.modifiedBy}` : ""})`);
+      if (it.modifiedBy && this.state.players[it.modifiedBy]) this.pushFeedback(it.modifiedBy, `⚠️ Put back the border of ${lab}: borders show whose fire it is. Only paint squares blue.`);
+      return;
+    }
+    if (this.selfId && fillSame && prevMod !== undefined && it.modifiedAt !== prevMod) this.borderWritten.delete(lab);
   }
 
   /** Something that does not belong where it is: on the forest or over a fixture. */
@@ -1385,7 +1464,7 @@ export class Referee {
       this.idCell.delete(id);
       this.cellId.delete(lab);
       this.shadow.delete(id);
-      this.log(`\nput back: ${lab} (deleted)`);
+      this.log(`\nput back: ${lab} (${DELETED})`);
       return;
     }
     const key = FIXTURE_KEYS.find((k) => this.game.fixtureIds[k] === id);
@@ -1393,7 +1472,7 @@ export class Referee {
       delete this.game.fixtureIds[key];
       this.written[key] = undefined;
       this.shadow.delete(id);
-      this.log(`\nput back: the ${key} (deleted)`);
+      this.log(`\nput back: the ${key} (${DELETED})`);
       return;
     }
     const owner = [...this.inboxCard].find(([, cid]) => cid === id)?.[0];
@@ -1401,7 +1480,7 @@ export class Referee {
       this.inboxCard.delete(owner);
       this.shadow.delete(id);
       if (this.state.players[owner]) this.replacedCards.add(owner);
-      this.log(`\nput back: ${this.state.players[owner]?.name ?? owner}'s inbox card (deleted)`);
+      this.log(`\nput back: ${this.state.players[owner]?.name ?? owner}'s inbox card (${DELETED})`);
       return;
     }
     this.shadow.delete(id);
@@ -1427,6 +1506,14 @@ export class Referee {
       if (this.isSelf(s.createdBy) || this.removedStickies.has(s.id)) continue;
       const cur = this.stickyNow.get(s.id);
       const creator = state.players[s.createdBy];
+      // Not a player (never joined) and not the instructor (the token owner): during the game it goes too.
+      const outsider = (u: string) => !!u && !state.players[u] && !!this.selfId && !this.isSelf(u) && state.phase === "live";
+      if (outsider(s.createdBy)) {
+        this.removedStickies.add(s.id);
+        this.log(`\nremoved a sticky in ${teamName(s.team)}'s Orders by ${s.createdBy}, who hasn't joined`);
+        ops.push({ key: `junk:${s.id}`, prio: 3, run: () => this.board.deleteItem(s.id) });
+        continue;
+      }
       if (creator && creator.team !== s.team) {
         this.removedStickies.add(s.id);
         const line = `🗑️ Removed your sticky in ${teamName(s.team)}'s Orders: write only in your own team's Orders.`;
@@ -1439,8 +1526,8 @@ export class Referee {
         continue;
       }
       const editor = state.players[s.modifiedBy];
-      if (editor && editor.team !== s.team) {
-        this.penalize(tampers, s.modifiedBy, "edited", `a sticky in ${teamName(s.team)}'s Orders`, s.id, this.when(cur?.at ?? 0, now));
+      if ((editor && editor.team !== s.team) || outsider(s.modifiedBy)) {
+        if (editor) this.penalize(tampers, s.modifiedBy, "edited", `a sticky in ${teamName(s.team)}'s Orders`, s.id, this.when(cur?.at ?? 0, now));
         const good = this.stickyGood.get(s.id);
         if (good !== undefined && good !== cur?.raw) ops.push({ key: `sticky:${s.id}`, id: s.id, prio: 3, run: () => this.board.updateShape(s.id, { content: good }) });
         continue;
@@ -1490,6 +1577,7 @@ export class Referee {
 
   /** A square moved/edited/locked: forget it (deleted when Miro lets us) and build a fresh one. */
   private retireCell(lab: string, id: string, ops: Op[]) {
+    this.formerCells.set(id, lab);
     this.idCell.delete(id);
     this.cellId.delete(lab);
     this.shadow.delete(id);
@@ -2175,8 +2263,8 @@ export class Referee {
     // Exactly where the fixture was (agents find a recreated one by a small read of that box).
     const saved = this.game.fixtureBoxes?.[key];
     const box = saved && fitsFixture(saved, key) ? saved : { ...center(FIXTURES[key]), w: FIXTURES[key].w, h: FIXTURES[key].h };
-    const st = { ...FIXTURE_STYLE[key], ...this.fixtureColors(key) };
-    return { content, fill: st.fill!, x: box.x, y: box.y, w: box.w, h: box.h, fontSize: st.fontSize, textAlign: st.textAlign, textAlignVertical: st.textAlignVertical, textColor: st.textColor, borderColor: st.borderColor ?? COLORS.panelBorder, borderWidth: st.borderWidth ?? 2, shape: st.shape };
+    const st = { ...FIXTURE_STYLE[key], ...this.game.fixtureStyle?.[key], ...this.fixtureColors(key) };
+    return { content, fill: st.fill!, x: box.x, y: box.y, w: box.w, h: box.h, fontSize: st.fontSize, fontFamily: st.fontFamily, textAlign: st.textAlign, textAlignVertical: st.textAlignVertical, textColor: st.textColor, borderColor: st.borderColor ?? COLORS.panelBorder, borderWidth: st.borderWidth ?? 2, shape: st.shape };
   }
 
   cellShape(cell: CellDef, fill: string): NewShape {

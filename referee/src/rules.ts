@@ -737,17 +737,17 @@ export function decidePaint(state: GameState, rules: RuleSet, cells: Map<string,
   if (!player) return reject(state, ev.userId, "unjoined", `❌ ${lab} undone: you haven't joined. Run /join first.`);
   const team = player.team;
   const frozen = state.timeoutUntil[ev.userId];
-  if (frozen !== undefined && ev.at < frozen) return reject(state, ev.userId, "timeout", `🧊 ${lab} undone: you are frozen ${Math.ceil((frozen - ev.at) / 1000)} s more.`);
+  if (rules.freeze !== false && frozen !== undefined && ev.at < frozen) return reject(state, ev.userId, "timeout", `🧊 ${lab} undone: you are frozen ${Math.ceil((frozen - ev.at) / 1000)} s more.`);
   // Batches: up to paintBatch squares in one go (same poll, within BATCH_WINDOW of its first square), then the cooldown.
   state.batch ??= {};
   const b = state.batch[ev.userId];
   const sameBatch = (rules.paintBatch ?? 1) > 1 && !!b && ev.at >= b.at && (ev.at - b.at < BATCH_WINDOW_MS || (ev.batchId !== undefined && ev.batchId === b.id));
   if (sameBatch) {
-    if (b.n >= (rules.paintBatch ?? 1)) return reject(state, ev.userId, "batch", `✋ ${lab} undone: at most ${rules.paintBatch ?? 1} squares per paint, then wait ${rules.cooldownSeconds} s.`);
+    if (b.n >= (rules.paintBatch ?? 1)) return reject(state, ev.userId, "batch", `✋ ${lab} undone: at most ${rules.paintBatch ?? 1} squares per paint, then wait a few seconds (8 s is safe).`);
   } else {
     const last = state.lastPaintAt[ev.userId];
     const cool = rules.cooldownSeconds * 1000;
-    if (last !== undefined && ev.at - last < cool) return reject(state, ev.userId, "cooldown", `⏳ ${lab} undone: wait ${rules.cooldownSeconds} s between paints.`);
+    if (last !== undefined && ev.at - last < cool) return reject(state, ev.userId, "cooldown", `⏳ ${lab} undone: wait a few seconds (8 s is safe) between paints.`);
   }
   // An accepted square joins the current batch, or starts a new one (which restarts the cooldown).
   const startBatch = () => {

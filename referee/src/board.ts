@@ -15,6 +15,12 @@ export interface BoardItem {
   modifiedAt: number; // epoch ms
   parentId?: string; // the frame it sits in (x/y are still absolute)
   rotation?: number; // degrees; 0 or absent = upright
+  /** Shape style as the listing gives it (absent when Miro leaves it out). */
+  borderColor?: string;
+  borderWidth?: number;
+  fontSize?: number;
+  fontFamily?: string;
+  textColor?: string;
 }
 
 /** A Miro frame (grid band or Orders frame). Center-based like every BoardItem. */
@@ -53,6 +59,7 @@ export interface NewShape {
   shape?: "rectangle" | "round_rectangle" | "circle";
   textAlign?: "left" | "center";
   textAlignVertical?: "top" | "middle";
+  fontFamily?: string;
   parentId?: string; // create inside this frame (x/y given absolute)
 }
 
