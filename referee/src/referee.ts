@@ -18,6 +18,7 @@ import {
   MAX_OPEN_QUESTIONS, advance, closeUnopenedCentre, openTeams, aheadOf, decideJunk, drawTeams, placeTeams, playingTeams, rankTeams, windOn, paintsOf, applyJoin, createState, decidePaint, decideTamper, judgeSticky, mulberry32, pendingStickies, questionAnswered, questionTarget, questionText, scaleRules, scores, startGame,
   stickyKind, stopGame, teamName, type Decision, type GameState,
   type PaintEvent, type Rng, type RuleSet, type StickyView, type TamperEvent,
+  emptyIllegal,
 } from "./rules.js";
 
 export type FixtureKey = keyof typeof FIXTURES;
@@ -572,12 +573,21 @@ export class Referee {
 
   // ---------- setup commands ----------
   /** A new game: starting colors, empty Inbox and Orders frames, no players. */
-  async reset(): Promise<{ repainted: number; deleted: number }> {
+  async reset(keepPlayers = false): Promise<{ repainted: number; deleted: number }> {
     if (!this.cellId.size) await this.discover();
+    const old = this.game.state;
+    const cards = this.game.cards, slots = this.game.slots;
     this.game.state = createState(this.cellList, this.rules, this.rng);
     this.game.resetAt = this.now();
     this.game.cards = {};
     this.game.slots = {};
+    if (keepPlayers && old) {
+      // A rematch: same players, teams and roles, same inbox cards and Orders stickies; a fresh forest.
+      this.game.state.players = old.players;
+      for (const p of Object.values(old.players)) this.game.state.stats.byPlayer[p.userId] = { name: p.name, team: p.team, role: p.role, water: 0, lit: 0, illegal: emptyIllegal() };
+      this.game.cards = cards;
+      this.game.slots = slots;
+    }
     const items = await this.board.listItems();
     const fixtureIds = new Set(Object.values(this.game.fixtureIds));
     const writes: (() => Promise<unknown>)[] = [];
@@ -602,7 +612,7 @@ export class Referee {
         continue;
       }
       if (fixtureIds.has(it.id) || this.staticIds.has(it.id)) continue;
-      const junk = this.isInboxCard(it) || (it.type === "sticky_note" && this.ordersTeamOf(it)) || this.isJunk(it);
+      const junk = keepPlayers ? !this.isInboxCard(it) && !(it.type === "sticky_note" && this.ordersTeamOf(it)) && this.isJunk(it) : this.isInboxCard(it) || (it.type === "sticky_note" && this.ordersTeamOf(it)) || this.isJunk(it);
       if (junk) {
         writes.push(() => this.board.deleteItem(it.id));
         this.shadow.delete(it.id);
@@ -611,9 +621,9 @@ export class Referee {
     }
     await pool(writes.map((w) => () => w().catch((e: Error) => this.log(`reset write failed: ${errMsg(e)}`))), this.concurrency);
     for (const id of [...this.shadow.keys()]) if (!this.idCell.has(id) && !fixtureIds.has(id)) this.shadow.delete(id);
-    this.inboxCard.clear();
+    if (!keepPlayers) this.inboxCard.clear();
     this.feedback.clear();
-    this.stickies = [];
+    if (!keepPlayers) this.stickies = [];
     this.written = {};
     this.replacedCards.clear();
     this.persistIds();
@@ -1666,6 +1676,7 @@ export class Referee {
           const s = this.shadow.get(id);
           if (s) s.fill = want;
           this.borderWritten.set(lab, bkey);
+          if (st === "fire" && this.state.unshown?.length) this.state.unshown = this.state.unshown.filter((l) => l !== lab);
         },
         fail: (_e, n) => {
           if (n < STUCK_AFTER || this.cellId.get(lab) !== id) return;

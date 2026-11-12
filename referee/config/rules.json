@@ -1,8 +1,8 @@
 {
-  "spreadSeconds": 20,
+  "spreadSeconds": 5,
   "pSide": 0.35,
   "pDiag": 0.05,
-  "burnTicks": 3,
+  "burnTicks": 4,
   "wind": {
     "enabled": false,
     "pDown": 0.65,
@@ -41,48 +41,51 @@
     "points": [
       {
         "perTeam": 1,
-        "pSide": 0.18,
-        "pDiag": 0.027,
+        "pSide": 0.06,
+        "pDiag": 0.009,
         "water": 45
       },
       {
         "perTeam": 2,
-        "pSide": 0.2,
-        "pDiag": 0.03,
+        "pSide": 0.066,
+        "pDiag": 0.01,
         "water": 55
       },
       {
         "perTeam": 3,
-        "pSide": 0.25,
-        "pDiag": 0.037,
+        "pSide": 0.083,
+        "pDiag": 0.0123,
         "water": 65
       },
       {
         "perTeam": 4,
-        "pSide": 0.265,
-        "pDiag": 0.04,
+        "pSide": 0.088,
+        "pDiag": 0.0133,
         "water": 70
       },
       {
         "perTeam": 5,
-        "pSide": 0.29,
-        "pDiag": 0.043,
+        "pSide": 0.096,
+        "pDiag": 0.0143,
         "water": 75
       },
       {
         "perTeam": 7.5,
-        "pSide": 0.33,
-        "pDiag": 0.05,
+        "pSide": 0.109,
+        "pDiag": 0.0167,
         "water": 75
       },
       {
         "perTeam": 10,
-        "pSide": 0.38,
-        "pDiag": 0.057,
+        "pSide": 0.126,
+        "pDiag": 0.019,
         "water": 85
       }
     ]
   },
   "randomTeams": true,
-  "freeze": false
+  "freeze": false,
+  "equalSpread": true,
+  "waterNearFire": true,
+  "burnAfterShown": true
 }

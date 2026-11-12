@@ -44,6 +44,12 @@ export interface RuleSet {
   drawTeams?: boolean;
   /** Freeze a player after tampering or junk (false: the move is only undone, nobody is blocked). Default on. */
   freeze?: boolean;
+  /** Every playing team gets the same number of new fires per spread (the average of what chance would give). */
+  equalSpread?: boolean;
+  /** Blue only on green squares within 2 squares of a fire, never on the fire itself. */
+  waterNearFire?: boolean;
+  /** A newly lit fire neither spreads nor burns down until the referee has shown it on the board. */
+  burnAfterShown?: boolean;
   /** A player joining gets a random team among the smallest open ones (off: the first smallest, Team 1 first). */
   randomTeams?: boolean;
   /** Fire and water follow the class size, set once when the game starts (see scaleRules). */
@@ -176,6 +182,8 @@ export interface GameState {
   playing?: Team[];
   /** The fire and water auto-scale chose at the start (absent: the rules file's own). */
   scaled?: ScaledRules;
+  /** Fires lit that the board doesn't show yet (rules.burnAfterShown). */
+  unshown?: string[];
   events: GameEvent[];
   /** The team strictly ahead, for the banner's "TAKES THE LEAD!" (presentation only; absent on old saves). */
   leader?: Team;
@@ -577,8 +585,9 @@ export interface AdvanceResult {
 }
 
 /** One spread: every burning square may ignite its green neighbours, old fires burn out. */
-export function spread(state: GameState, rules: RuleSet, cells: CellDef[], byPos: Map<string, CellDef>, rng: Rng): string[] {
-  const fires = cells.filter((c) => state.cells[c.label] === "fire");
+export function spread(state: GameState, rules: RuleSet, cells: CellDef[], byPos: Map<string, CellDef>, rng: Rng, fresh: Set<string> = new Set()): string[] {
+  // Fires lit since the board was last written don't spread or burn down yet: their timer starts once shown.
+  const fires = cells.filter((c) => state.cells[c.label] === "fire" && !fresh.has(c.label));
   const lit = new Map<string, Origin>(); // a new fire inherits the origin of the square that lit it
   for (const f of fires) {
     NEIGHBOURS.forEach((w, i) => {
@@ -587,6 +596,7 @@ export function spread(state: GameState, rules: RuleSet, cells: CellDef[], byPos
       if (rng() < igniteChance(rules, i, state.wind)) lit.set(n.label, state.origin[f.label] ?? "wild");
     });
   }
+  if (rules.equalSpread) equalize(state, fires, byPos, lit, rng);
   const changed: string[] = [];
   for (const f of fires) {
     state.burnLeft[f.label] = (state.burnLeft[f.label] ?? 1) - 1;
@@ -604,10 +614,39 @@ export function spread(state: GameState, rules: RuleSet, cells: CellDef[], byPos
   }
   for (const [lab, origin] of lit) {
     ignite(state, rules, lab, origin);
+    fresh.add(lab);
     changed.push(lab);
   }
   state.spreads++;
   return changed;
+}
+
+/**
+ * Equal spread: each playing team gets k new fires this spread, k = the average chance gave the playing teams.
+ * A team over k keeps a random k; a team under k gets more of the green squares next to its own fires (never
+ * fires out of nowhere, so a team that put its fire out stays rewarded). Other areas spread by chance.
+ */
+function equalize(state: GameState, fires: CellDef[], byPos: Map<string, CellDef>, lit: Map<string, Origin>, rng: Rng) {
+  const playing = playingTeams(state);
+  if (!playing.length) return;
+  const cellOf = new Map<string, CellDef>();
+  for (const c of byPos.values()) cellOf.set(c.label, c);
+  const byTeam = new Map<Team, string[]>(playing.map((t) => [t, []]));
+  for (const lab of lit.keys()) byTeam.get(cellOf.get(lab)!.sector)?.push(lab);
+  const k = Math.round(playing.reduce((n, t) => n + byTeam.get(t)!.length, 0) / playing.length);
+  const shuffle = <T,>(a: T[]) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j]!, a[i]!]; } return a; };
+  for (const t of playing) {
+    const mine = byTeam.get(t)!;
+    if (mine.length > k) for (const lab of shuffle([...mine]).slice(k)) lit.delete(lab);
+    else if (mine.length < k) {
+      const extra: [string, Origin][] = [];
+      for (const f of fires) for (const w of NEIGHBOURS) {
+        const n = byPos.get(`${f.col + w.dc},${f.row + w.dr}`);
+        if (n && n.sector === t && state.cells[n.label] === "forest" && !lit.has(n.label) && !extra.some(([l]) => l === n.label)) extra.push([n.label, state.origin[f.label] ?? "wild"]);
+      }
+      for (const [lab, o] of shuffle(extra).slice(0, k - mine.length)) lit.set(lab, o);
+    }
+  }
 }
 
 /**
@@ -646,6 +685,8 @@ export function strike(state: GameState, rules: RuleSet, cells: CellDef[], rng: 
  */
 export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPos: Map<string, CellDef>, rng: Rng, dtMs: number, realNow = 0): AdvanceResult {
   const changed = new Set<string>();
+  // Fires the board doesn't show yet (written by the referee once its write succeeds): their timer waits.
+  const fresh = new Set<string>((state.unshown ?? []).filter((l) => state.cells[l] === "fire"));
   const events: string[] = [];
   if (state.phase !== "live") return { changed: [], events, ended: [] };
   const target = state.elapsed + Math.max(0, dtMs);
@@ -683,7 +724,7 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
       pushEvent(state, `THE WIND TURNED! Now blowing ${WIND[state.wind]!.word}`);
       events.push(`wind ${WIND[state.wind]!.name}`);
     } else {
-      for (const l of spread(state, rules, cells, byPos, rng)) changed.add(l);
+      for (const l of spread(state, rules, cells, byPos, rng, rules.burnAfterShown ? fresh : undefined)) changed.add(l);
       state.nextSpreadAt += rules.spreadSeconds * 1000;
     }
     trackLead(state, cells);
@@ -695,6 +736,7 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
     }
   }
   if (state.phase === "live") state.elapsed = target;
+  if (rules.burnAfterShown) state.unshown = [...fresh];
   const ended = state.attacks.filter((g) => g.until <= state.elapsed || state.phase !== "live");
   state.attacks = state.attacks.filter((g) => !ended.includes(g));
   return { changed: [...changed], events, ended };
@@ -727,6 +769,12 @@ const ORANGE = () => `orange ${STATE_COLOR.fire}`;
  * painter's own area (1 shared water). Orange: on a green square in a neighbour's area during the team's
  * approved attack (at most attackSquares per attack). Events for one tick must be passed in time order.
  */
+/** A burning square within 2 squares (rows and columns) of `cell`: water goes only around a fire. */
+function nearFire(state: GameState, cells: Map<string, CellDef>, cell: CellDef): boolean {
+  for (const c of cells.values()) if (state.cells[c.label] === "fire" && Math.abs(c.col - cell.col) <= 2 && Math.abs(c.row - cell.row) <= 2) return true;
+  return false;
+}
+
 export function decidePaint(state: GameState, rules: RuleSet, cells: Map<string, CellDef>, ev: PaintEvent): Decision {
   const cell = cells.get(ev.label);
   if (!cell) return { accept: false, feedback: `❌ ${ev.label} undone: no such square.` };
@@ -763,7 +811,9 @@ export function decidePaint(state: GameState, rules: RuleSet, cells: Map<string,
   const ps = state.stats.byPlayer[ev.userId]!;
 
   if (color === "water") {
-    if (cur !== "forest" && cur !== "fire") return reject(state, ev.userId, "square", `❌ ${lab} undone: it is already ${cur === "water" ? "water" : "burnt"}. Paint green or orange squares.`);
+    if (rules.waterNearFire && cur === "fire") return reject(state, ev.userId, "square", `❌ ${lab} undone: water can't go on fire. Paint the green squares around the fire.`);
+    if (cur !== "forest" && cur !== "fire") return reject(state, ev.userId, "square", `❌ ${lab} undone: it is already ${cur === "water" ? "water" : "burnt"}. Paint green squares around the fire.`);
+    if (rules.waterNearFire && !nearFire(state, cells, cell)) return reject(state, ev.userId, "square", `❌ ${lab} undone: no fire within 2 squares. Paint only green squares around a fire.`);
     if (away) return reject(state, ev.userId, "area", `🧭 ${lab} undone: it is ${teamName(cell.sector)}'s area. Paint ${BLUE()} only in your team's area (${sectorText(team)}).`);
     if ((state.water[team] ?? 0) <= 0) return reject(state, ev.userId, "water", `🚱 ${lab} undone: ${teamName(team)}'s water is empty.`);
     startBatch();

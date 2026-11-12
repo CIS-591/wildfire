@@ -279,7 +279,7 @@ async function main() {
     case "reset": {
       takeLock();
       const { ref, game } = await makeReferee(miro());
-      const r = await ref.reset();
+      const r = await ref.reset(process.argv.includes("--keep-players"));
       saveGame(game);
       saveLiveIds(ref.liveIds(), process.env.MIRO_BOARD_ID);
       console.log(`live ids: ${LIVE_IDS_FILE} (python3 ../board/build/sync_ids.py copies them to the kit)`);
