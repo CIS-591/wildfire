@@ -161,14 +161,14 @@ const rulesFile = () => (opt("rules") ? path.resolve(opt("rules")!) : undefined)
 const rulesHtml = (r: RuleSet) => [
   "<b>RULES</b>",
   ...[
-    "Your area = the thick border in your team's color.",
-    "Paint only <b>blue</b>, only in your area, on green or orange.",
-    `Up to ${r.paintBatch} squares at a time, then wait ${r.cooldownSeconds} s.`,
-    "<b>Orange</b> only after a teammate's <b>YES</b>: 1 square next door.",
+    "Your team's area has a thick border in your team's color.",
+    "Your Claude paints <b>blue</b> (water) on fire or trees there.",
+    "Fire spreads every 20 s. Blue stops it. Black is burnt.",
+    "Most green trees left after 10 minutes wins.",
+    "Attack: a teammate says <b>YES</b>, 1 square next door burns.",
     `Each team has ${r.attacksPerTeam} attacks and one water bucket.`,
     "Write only in your own team's Orders.",
-    "Don't move, edit or delete anything else.",
-    "No images, shapes or text on the board.",
+    "Don't move, edit or delete anything. No images or text.",
   ].map((l, i) => `<b>${i + 1}.</b> ${l}`),
   "<b>Break a rule:</b> it is undone and you are frozen.",
 ];
@@ -215,7 +215,7 @@ async function build() {
   const texts = [
     { content: "<b>WILDFIRE</b>", x: PANELS.title.x, y: PANELS.title.y + 45, w: PANELS.title.w, fontSize: 72, color: COLORS.heading },
     { content: "<b>LEADERBOARD · live</b>", x: PANELS.leaderboard.x + 24, y: PANELS.leaderboard.y + 40, w: 600, fontSize: 30, color: COLORS.heading },
-    { content: "<b>TEAMS &amp; ROLES</b>", x: PANELS.inbox.x + 40, y: PANELS.inbox.y + 50, w: 1600, fontSize: 36, color: COLORS.heading },
+    { content: "<b>PLAYERS</b>", x: PANELS.inbox.x + 40, y: PANELS.inbox.y + 50, w: 1600, fontSize: 36, color: COLORS.heading },
     { content: rulesHtml(loadRules(rulesFile())).map((l) => `<p>${l}</p>`).join(""), x: PANELS.rules.x + 24, y: PANELS.rules.y + 250, w: PANELS.rules.w - 48, fontSize: 17, color: COLORS.text },
     ...Array.from({ length: GRID.cols }, (_, c) => ({ content: `<b>${colName(c)}</b>`, x: c * GRID.pitch, y: -36, w: GRID.cell, fontSize: 24, color: TEAM_INFO[c < 18 ? "ridge" : "pine"].color, align: "center" as const })),
     ...Array.from({ length: GRID.rows }, (_, r) => ({ content: `<b>${r + 1}</b>`, x: -84, y: r * GRID.pitch + 30, w: 70, fontSize: 24, color: TEAM_INFO[r < 17 ? "ridge" : "cedar"].color, align: "right" as const })),

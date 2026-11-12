@@ -62,14 +62,14 @@ async function call(method, path, body) {
 // (legible on a classroom projector at whole-board zoom). LINES = rendered line count of each rule at FONT px in
 // the 696-px column (checked in the browser); positions below depend on it.
 const RULES = [
-  ["Your area = the thick border in your team's color.", 1],
-  ["Paint only <b>blue</b>, only in your area, on green or orange.", 1],
-  [`Up to ${r.paintBatch} squares at a time, then wait ${r.cooldownSeconds} s.`, 1],
-  [`<b>Orange</b> only after a teammate's <b>YES</b>: 1 square next door.`, 1],
+  ["Your team's area has a thick border in your team's color.", 1],
+  ["Your Claude paints <b>blue</b> (water) on fire or trees there.", 1],
+  ["Fire spreads every 20 s. Blue stops it. Black is burnt.", 1],
+  ["Most green trees left after 10 minutes wins.", 1],
+  [`Attack: a teammate says <b>YES</b>, 1 square next door burns.`, 1],
   [`Each team has ${r.attacksPerTeam} attacks and one water bucket.`, 1],
   ["Write only in your own team's Orders.", 1],
-  ["Don't move, edit or delete anything else.", 1],
-  ["No images, shapes or text on the board.", 1],
+  ["Don't move, edit or delete anything. No images or text.", 1],
 ];
 const PENALTY = ["<b>Break a rule:</b> it is undone and you are frozen.", 1];
 const SPLIT = 4; // rules 1-4 in one text item, 5-8 in the other
@@ -97,8 +97,8 @@ const ID = {
   divider: "3458764690218441600",
 };
 const GAP = 8; // between blocks
-const top2 = TOP + lines(0, SPLIT) * LINE + GAP;
-const topP = top2 + lines(SPLIT, RULES.length) * LINE + GAP;
+const top2 = TOP + lines(0, SPLIT) * LINE + GAP + 16; // Miro renders the first block a little taller than LINES says
+const topP = top2 + lines(SPLIT, RULES.length) * LINE + GAP + 8;
 const textStyle = { fontSize: String(FONT), fontFamily: "roboto_condensed", textAlign: "left", color: "#1f2328" };
 
 // Legend: one row of 4 (swatch + short label) at the panel bottom, 4 columns of 174 px across the text column.
