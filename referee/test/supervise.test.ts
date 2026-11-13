@@ -50,6 +50,18 @@ describe("supervise restart policy", () => {
   });
 });
 
+describe("guard restart policy (MIRO_ACCESS_TOKEN_2)", () => {
+  it("restarts the guard after game over or a stop request (it guards in every phase)", () => {
+    for (const over of [{ gameOver: true }, { stopRequested: true }, {}] as Partial<ExitFacts>[]) {
+      expect(decide(crash(1000, over), initialPolicy(), true).action).toBe("restart");
+    }
+  });
+  it("stops the guard when the supervisor is interrupted or its token is missing", () => {
+    expect(decide(crash(1000, { signalled: true }), initialPolicy(), true).action).toBe("stop");
+    expect(decide(crash(1000, { code: 2 }), initialPolicy(), true)).toMatchObject({ action: "stop", reason: expect.stringContaining("MIRO_ACCESS_TOKEN_2") });
+  });
+});
+
 describe("hang watchdog", () => {
   const start = 1_000_000;
   it("is not hung while game.json keeps changing", () => {

@@ -17,6 +17,15 @@ The game itself lasts **10 minutes**.
       e.g. `--team-size 4` (14 players: 4, 4, 3, 3; 8 players: two teams of 4, Teams 3 and 4 not playing),
       or `--teams 3`. `--no-draw` = placed as they join. Optional preset teams: copy
       `config/teams.example.json` to `config/teams.json` (presets keep their team in the draw).
+- [ ] Optional, for big classes (halves the Miro rate-limit use per token): a second referee token.
+      Miro's limit (100,000 credits/min) is per user, so the token must come from a DIFFERENT Miro account:
+      invite that account to the board with edit access, create a token for it the same way as the first
+      (README), and add `MIRO_ACCESS_TOKEN_2=...` to `.env` (same `MIRO_BOARD_ID`). Then `supervise` runs two
+      referees and restarts each on its own: the game referee (token 1: squares, fire, banner, leaderboard,
+      inbox cards, `state/game.json`) and the guard (token 2: junk, moved/edited board panels and frames,
+      stickies in the wrong Orders frame, spotting new inbox cards). They talk through `state/joins.jsonl` and
+      `state/guard-feedback.jsonl`; the guard's log lines start with `[guard]`. Without `MIRO_ACCESS_TOKEN_2`
+      one referee does everything, as before. By hand: `npm run referee serve -- --role guard`.
 - [ ] Rehearsal with ONE Miro account and several Claude sessions: `npm run referee reset`, then
       `npm run referee lobby -- --rehearsal`, everyone `/join`, Ctrl-C, `npm run referee run -- --rehearsal`
       (add `--minutes 5` for a short one), try one "Start a fire in …'s area?" + YES, `stop`, `reset`.
@@ -42,5 +51,6 @@ The game itself lasts **10 minutes**.
 | A student joins late | Just `/join`: they get a team at once (a smallest team in play) |
 | Out of time | B: `npm run referee stop` (highest % wins): the referee in A ends the game on its next poll |
 | Someone moved or deleted a square / the banner | Put back within one poll; the player is frozen 5 s |
-| 429 rate limits | Only one referee runs (`state/referee.lock`). Add `--poll 5` |
+| 429 rate limits | Only one referee runs (`state/referee.lock`; the guard: `state/guard.lock`). Add `MIRO_ACCESS_TOKEN_2` (see "The day before"), or `--poll 5` |
+| Junk stays on the board (with `MIRO_ACCESS_TOKEN_2`) | The guard removes it: check `[supervise]` lines for the guard; a `.env` without a valid `MIRO_ACCESS_TOKEN_2` stops it |
 | `state/game.json` from an older version | Ignored automatically: `reset` starts a fresh game |

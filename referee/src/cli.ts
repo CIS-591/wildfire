@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 // Instructor CLI. Every command that touches Miro needs MIRO_ACCESS_TOKEN + MIRO_BOARD_ID (.env).
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pool } from "./board.js";
 import { GAME_FILE, LIVE_IDS_FILE, ROOT, loadEnv, loadGame, loadLayoutIds, loadRules, loadTeams, saveGame, saveLiveIds } from "./config.js";
@@ -10,7 +10,8 @@ import {
 } from "./layout.js";
 import { acquireLock, lockOwner as lockPid, releaseLock } from "./lock.js";
 import { MiroRest } from "./miro-rest.js";
-import { Referee } from "./referee.js";
+import { gameFileLink, guardFileLink } from "./guard-link.js";
+import { Referee, type RefereeRole } from "./referee.js";
 import { mulberry32, scores, type RuleSet } from "./rules.js";
 import { formatSim, runSimulation } from "./sim.js";
 import { supervise } from "./supervise.js";
@@ -35,18 +36,53 @@ const intOpt = (name: string, min: number, max = Infinity): number | undefined =
   return n;
 };
 
-function miro(): MiroRest {
+/** `--role guard` uses the second token (MIRO_ACCESS_TOKEN_2, another Miro user: its own rate-limit budget). */
+function miro(guard = false): MiroRest {
   loadEnv();
-  const token = process.env.MIRO_ACCESS_TOKEN;
+  const name = guard ? "MIRO_ACCESS_TOKEN_2" : "MIRO_ACCESS_TOKEN";
+  const token = process.env[name];
   const boardId = process.env.MIRO_BOARD_ID;
   if (!token || !boardId) {
-    console.error("Set MIRO_ACCESS_TOKEN and MIRO_BOARD_ID in .env (see README).");
+    console.error(`Set ${name} and MIRO_BOARD_ID in .env (see README / RUNBOOK).`);
     process.exit(2);
   }
-  return new MiroRest(token, boardId, (s) => console.log(`[miro] ${s}`));
+  return new MiroRest(token, boardId, (s) => console.log(`[miro${guard ? " guard" : ""}] ${s}`));
 }
 
-async function makeReferee(board: MiroRest) {
+/** Both tokens' Miro user ids (a split referee never judges or undoes either one's writes). */
+async function tokenUsers(guard: boolean): Promise<{ self?: string; other?: string }> {
+  loadEnv();
+  const boardId = process.env.MIRO_BOARD_ID ?? "";
+  const ctx = async (token: string | undefined) => {
+    if (!token) return undefined;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        return (await new MiroRest(token, boardId).tokenContext()).userId;
+      } catch (e) {
+        if (attempt === 3) console.warn(`could not read a token's Miro user (${(e as Error).message.split("\n")[0]}); its writes may be judged`);
+        else await new Promise((r) => setTimeout(r, attempt * 2000));
+      }
+    }
+    return undefined;
+  };
+  const [a, b] = await Promise.all([ctx(process.env.MIRO_ACCESS_TOKEN), ctx(process.env.MIRO_ACCESS_TOKEN_2)]);
+  return guard ? { self: b, other: a } : { self: a, other: b };
+}
+
+const STATE_DIR = path.join(ROOT, "state");
+/** serve only: with MIRO_ACCESS_TOKEN_2 set the game referee leaves the board guard to the second token. */
+function serveRole(): RefereeRole {
+  const r = opt("role", "game");
+  if (r !== "game" && r !== "guard") {
+    console.error(`--role is game (default) or guard (got ${JSON.stringify(r)})`);
+    process.exit(1);
+  }
+  loadEnv();
+  if (r === "guard") return "guard";
+  return process.env.MIRO_ACCESS_TOKEN_2 ? "game" : "solo";
+}
+
+async function makeReferee(board: MiroRest, role: RefereeRole = "solo") {
   const game = loadGame();
   const layout = loadLayoutIds();
   const boxes = frameBoxes();
@@ -79,9 +115,17 @@ async function makeReferee(board: MiroRest) {
   console.log(`teams: up to ${rules.teams ?? 4}${rules.teamSize ? `, ${rules.teamSize} players each` : ", even split"}, ${rules.drawTeams ? "drawn at random when the game starts" : "placed as they join"}`);
   const rehearsal = args.includes("--rehearsal");
   if (rehearsal) console.log("REHEARSAL: one Miro account plays every seat (each inbox card is a player). Not for class.");
-  // The token's own user id: the referee's own writes echoed back are never judged as a player's move.
-  const selfId = rehearsal ? undefined : await board.tokenContext().then((c) => c.userId).catch(() => undefined);
-  const ref = new Referee(board, game, rules, { staticIds: new Set(layout?.static), presets, frameIds: frames, ordersIds: layout?.orders, rng: seed ? mulberry32(Number(seed)) : undefined, rehearsal, selfId });
+  // The token's own user id: the referee's own writes echoed back are never judged as a player's move. With a
+  // second token (MIRO_ACCESS_TOKEN_2), both users are the referee's.
+  const users = rehearsal ? {} : await tokenUsers(role === "guard");
+  const selfId = users.self;
+  const link = role === "game" ? gameFileLink(STATE_DIR, game) : role === "guard" ? guardFileLink(STATE_DIR, () => loadGame(GAME_FILE, () => {})) : undefined;
+  if (role !== "solo") console.log(`two referees: this one is the ${role.toUpperCase()} (${role === "game" ? "squares, fire, fixtures, cards" : "junk, statics, foreign stickies, joins"})`);
+  const ref = new Referee(board, game, rules, {
+    staticIds: new Set(layout?.static), presets, frameIds: frames, ordersIds: layout?.orders, rng: seed ? mulberry32(Number(seed)) : undefined, rehearsal, selfId,
+    selfIds: users.other ? [users.other] : [], role, link,
+    fixtureReadEvery: role === "guard" ? 1 : 3, // fixture writes don't wait for these reads
+  });
   return { ref, game };
 }
 
@@ -100,6 +144,10 @@ async function discoverWithRetry(ref: Referee) {
 
 // One referee at a time: two of them double the Miro reads and fight over game.json (REFLECTION §3).
 const LOCK = path.join(ROOT, "state/referee.lock");
+/** The guard referee (second token) has its own lock; it never writes game.json. */
+const GUARD_LOCK = path.join(ROOT, "state/guard.lock");
+/** Touched by the guard every tick: supervise's hang watchdog for it. */
+const GUARD_HEARTBEAT = path.join(ROOT, "state/guard.heartbeat");
 /** `stop` from a second terminal drops this file; the running referee ends the game on its next tick. */
 const STOP_FLAG = path.join(ROOT, "state/stop");
 /** `start` from a second terminal drops this file; a referee in `serve` mode starts the fire on its next poll. */
@@ -109,13 +157,50 @@ function lockOwner(): number | null {
   return lockPid(LOCK);
 }
 
-function takeLock() {
-  const got = acquireLock(LOCK);
+function takeLock(file = LOCK) {
+  const got = acquireLock(file);
   if (!got.ok) {
-    console.error(`another referee is running (pid ${got.owner}). Only one may run: Ctrl-C it first.`);
+    console.error(`another ${file === GUARD_LOCK ? "guard" : "referee"} is running (pid ${got.owner}). Only one may run: Ctrl-C it first.`);
     process.exit(1);
   }
-  process.on("exit", () => releaseLock(LOCK));
+  process.on("exit", () => releaseLock(file));
+}
+
+/** `serve --role guard`: the second token's referee, in every phase, until Ctrl-C. Never writes game.json. */
+async function serveGuard(pollMs: number) {
+  takeLock(GUARD_LOCK);
+  const { ref } = await makeReferee(miro(true), "guard");
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await ref.discoverGuard();
+      break;
+    } catch (e) {
+      if (attempt >= 8) throw e;
+      console.error(`reading the board failed (${(e as Error).message.split("\n")[0]}); retrying in ${attempt * 3}s`);
+      await new Promise((res) => setTimeout(res, attempt * 3000));
+    }
+  }
+  console.log("GUARD on: junk, board panels, frames, foreign stickies, new inbox cards. Ctrl-C to quit.");
+  let stopping = false;
+  process.on("SIGINT", () => (stopping = true));
+  process.on("SIGTERM", () => (stopping = true));
+  while (!stopping) {
+    const t0 = Date.now();
+    try {
+      const r = await ref.tick();
+      process.stdout.write(`\r[guard] ${ref.state.phase.toUpperCase()} · tampers ${r.tampers} joins ${r.joins} · writes ${r.writes} reads ${r.reads ?? 0} · tick ${((Date.now() - t0) / 1000).toFixed(1)}s   `);
+    } catch (e) {
+      console.error(`\nguard tick failed: ${(e as Error).message}`);
+    }
+    try {
+      mkdirSync(path.dirname(GUARD_HEARTBEAT), { recursive: true });
+      if (existsSync(GUARD_HEARTBEAT)) utimesSync(GUARD_HEARTBEAT, new Date(), new Date());
+      else writeFileSync(GUARD_HEARTBEAT, "");
+    } catch {
+      /* the heartbeat only feeds the watchdog */
+    }
+    await new Promise((res) => setTimeout(res, Math.max(0, pollMs - (Date.now() - t0))));
+  }
 }
 
 /** Poll the board until `done()` or Ctrl-C. Ctrl-C pauses: the game is saved and `run` resumes it. */
@@ -329,9 +414,12 @@ async function main() {
     case "serve": {
       // Always-on referee (what `supervise` runs): the lobby (joins get their team at once, junk removed) until
       // the instructor runs `npm run referee start`, then the fire, then it keeps guarding the board.
+      // With MIRO_ACCESS_TOKEN_2: `--role guard` is the second referee (junk, statics); this one is the game.
+      const role = serveRole();
+      if (role === "guard") return serveGuard(pollMs);
       takeLock();
       if (existsSync(STOP_FLAG)) unlinkSync(STOP_FLAG);
-      const { ref, game } = await makeReferee(miro());
+      const { ref, game } = await makeReferee(miro(), role);
       await discoverWithRetry(ref);
       await ref.rebuildMissing();
       if (ref.state.phase === "lobby") {
@@ -414,6 +502,7 @@ async function main() {
   npm run referee supervise  same flags as run; runs it and restarts it if it crashes or hangs (Ctrl-C pauses; log: results/supervise.log)
   npm run referee supervise  ALWAYS-ON referee under a watchdog: lobby (teams at /join), then the game, then guarding
   npm run referee start      start the fire (tells the running supervised referee)
+  npm run referee serve -- --role guard   the second referee (MIRO_ACCESS_TOKEN_2): junk, panels, joins; supervise starts it by itself
   npm run referee stop       end now: highest % wins
   npm run referee results    print the result
   options: --poll 3 (seconds between board reads), --seed N (repeatable fire), --minutes N (shorter game),
