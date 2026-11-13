@@ -22,7 +22,7 @@ Parts (all in `~/dev/wildfire`):
 All coordinates are Miro canvas units, TOP-LEFT of each box (the MCP SVG convention). REST uses centers.
 
 - **Grid**: 36 columns × 34 rows, labels `A1`–`AJ34` (spreadsheet columns A..Z, AA..AJ; rows 1..34).
-  Square 60, pitch 64, origin (0,0): square `col,row` (0-based) is at x = col·64, y = row·64, 60×60.
+  Square 60, pitch 64, origin (0,0): square `col,row` (0-based) is at x = col·64 (+ GAP 64 for col ≥ 18, columns S–AJ), y = row·64 (+ GAP 64 for row ≥ 17, rows 18–34), 60×60: an empty one-square gap separates the four team areas (`GAP` in referee/src/layout.ts; purely visual).
   Each square is a rectangle shape whose text is its label (font 20, bold not required).
   Squares live in 9 frames, one per band of 4 rows (rows 1–4, 5–8, …, 33–34), exactly like Color Wars,
   frame box x = −2, y = r0·64 − 2, w = 36·64, h = rows·64. Frame fill dark `#3d4250`, no title.
@@ -71,16 +71,16 @@ All coordinates are Miro canvas units, TOP-LEFT of each box (the MCP SVG convent
   | Title text "WILDFIRE" | (0, −330, 1400, 90) | static |
   | Banner (fixture) | (0, −220, 1100, 110) | referee writes, no emoji: `LIVE · 7:12 left · next spread 14s · WATER T1 62 · T2 40`; line 2 the news (`LIGHTNING! New fire at K4 (Team 2's area)`, `TEAM 1 SET FIRE TO TEAM 2'S AREA!`, `TEAM 3 TAKES THE LEAD!` (at most every 45 s), `TEAM 1 AND TEAM 2 ARE NECK AND NECK` (top two within 2%, from minute 3), `FINAL MINUTE! …` in the last 60 s); at the end `GAME OVER · TEAM 2 WINS WITH 87%` / `2ND TEAM 3 82% · 3RD TEAM 4 79% · time is up`. Presentation only: no rule reads these |
   | Scoreboard (fixture) | (1160, −220, 1140, 110) | referee writes: each team's % forest left (`TEAM 3 not playing`), `LEAD` after the leader, `ON FIRE 3`; no emoji |
-  | Rules panel | (2440, −330, 760, 610) | static: the rules + color legend |
-  | Leaderboard panel | (3240, −330, 760, 610) | static frame for the ranked rows |
-  | Leaderboard rows (fixtures `rank_1`..`rank_4`, slot 1 = first place) | x 3260, y −252 + (N−1)×128 (−252, −124, 4, 132); each 720 × 118 pill | game-style ranked list: filled with the team's color, white text; rows swap slots as teams overtake. Plain text, no emoji: `TEAM 2 · Boss Ana` / `Water 62 · Fires set 3 · Trees burned 23 · MVP Ben (23)` / `Crew: Ben, Cy` / optional status `Waiting for a YES: start a fire in Team 4's area` or `ATTACK ON TEAM 4: 2 fires left (1:20)`. Lobby: rows in team order, `TEAM 2` / `Waiting for the draw`. Not playing: `TEAM 3 · not playing`, grey row |
+  | Rules panel | (2504, −330, 760, 610) | static: the rules + color legend |
+  | Leaderboard panel | (3304, −330, 760, 610) | static frame for the ranked rows |
+  | Leaderboard rows (fixtures `rank_1`..`rank_4`, slot 1 = first place) | x 3324, y −252 + (N−1)×128 (−252, −124, 4, 132); each 720 × 118 pill | game-style ranked list: filled with the team's color, white text; rows swap slots as teams overtake. Plain text, no emoji: `TEAM 2 · Boss Ana` / `Water 62 · Fires set 3 · Trees burned 23 · MVP Ben (23)` / `Crew: Ben, Cy` / optional status `Waiting for a YES: start a fire in Team 4's area` or `ATTACK ON TEAM 4: 2 fires left (1:20)`. Lobby: rows in team order, `TEAM 2` / `Waiting for the draw`. Not playing: `TEAM 3 · not playing`, grey row |
   | Score badges (fixtures `rank_1_score`..`rank_4_score`) | 130 × 80, inside the right end of each row | white rounded box, the team's `87%` (`-` for a team not playing) |
   | Leaderboard icons (referee-placed images) | on each row | a medal per slot (gold, silver, bronze, 4th) and the team's mascot (Team 1 owl, Team 2 fox, Team 3 lion, Team 4 wolf); Microsoft Fluent Emoji 3D, MIT; agents ignore them |
-  | Orders · Team 1 | (2440, 340, 760, 900) | header "ORDERS · TEAM 1", team color accent |
-  | Orders · Team 2 | (3240, 340, 760, 900) | same, laid out 2×2 like the areas |
-  | Orders · Team 3 | (2440, 1300, 760, 900) | |
-  | Orders · Team 4 | (3240, 1300, 760, 900) | |
-  | Inbox panel | (0, 2300, 4000, 1500) | one card per player, 5+ columns |
+  | Orders · Team 1 | (2504, 340, 760, 900) | header "ORDERS · TEAM 1", team color accent |
+  | Orders · Team 2 | (3304, 340, 760, 900) | same, laid out 2×2 like the areas |
+  | Orders · Team 3 | (2504, 1300, 760, 900) | |
+  | Orders · Team 4 | (3304, 1300, 760, 900) | |
+  | Inbox panel | (0, 2364, 4064, 1500) | one card per player, 5+ columns |
 
   The board should look like a game, not a spreadsheet: a dark backdrop behind the grid with row/column
   headers, a bold title, team-colored headers, a clear color legend. No wind rose (there is no wind).

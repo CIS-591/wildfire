@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 
 const board = JSON.parse(readFileSync(new URL("../board.json", import.meta.url), "utf8"));
 const P = board.grid.pitch;
+const GAP = board.grid.gap?.px ?? 0; // empty gap between the areas: after column R (17) and after row 17
 
 const colIndex = (s) => (s.length === 1 ? s.charCodeAt(0) - 65 : 26 + s.charCodeAt(1) - 65);
 const colName = (c) => (c < 26 ? String.fromCharCode(65 + c) : "A" + String.fromCharCode(65 + c - 26));
@@ -14,9 +15,10 @@ const parse = (label) => {
 };
 const toXY = (label) => {
   const { col, row } = parse(label);
-  return { x: col * P, y: (row - 1) * P };
+  return { x: col * P + (col >= 18 ? GAP : 0), y: (row - 1) * P + (row >= 18 ? GAP : 0) };
 };
-const fromXY = (x, y) => `${colName(Math.floor(x / P))}${Math.floor(y / P) + 1}`;
+const unGap = (v, split) => (v >= split * P + GAP ? v - GAP : v);
+const fromXY = (x, y) => `${colName(Math.floor(unGap(x, 18) / P))}${Math.floor(unGap(y, 17) / P) + 1}`;
 const inBox = (b, x, y) => x >= b.x && x < b.x + b.w && y >= b.y && y < b.y + b.h;
 const sectorOf = (label) => {
   const { x, y } = toXY(label);
@@ -32,7 +34,8 @@ const ok = (name, fn) => {
 
 ok("A1 -> (0,0)", () => assert.deepEqual(toXY("A1"), { x: 0, y: 0 }));
 ok("R17 -> (1088,1024)", () => assert.deepEqual(toXY("R17"), { x: 1088, y: 1024 }));
-ok("AJ34 -> (2240,2112)", () => assert.deepEqual(toXY("AJ34"), { x: 2240, y: 2112 }));
+ok("S18 -> (1216,1152)", () => assert.deepEqual(toXY("S18"), { x: 1152 + GAP, y: 1088 + GAP }));
+ok("AJ34 -> (2304,2176)", () => assert.deepEqual(toXY("AJ34"), { x: 2240 + GAP, y: 2112 + GAP }));
 ok("round trip every square", () => {
   for (let c = 0; c < 36; c++)
     for (let r = 1; r <= 34; r++) {
@@ -41,7 +44,7 @@ ok("round trip every square", () => {
       assert.equal(fromXY(x + 30, y + 30), l);
     }
 });
-ok("grid box covers 36x34", () => assert.deepEqual(board.grid.box, { x: 0, y: 0, w: 36 * P, h: 34 * P }));
+ok("grid box covers 36x34", () => assert.deepEqual(board.grid.box, { x: 0, y: 0, w: 36 * P + GAP, h: 34 * P + GAP }));
 ok("sector table", () => {
   assert.equal(sectorOf("A1"), "ridge");
   assert.equal(sectorOf("R17"), "ridge");

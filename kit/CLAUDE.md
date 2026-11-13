@@ -40,19 +40,22 @@ ANOTHER team's color was lit by that team (its own area's color = wild fire).
 ## The board
 
 - **Grid** 36 × 34, labels like a spreadsheet: `A1`…`Z1`, `AA1`…`AJ1`, down to `AJ34`.
-  colIndex: `A`=0 … `Z`=25, `AA`=26 … `AJ`=35. **Square top-left x = colIndex × 64, y = (row − 1) × 64**,
-  60 × 60. Inverse: colIndex = floor(x / 64), row = floor(y / 64) + 1. Examples: `A1` (0,0), `R17`
-  (1088,1024), `AJ34` (2240,2112). Squares sit inside 9 band frames (4 rows each), so in an SVG read
-  their x/y are relative to the band: **identify a square by its label text** (`data-content`) or by
-  its id (see "Square ids" below).
+  colIndex: `A`=0 … `Z`=25, `AA`=26 … `AJ`=35. The four team areas are separated by an **empty gap one
+  square wide** (64): between columns R and S, and between rows 17 and 18. So **square top-left
+  x = colIndex × 64 (+ 64 for columns S–AJ), y = (row − 1) × 64 (+ 64 for rows 18–34)**, 60 × 60.
+  Examples: `A1` (0,0), `R17` (1088,1024), `S17` (1216,1024), `R18` (1088,1152), `S18` (1216,1152),
+  `AJ34` (2304,2176). Inverse: x < 1152 → colIndex = floor(x / 64); x ≥ 1216 → colIndex =
+  floor((x − 64) / 64) (x 1152–1215 is the gap; rows the same way with 1088/1152). Squares sit inside 9
+  band frames (4 rows each), so in an SVG read their x/y are relative to the band: **identify a square
+  by its label text** (`data-content`) or by its id (see "Square ids" below), never by its x/y.
 - **Team areas** (`sector` in board.json; boxes top-left x, y, w, h):
 
   | Team | id | Squares | Area box | Neighbours | Team color |
   |---|---|---|---|---|---|
   | Team 1 (top-left) | `ridge` | A–R, 1–17 | 0, 0, 1152, 1088 | Team 2, Team 3 | violet `#7c3aed` |
-  | Team 2 (top-right) | `pine` | S–AJ, 1–17 | 1152, 0, 1152, 1088 | Team 1, Team 4 | pink `#db2777` |
-  | Team 3 (bottom-left) | `cedar` | A–R, 18–34 | 0, 1088, 1152, 1088 | Team 1, Team 4 | gold `#ca8a04` |
-  | Team 4 (bottom-right) | `birch` | S–AJ, 18–34 | 1152, 1088, 1152, 1088 | Team 2, Team 3 | slate `#334155` |
+  | Team 2 (top-right) | `pine` | S–AJ, 1–17 | 1216, 0, 1152, 1088 | Team 1, Team 4 | pink `#db2777` |
+  | Team 3 (bottom-left) | `cedar` | A–R, 18–34 | 0, 1152, 1152, 1088 | Team 1, Team 4 | gold `#ca8a04` |
+  | Team 4 (bottom-right) | `birch` | S–AJ, 18–34 | 1216, 1152, 1152, 1088 | Team 2, Team 3 | slate `#334155` |
 
   Students only ever see "Team 1".."Team 4"; the ids are for `board.json` keys and `player.json`.
   Team colors appear on each area's edge, its label, its Orders header, its leaderboard row, as the border of
@@ -73,14 +76,14 @@ ANOTHER team's color was lit by that team (its own area's color = wild fire).
 
 - **Panels**: Banner (0, −220, 1100, 110): phase, time left, next spread, each team's water
   (`WATER T1 62 · T2 40 · T3 71 · T4 55`: yours is `T` + your team number). Scoreboard
-  (1160, −220, 1140, 110): each team's score as % of its area. Leaderboard (3240, −330, 760, 610):
+  (1160, −220, 1140, 110): each team's score as % of its area. Leaderboard (3304, −330, 760, 610):
   4 ranked rows `fixtures.rank_1`..`rank_4` (slot 1 = first place; teams swap slots as they overtake).
   Each row's text, plain lines: `TEAM 2 · Boss Ana` / `Water 62 · Fires set 3 · Trees burned 23 · MVP Ben (23)` /
   `Crew: Ben, Cy` / optional status: `Waiting for a YES: start a fire in Team 4's area` or
   `ATTACK ON TEAM 4: 1 fire left (1:20)` (`0 fires left` once its square is lit). Lobby: `TEAM 2` / `Waiting for the draw`; a team not
-  playing: `TEAM 3 · not playing`. Ignore the score badges (`rank_N_score`) and the icons. Orders frames (760 × 900): Team 1 (2440, 340),
-  Team 2 (3240, 340), Team 3 (2440, 1300), Team 4 (3240, 1300). Inbox panel
-  (0, 2300, 4000, 1500): one card per player.
+  playing: `TEAM 3 · not playing`. Ignore the score badges (`rank_N_score`) and the icons. Orders frames (760 × 900): Team 1 (2504, 340),
+  Team 2 (3304, 340), Team 3 (2504, 1300), Team 4 (3304, 1300). Inbox panel
+  (0, 2364, 4064, 1500): one card per player.
 
 ## Before every paint
 
@@ -120,8 +123,8 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
   **Never scan more than 6 × 6 squares (384 × 384) in one call.** A bigger box (a whole area) returns
   over 100k characters and breaks the MCP output limit. Scan only when you need to find the front. Find the fire with small scans: your
   `startScan` box first, then 6 × 6 boxes around squares you already know are burning. A scan box
-  around square `L`: x = (colIndex − 2) × 64, y = (row − 3) × 64, w = h = 384, clipped to the grid
-  (0, 0, 2304, 2176).
+  around square `L` at top-left (X, Y) (formula above): x = X − 128, y = Y − 128, w = h = 384, clipped
+  to your team's area box (the table above; the whole grid is 0, 0, 2368, 2240).
 - **Paint** = a batch of up to **5 squares in ONE `canvas_update_from_svg`**, one `rect` per square,
   only the id and the fill (`#3aa7ff`; an attack square: `#ff5a1f`):
   `<svg xmlns="http://www.w3.org/2000/svg"><rect data-miro-id="ID1" fill="#3aa7ff"/><rect data-miro-id="ID2" fill="#3aa7ff"/></svg>`
@@ -157,13 +160,13 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
   a band frame returns 144 squares and breaks the output limit).
 - **Stale ids**: the referee recreates a moved or deleted square with a NEW id. If a peek by id
   returns nothing for a square, or a paint says not found: scan the 1-square box at its label
-  (x = colIndex × 64, y = (row − 1) × 64, w = h = 64), take the `rect` whose text is that label, save
+  (x, y = the square's top-left from the formula in "The board", w = h = 64), take the `rect` whose text is that label, save
   `cellIds[label] = its id` in `player.json` and use it from now on.
 - **Stale fixture ids** (the instructor keeps `board.json` in sync, but just in case): the referee may also recreate the banner, scoreboard or a leaderboard row with a NEW
   id in the same box. Use `player.json` `fixtureIds` first, then `board.json` `fixtures`. If a peek by
   a fixture id returns nothing, scan its box (banner 0, −220, 1100, 110; scoreboard 1160, −220,
   1140, 110) and save `fixtureIds[name] = its id`. Fewer than 4 rows whose first line starts `TEAM `
-  in a status read: scan the leaderboard box (3240, −330, 760, 610), take the shapes whose first line
+  in a status read: scan the leaderboard box (3304, −330, 760, 610), take the shapes whose first line
   starts `TEAM `, and save them top to bottom as `fixtureIds.rank_1`..`rank_4`.
 - **Inbox card gone** (a peek of `inboxId` returns nothing: deleted, or the instructor reset the game):
   make a new one (`join.md` steps 2–5; that also starts `player.json` fresh). Never while the old one

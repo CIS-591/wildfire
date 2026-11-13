@@ -13,8 +13,8 @@ initial, then continue). Keep the name short; it goes on your order sticky (`Ana
    minute." and stop. `player.json` does not exist before the first `/join`: that is normal, go to
    step 2 (step 3 creates it). If `player.json` already has an `inboxId`, the student has joined: go
    to step 4.
-2. Pick a spot: top-left x = 40 + a random number 0–3500, y = 2400 + a random number 0–1200
-   (so the 380 × 150 card stays inside the Inbox panel 0, 2300, 4000, 1500: x ≤ 3620, y ≤ 3650).
+2. Pick a spot: top-left x = 40 + a random number 0–3500, y = 2464 + a random number 0–1200
+   (so the 380 × 150 card stays inside the Inbox panel 0, 2364, 4064, 1500: x ≤ 3620, y ≤ 3714).
 3. Create the card in ONE `canvas_update_from_svg` call (never `canvas_create_from_svg`), replacing
    NAME, X and Y:
 
