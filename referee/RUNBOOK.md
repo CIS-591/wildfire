@@ -30,6 +30,61 @@ The game itself lasts **10 minutes**.
       `npm run referee lobby -- --rehearsal`, everyone `/join`, Ctrl-C, `npm run referee run -- --rehearsal`
       (add `--minutes 5` for a short one), try one "Start a fire in …'s area?" + YES, `stop`, `reset`.
 
+## Bot rehearsal (30 scripted players, for a screen recording)
+
+`npm run referee bots` plays N scripted players on the real board: each makes a `/join` card
+(`Inbox · Bot01` … `Bot30`), reads its team and role off the card, and plays (boss orders, blue from
+the orders and the front, attack question + a teammate's YES, orange during the attack). `--class` plays
+like the real class (results/serve-4teams.log rounds 2-3): joins over ~2.5 min, a third start 1-3 min
+after GO, ~half of the blue refused (on fire / burnt / no fire within 2), a few wrong-hex blues, a few
+over-5 batches, a few orange paints without a YES, bosses who rarely paint, ~10 approved attacks, and 2
+vandal seats that drop an image and a stray sticky on the forest (the guard removes them). It stops at
+GAME OVER or Ctrl-C and removes nothing (the next `reset` clears the cards and stickies).
+
+**Identity.** Every bot write comes from ONE Miro user (the bot token's). The referees ignore their own
+users' writes, so they run with `--bots-token N`: rehearsal attribution (each inbox card is a player; a
+paint counts for a member of the square's team; a sticky's poster/answerer are stand-ins from that team)
+and every referee token's user is "self" EXCEPT the bots' one. The Claude agents' MCP account is the same
+user as `MIRO_ACCESS_TOKEN`, so never put the bots on token 1 while a game referee and a guard both run.
+
+| Setup | `.env` | Game referee | Guard | Bots | Referee flag |
+| --- | --- | --- | --- | --- | --- |
+| **Best: a third Miro account** | `MIRO_ACCESS_TOKEN_3` (invite it to the board as editor) | token 1 | token 2 | token 3 | `--bots-token 3` |
+| **Two accounts (no third)** | tokens 1 and 2 | token 1 | token 2 (shared with the bots) | token 2 | `--bots-token 2` |
+| One account (last resort) | `MIRO_ACCESS_TOKEN_2=` blank | token 1 (solo: guard work too) | – | token 1 | `--bots-token 1` (= plain `--rehearsal`) |
+
+`bots` picks token 3 if set, else 2, else 1 (`--token N` to force) and prints the referee flag to use.
+With bots on token 2 the guard has no "self" of its own: it tells its own put-backs apart by what it last
+wrote, exactly as a plain rehearsal does; the game referee's user is still its partner's self.
+
+**Commands, in order** (terminal A = referees, B = bots):
+
+1. Stop the running referee: Ctrl-C in A (wait for `[supervise] ... not restarting`).
+2. `.env`: the tokens for the setup you chose (restore `MIRO_ACCESS_TOKEN_2` if it was blanked).
+3. B: `npm run referee reset` (fresh board: starting colors, empty Inbox and Orders).
+4. A: `npm run referee supervise -- --bots-token 2` (or `3`; add `--minutes 5` for a short one).
+5. B: `npm run referee bots -- --players 30 --class --seed 1`. Wait until its status line says
+   `30/30 joined, 30 on a team` (~2.5 min with `--class`, ~20 s without).
+6. Terminal C: `npm run referee start`. Record. The bots stop by themselves at GAME OVER.
+7. After: Ctrl-C A, then `npm run referee reset` for the next run.
+
+Prove it offline first (FakeBoard, both referees in-process, bots on the guard's user):
+`npm run referee bots -- --players 30 --class --dry-run` (prints `dry run OK`; `--token 3` = a third account).
+
+**Miro credits** (limit 100,000/min per user; a page of a listing = 100, a read by id = 50, a write = 100):
+
+| Process (token) | Reads | Writes | ≈ credits/min |
+| --- | --- | --- | --- |
+| Bots, shared reader every 5 s (token 3 default) | grid 27 pages + Orders 4 + fixtures 6 = 3,400 per read → 41k; cards ~2k (15k while waiting for teams in the lobby) | `--class` 60-150/min (agent pace 100-300), capped at 450/min | **~50-60k** (`--class`), ≤ 90k worst case |
+| Bots on token 2 (default every 6 s, cap 300 writes/min) | ~34k + cards | ≤ 30k | ≤ 65k, + the guard's ~15k (one full listing per ~15 s tick) = **≤ 80k on token 2** |
+| Bots on token 1 (default every 10 s, cap 200/min) | ~20k | ≤ 20k | ≤ 40k + the solo referee's own (~60k at `--poll 3`): run the referee with `--poll 4` |
+| Game referee (token 1) | ~29 reads per 3 s tick | fire, cards, fixtures | unchanged by the bots |
+
+Tune with `--read-every S` and `--writes-per-min N`; a 429 is waited out (the bots just slow down).
+In rehearsal the referee can't tell which bot painted, so the paint batch/cooldown limits and the
+"stickies in another team's Orders" check don't bite (that is why the vandals' stray sticky goes on
+the forest).
+
 ## Run day (about 40 minutes)
 
 | Time | Instructor | Students |

@@ -15,6 +15,9 @@ import { Referee, type RefereeRole } from "./referee.js";
 import { mulberry32, scores, type RuleSet } from "./rules.js";
 import { formatSim, runSimulation } from "./sim.js";
 import { supervise } from "./supervise.js";
+import { AGENT_PROFILE, BotRunner, CLASS_PROFILE, type Profile } from "./bots.js";
+import { formatDryRun, runBotsDryRun } from "./bots-dry.js";
+import { MiroBotIO } from "./bots-miro.js";
 
 const args = process.argv.slice(2);
 const cmd = args[0] ?? "help";
@@ -69,6 +72,56 @@ async function tokenUsers(guard: boolean): Promise<{ self?: string; other?: stri
   return guard ? { self: b, other: a } : { self: a, other: b };
 }
 
+const TOKEN_ENV = (n: number) => (n === 1 ? "MIRO_ACCESS_TOKEN" : `MIRO_ACCESS_TOKEN_${n}`);
+
+/**
+ * Bot rehearsal (`--bots-token N`): who is "self" for this referee. Every referee token's user is, except
+ * the bots' token user (its writes are the players' moves, attributed card by card). Bots on token 2 with a
+ * guard: the guard has no self of its own (it tells its own put-backs apart by what it last wrote, like a
+ * plain rehearsal) and the game referee's user is still its "other" self. Bots on token 1 need ONE referee
+ * (MIRO_ACCESS_TOKEN_2 blank): a guard could not tell the game's new items from the bots'.
+ */
+async function botRehearsalUsers(role: RefereeRole, botsToken: number): Promise<{ self?: string; other?: string }> {
+  loadEnv();
+  if (!process.env[TOKEN_ENV(botsToken)]) {
+    console.error(`--bots-token ${botsToken}: ${TOKEN_ENV(botsToken)} is not set in .env`);
+    process.exit(2);
+  }
+  if (botsToken === 1 && role !== "solo") {
+    console.error("--bots-token 1 (bots on the game referee's token) works with ONE referee only: blank MIRO_ACCESS_TOKEN_2 in .env, or put the bots on token 2/3.");
+    process.exit(2);
+  }
+  const all = await tokenUsersOf([1, 2, 3]);
+  const bot = all[botsToken];
+  if (!bot) {
+    console.error(`--bots-token ${botsToken}: could not read that token's Miro user; without it the bots' writes may be ignored. Try again.`);
+    process.exit(1);
+  }
+  const keep = (u?: string) => (u && u !== bot ? u : undefined);
+  if (role === "guard") return { self: keep(all[2]), other: keep(all[1]) };
+  return { self: keep(all[1]), other: role === "game" ? keep(all[2]) : undefined };
+}
+
+/** Miro user id of each token that is set (token number -> user id). */
+async function tokenUsersOf(nums: number[]): Promise<Record<number, string | undefined>> {
+  const boardId = process.env.MIRO_BOARD_ID ?? "";
+  const out: Record<number, string | undefined> = {};
+  await Promise.all(
+    nums.map(async (n) => {
+      const token = process.env[TOKEN_ENV(n)];
+      if (!token) return;
+      for (let attempt = 1; attempt <= 3 && !out[n]; attempt++) {
+        try {
+          out[n] = (await new MiroRest(token, boardId).tokenContext()).userId;
+        } catch {
+          if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 2000));
+        }
+      }
+    }),
+  );
+  return out;
+}
+
 const STATE_DIR = path.join(ROOT, "state");
 /** serve only: with MIRO_ACCESS_TOKEN_2 set the game referee leaves the board guard to the second token. */
 function serveRole(): RefereeRole {
@@ -113,11 +166,14 @@ async function makeReferee(board: MiroRest, role: RefereeRole = "solo") {
   if (args.includes("--no-draw")) rules.drawTeams = false;
   if (args.includes("--draw")) rules.drawTeams = true;
   console.log(`teams: up to ${rules.teams ?? 4}${rules.teamSize ? `, ${rules.teamSize} players each` : ", even split"}, ${rules.drawTeams ? "drawn at random when the game starts" : "placed as they join"}`);
-  const rehearsal = args.includes("--rehearsal");
-  if (rehearsal) console.log("REHEARSAL: one Miro account plays every seat (each inbox card is a player). Not for class.");
+  // --bots-token N: scripted bots (`npm run referee bots`) write with token N; implies --rehearsal.
+  const botsToken = intOpt("bots-token", 1, 3);
+  const rehearsal = args.includes("--rehearsal") || botsToken !== undefined;
+  if (rehearsal) console.log(`REHEARSAL: one Miro account plays every seat (each inbox card is a player)${botsToken ? `: the bots on MIRO_ACCESS_TOKEN${botsToken === 1 ? "" : `_${botsToken}`}` : ""}. Not for class.`);
   // The token's own user id: the referee's own writes echoed back are never judged as a player's move. With a
-  // second token (MIRO_ACCESS_TOKEN_2), both users are the referee's.
-  const users = rehearsal ? {} : await tokenUsers(role === "guard");
+  // second token (MIRO_ACCESS_TOKEN_2), both users are the referee's. Plain rehearsal: none (the referee's own
+  // account plays too). Bot rehearsal: both referee users except the bots' token user.
+  const users = !rehearsal ? await tokenUsers(role === "guard") : botsToken ? await botRehearsalUsers(role, botsToken) : {};
   const selfId = users.self;
   const link = role === "game" ? gameFileLink(STATE_DIR, game) : role === "guard" ? guardFileLink(STATE_DIR, () => loadGame(GAME_FILE, () => {})) : undefined;
   if (role !== "solo") console.log(`two referees: this one is the ${role.toUpperCase()} (${role === "game" ? "squares, fire, fixtures, cards" : "junk, statics, foreign stickies, joins"})`);
@@ -329,6 +385,91 @@ async function build() {
   console.log(`built: ${frames.length} grid frames, ${ids.length} squares, 4 Orders frames, ${staticIds.length} static items. Next: npm run referee reset`);
 }
 
+/** "12-40" or "12,40" -> [12, 40]; absent = def. */
+const rangeOpt = (name: string, def: [number, number]): [number, number] => {
+  const raw = opt(name);
+  if (raw === undefined) return def;
+  const m = /^(\d+(?:\.\d+)?)[-,](\d+(?:\.\d+)?)$/.exec(raw);
+  if (!m || Number(m[1]) > Number(m[2])) {
+    console.error(`--${name} needs a range like 12-40 (got ${JSON.stringify(raw)})`);
+    process.exit(1);
+  }
+  return [Number(m[1]), Number(m[2])];
+};
+
+/**
+ * `bots`: N scripted players on the real board (or --dry-run on a FakeBoard with both referees). The
+ * referees must run with `--bots-token N` (RUNBOOK "Bot rehearsal"). Stops at GAME OVER or Ctrl-C;
+ * removes nothing.
+ */
+async function bots() {
+  const players = intOpt("players", 1, 60) ?? 30;
+  const seed = intOpt("seed", 0) ?? 1;
+  const base = args.includes("--class") ? CLASS_PROFILE : AGENT_PROFILE;
+  const scale = opt("mistakes") !== undefined ? Number(opt("mistakes")) : 1;
+  const profile: Profile = {
+    ...base,
+    joinSpreadSec: intOpt("join-spread", 0) ?? base.joinSpreadSec,
+    turnSec: rangeOpt("turn", base.turnSec),
+    batch: rangeOpt("batch", base.batch),
+    lateShare: opt("late-share") !== undefined ? Number(opt("late-share")) : base.lateShare,
+    vandals: intOpt("vandals", 0) ?? base.vandals,
+    bossPaint: opt("boss-paint") !== undefined ? Number(opt("boss-paint")) : base.bossPaint,
+    attacks: !args.includes("--no-attacks"),
+    mistakes: Object.fromEntries(Object.entries(base.mistakes).map(([k, v]) => [k, v * scale])) as Profile["mistakes"],
+    overBatch: base.overBatch * scale,
+    orangeNoYes: base.orangeNoYes * scale,
+  };
+  if (args.includes("--dry-run")) {
+    const botsToken = (intOpt("token", 2, 3) ?? 2) as 2 | 3;
+    const res = await runBotsDryRun(loadRules(rulesFile()), { players, seed, profile, botsToken, readEveryMs: (intOpt("read-every", 1) ?? 5) * 1000, writesPerMin: intOpt("writes-per-min", 10), log: args.includes("--verbose") ? (s) => console.log(s) : undefined });
+    console.log(formatDryRun(res));
+    const ok = res.over && res.accepted > 0 && res.judged >= 0.95 * res.botChanged && res.guardTouchedGame.length === 0 && res.gameTouchedStatics.length === 0 && res.unconverged.length === 0;
+    console.log(ok ? "dry run OK" : "dry run FAILED");
+    process.exit(ok ? 0 : 1);
+  }
+  loadEnv();
+  // Which token: --token N, else a third account if set, else the guard's token, else the game's.
+  const set = (n: number) => !!process.env[TOKEN_ENV(n)];
+  const token = intOpt("token", 1, 3) ?? (set(3) ? 3 : set(2) ? 2 : 1);
+  if (!set(token) || !process.env.MIRO_BOARD_ID) {
+    console.error(`Set ${TOKEN_ENV(token)} and MIRO_BOARD_ID in .env.`);
+    process.exit(2);
+  }
+  // Shared tokens get a smaller share of the 100k credits/min (RUNBOOK "Bot rehearsal").
+  const shared = token !== 3;
+  const readEvery = intOpt("read-every", 1) ?? (token === 1 ? 10 : shared ? 6 : 5);
+  const writesPerMin = intOpt("writes-per-min", 10) ?? (token === 1 ? 200 : shared ? 300 : 450);
+  const rest = new MiroRest(process.env[TOKEN_ENV(token)]!, process.env.MIRO_BOARD_ID, (s) => console.log(`\n[miro bots] ${s}`));
+  const who = await rest.tokenContext();
+  console.log(`bots: ${players} players (${args.includes("--class") ? "class" : "agent"} profile, seed ${seed}) on ${TOKEN_ENV(token)} (Miro user ${who.userName}) · shared read every ${readEvery}s · writes ≤ ${writesPerMin}/min`);
+  console.log(`the referees must run with: npm run referee supervise -- --bots-token ${token}${token === 1 ? "   (MIRO_ACCESS_TOKEN_2 blank: one referee)" : ""}`);
+  const io = new MiroBotIO(rest);
+  await io.init();
+  const runner = new BotRunner(io, { players, seed, profile, readEveryMs: readEvery * 1000, writesPerMin, log: (s) => console.log(`\n${s}`) });
+  let stopping = false;
+  process.on("SIGINT", () => {
+    stopping = true;
+    console.log("\nstopping the bots (nothing is removed)");
+  });
+  let lastStatus = 0;
+  while (!stopping && !runner.over) {
+    const t0 = Date.now();
+    try {
+      await runner.step(t0);
+    } catch (e) {
+      console.error(`\nbot step failed: ${(e as Error).message}`);
+    }
+    if (t0 - lastStatus >= 5000) {
+      process.stdout.write(`\r${runner.status(Date.now())}   `);
+      lastStatus = t0;
+    }
+    await new Promise((r) => setTimeout(r, Math.max(100, 500 - (Date.now() - t0))));
+  }
+  console.log(`\n${runner.status(Date.now())}`);
+  if (runner.over) console.log("GAME OVER on the banner: the bots stop. Their cards and stickies stay (the next `reset` clears them).");
+}
+
 async function main() {
   const pollMs = Number(opt("poll", "3")) * 1000;
   switch (cmd) {
@@ -461,11 +602,14 @@ async function main() {
       console.log(`asked the running referee (pid ${running}) to start the fire; it does so on its next poll.`);
       return;
     }
+    case "bots":
+      return bots();
     case "supervise": {
       // `run` under a watchdog (src/supervise.ts): restarted when it crashes or hangs, until the game is over,
       // `stop` is used, or Ctrl-C (pauses, like `run`). Bad flags fail here, not in a restart loop.
       intOpt("teams", 1, 4);
       intOpt("team-size", 1);
+      intOpt("bots-token", 1, 3);
       return supervise(args.slice(1));
     }
     case "stop": {
@@ -509,6 +653,11 @@ async function main() {
            --teams N (1-4 teams play, Team 1 first), --team-size N (players per team: uses only the teams that needs),
            --no-draw (place players as they join instead of a random draw at the start),
            --rehearsal (test with ONE Miro account: every inbox card is its own player; never in class)
+           --bots-token N (bot rehearsal: scripted bots write with token N; see \`bots\`)
+  npm run referee bots -- --players 30 [--seed N] [--class] [--dry-run]   scripted players on the board (RUNBOOK "Bot rehearsal")
+           --token 1|2|3 (default: 3 if set, else 2, else 1) --read-every S --writes-per-min N
+           --class: like today's class (staggered joins/starts, mistakes, vandals); tune with --join-spread S
+           --turn 12-40 --batch 1-5 --late-share 0.3 --vandals N --boss-paint 0.2 --mistakes 1 (scale) --no-attacks
 state: ${GAME_FILE}`);
   }
 }

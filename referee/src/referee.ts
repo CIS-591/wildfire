@@ -322,7 +322,9 @@ export class Referee {
     this.ordersIds = { ...(opts.ordersIds ?? {}), ...(game.orders ?? {}) };
     this.rng = opts.rng ?? mulberry32(Date.now() % 2 ** 31);
     this.rehearsal = opts.rehearsal ?? false;
-    this.selfId = this.rehearsal ? undefined : opts.selfId;
+    // Rehearsal: the CLI passes no selfId when one account plays every seat (its own echoes are told apart by
+    // content); with bots on another token (`--bots-token`) it passes the referee's own user, never the bots'.
+    this.selfId = opts.selfId;
     this.maxWritesPerTick = opts.maxWritesPerTick ?? 120;
     this.onPaint = opts.onPaint;
     this.role = opts.role ?? "solo";

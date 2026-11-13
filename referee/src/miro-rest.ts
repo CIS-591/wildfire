@@ -6,6 +6,7 @@
 //   POST   /v2/boards/{board_id}/frames                      (Level 2)
 //   PATCH  /v2/boards/{board_id}/shapes/{item_id}            (Level 2)
 //   PATCH  /v2/boards/{board_id}/sticky_notes/{item_id}      (Level 2)
+//   POST   /v2/boards/{board_id}/sticky_notes                (Level 2; the bot runner: orders, questions)
 //   DELETE /v2/boards/{board_id}/items/{item_id}             (Level 3)
 //   POST   /v2/boards/{board_id}/items/bulk                  (Level 2, max 20 items)
 //   GET    /v2/boards/{board_id}/members?limit=50&cursor=    (Level 1)
@@ -331,6 +332,27 @@ export class MiroRest implements BoardAdapter {
     return ids;
   }
 
+  /**
+   * A sticky note (the bot runner's orders and questions; one line per "\n"). Center x, y absolute; with a
+   * parent frame (top-left `box`) Miro takes the position relative to the frame's top-left.
+   */
+  async createSticky(text: string, x: number, y: number, parent?: { id: string; box: Box }): Promise<string> {
+    const r = await this.req<{ id: string }>("POST", `${this.b}/sticky_notes`, {
+      data: { content: stickyHtml(text), shape: "square" },
+      style: { fillColor: "light_yellow" },
+      position: parent ? { x: x - parent.box.x, y: y - parent.box.y } : { x, y },
+      geometry: { width: 160 },
+      ...(parent ? { parent: { id: parent.id } } : {}),
+    });
+    this.typeOf.set(r.id, "sticky_note");
+    return r.id;
+  }
+
+  /** Replace a sticky note's text (one line per "\n"). */
+  async updateSticky(id: string, text: string): Promise<void> {
+    await this.req("PATCH", `${this.b}/sticky_notes/${id}`, { data: { content: stickyHtml(text) } });
+  }
+
   async createImage(img: NewImage): Promise<string> {
     const r = await this.req<{ id: string }>("POST", `/v2/boards/${encodeURIComponent(this.boardId)}/images`, { data: { url: img.url }, position: { x: img.x, y: img.y }, geometry: { width: img.w } });
     this.typeOf.set(r.id, "image");
@@ -357,3 +379,7 @@ export class MiroRest implements BoardAdapter {
     return out;
   }
 }
+
+const escHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+/** Lines as Miro paragraphs (stripHtml turns each </p> back into a line break). */
+export const stickyHtml = (text: string) => text.split("\n").map((l) => `<p>${escHtml(l)}</p>`).join("");
