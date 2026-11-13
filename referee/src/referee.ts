@@ -2212,7 +2212,7 @@ export class Referee {
       role === "boss"
         ? `You are the BOSS: in ${frame}, fill in each worker's "Name: paint" sticky (like "Ana: paint N9 N10"), and paint too. When your area is under control you may ask "Start a fire in Team N's area?" (a neighbour; a teammate must say YES${Object.values(this.state.players).filter((p) => p.team === team).length === 1 ? ": you are alone on your team, so ask your own student and write their YES or NO yourself" : ""}).`
         : `You are a WORKER: paint the squares on your sticky in ${frame} (your name: paint ...).`;
-    return `👋 ${esc(name)}: you are on ${t.name} (${team}). Your area: ${sectorText(team)} (edge ${t.color}). Paint blue ${STATE_COLOR.water} on green or orange squares there. ${job}`;
+    return `👋 ${esc(name)}: you are on ${t.name} (${team}). Your area: ${sectorText(team)} (edge ${t.color}). Paint blue ${STATE_COLOR.water} only on green squares next to a fire there (never on orange). ${job}`;
   }
 
   private isInboxCard(it: BoardItem): boolean {

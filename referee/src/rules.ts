@@ -770,7 +770,7 @@ export function attackOn(state: GameState, team: Team, to: Team): Attack | null 
 const ORANGE = () => `orange ${STATE_COLOR.fire}`;
 
 /**
- * Decide one observed fill change against the referee's state. Blue: on a green or orange square in the
+ * Decide one observed fill change against the referee's state. Blue: on a green square (rules.waterNearFire: near a fire) in the
  * painter's own area (1 shared water). Orange: on a green square in a neighbour's area during the team's
  * approved attack (at most attackSquares per attack). Events for one tick must be passed in time order.
  */
