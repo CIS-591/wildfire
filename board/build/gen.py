@@ -3,6 +3,9 @@ OUT = sys.argv[1]
 L = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 def col(c): return L[c] if c < 26 else L[c//26-1] + L[c%26]
 def lab(c, r): return f"{col(c)}{r+1}"
+GAP = 64  # empty gap between the team areas (referee/src/layout.ts GAP): after column R and after row 17
+def cx(c): return c*64 + (GAP if c >= 18 else 0)
+def ry(r): return r*64 + (GAP if r >= 17 else 0)
 TEAM = {"ridge": "#b384bb", "pine": "#ea94bb", "cedar": "#7b92ff", "birch": "#ffffff"}
 def sector(c, r):
     return ("ridge" if c < 18 else "pine") if r < 17 else ("cedar" if c < 18 else "birch")
@@ -33,7 +36,7 @@ for b in range(9):
         for c in range(36):
             k = lab(c, r); d = cells[k]
             tc = ' data-text-color="#ffffff"' if d["fill"] == RIVER else ''
-            row.append(f'<rect x="{c*64+2}" y="{(r-r0)*64+2}" width="60" height="60" fill="{d["fill"]}" stroke="{d["stroke"]}" stroke-width="3" data-content="{k}" data-font-size="20"{tc}/>')
+            row.append(f'<rect x="{cx(c)+2}" y="{ry(r)-ry(r0)+2}" width="60" height="60" fill="{d["fill"]}" stroke="{d["stroke"]}" stroke-width="3" data-content="{k}" data-font-size="20"{tc}/>')
         lines.append("".join(row))
     open(f"{OUT}/band{b}.txt", "w").write("\n".join(lines))
 print(sum(1 for _ in cells), [k for k, v in cells.items() if v["fill"] != FOREST])

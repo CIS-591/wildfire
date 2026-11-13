@@ -4,24 +4,29 @@ T = {"ridge": "#b384bb", "pine": "#ea94bb", "cedar": "#7b92ff", "birch": "#fffff
 RIM = "#262a33"; PANEL = "#262a33"; INK = "#1a1a1a"; ORANGE = "#ff9d48"; LIGHT = "#e7e7e7"
 o = ['<svg xmlns="http://www.w3.org/2000/svg">']
 a = o.append
+GAP = 64  # empty gap between the team areas (referee/src/layout.ts GAP): after column R and after row 17
+def cx(c): return c*64 + (GAP if c >= 18 else 0)
+def ry(r): return r*64 + (GAP if r >= 17 else 0)
+W, H = 2304 + GAP, 2176 + GAP  # grid incl. the gap
 # rim around the grid (does not overlap the band frames)
-a(f'<rect id="rimT" x="-74" y="-74" width="2448" height="72" fill="{RIM}" stroke="none"/>')
-a(f'<rect id="rimB" x="-74" y="2174" width="2448" height="72" fill="{RIM}" stroke="none"/>')
-a(f'<rect id="rimL" x="-74" y="-2" width="72" height="2176" fill="{RIM}" stroke="none"/>')
-a(f'<rect id="rimR" x="2302" y="-2" width="72" height="2176" fill="{RIM}" stroke="none"/>')
+a(f'<rect id="rimT" x="-74" y="-74" width="{W+144}" height="72" fill="{RIM}" stroke="none"/>')
+a(f'<rect id="rimB" x="-74" y="{H-2}" width="{W+144}" height="72" fill="{RIM}" stroke="none"/>')
+a(f'<rect id="rimL" x="-74" y="-2" width="72" height="{H}" fill="{RIM}" stroke="none"/>')
+a(f'<rect id="rimR" x="{W-2}" y="-2" width="72" height="{H}" fill="{RIM}" stroke="none"/>')
 F = 'font-family="roboto_condensed" font-size="26" font-weight="bold" text-anchor="middle"'
 for c in range(36):
-    x = c*64+30
+    x = cx(c)+30
     a(f'<text x="{x}" y="-28" {F} fill="{T["ridge"] if c<18 else T["pine"]}">{col(c)}</text>')
-    a(f'<text x="{x}" y="2220" {F} fill="{T["cedar"] if c<18 else T["birch"]}">{col(c)}</text>')
+    a(f'<text x="{x}" y="{H+44}" {F} fill="{T["cedar"] if c<18 else T["birch"]}">{col(c)}</text>')
 for r in range(34):
-    y = r*64+39
+    y = ry(r)+39
     a(f'<text x="-38" y="{y}" {F} fill="{T["ridge"] if r<17 else T["cedar"]}">{r+1}</text>')
-    a(f'<text x="2338" y="{y}" {F} fill="{T["pine"] if r<17 else T["birch"]}">{r+1}</text>')
+    a(f'<text x="{W+34}" y="{y}" {F} fill="{T["pine"] if r<17 else T["birch"]}">{r+1}</text>')
 # 9 band frames, no title
 for b in range(9):
     rows = min(4, 34-b*4)
-    a(f'<g id="band{b}" transform="translate(-2,{b*256-2})" data-frame=""><rect data-type="frame" x="0" y="0" width="2304" height="{rows*64}" fill="#3d4250"/></g>')
+    y0, y1 = ry(b*4)-2, ry(b*4+rows-1)+62
+    a(f'<g id="band{b}" transform="translate(-2,{y0})" data-frame=""><rect data-type="frame" x="0" y="0" width="{W}" height="{y1-y0}" fill="#3d4250"/></g>')
 # title
 a(f'<textArea id="title" x="0" y="-330" width="460" font-family="titan_one" font-size="60" fill="{ORANGE}">WILDFIRE</textArea>')
 a(f'<text id="subtitle" x="480" y="-276" font-family="roboto_condensed" font-size="28" fill="#595959">CIS 591 · four teams, one forest, one fire. Hold the line.</text>')
@@ -38,7 +43,7 @@ a(f'<text x="-23" y="-159" {CF} fill="#e7e7e7">E</text>')
 a(f'<rect id="banner" x="0" y="-220" width="1100" height="110" rx="12" fill="{INK}" stroke="{ORANGE}" stroke-width="4" data-content="WILDFIRE · waiting for the referee" data-font-family="roboto_condensed" data-font-size="36" data-font-weight="bold" data-text-color="#ffdc4a"/>')
 a(f'<rect id="scoreboard" x="1160" y="-220" width="1140" height="110" rx="12" fill="{INK}" stroke="{ORANGE}" stroke-width="4" data-content="RIDGE 100% · PINE VALLEY 100% · CEDAR CREEK 100% · BIRCH HOLLOW 100%" data-font-family="roboto_condensed" data-font-size="30" data-font-weight="bold" data-text-color="#ffffff"/>')
 # rules panel
-x0, y0 = 2440, -330
+x0, y0 = 2440 + GAP, -330
 a(f'<rect id="rulesPanel" x="{x0}" y="{y0}" width="760" height="610" rx="16" fill="{PANEL}" stroke="none"/>')
 a(f'<text id="rulesHead" x="{x0+32}" y="{y0+52}" font-family="roboto_condensed" font-size="33" font-weight="bold" fill="{ORANGE}">RULES</text>')
 rules = ("<b>Fire</b> spreads every 20 s, faster downwind. Embers can jump a 1-wide firebreak. Wind turns every 5 min. Lightning strikes a few times: watch the banner.<br/>"
@@ -64,7 +69,7 @@ for i,(k,n) in enumerate([("ridge","RIDGE"),("pine","PINE VALLEY"),("cedar","CED
     a(f'<rect x="{bx}" y="{by}" width="110" height="60" rx="6" fill="{T[k]}" stroke="none" data-content="{n}" data-font-family="roboto_condensed" data-font-size="14" data-font-weight="bold" data-text-color="{INK}"/>')
 a(f'<textArea x="{lx}" y="{y0+540}" width="250" font-family="roboto_condensed" font-size="16" fill="#b0b0b0">Square borders show the sector. Fire starts at R17 S17 R18 S18.</textArea>')
 # leaderboard panel + fixture
-x1 = 3240
+x1 = 3240 + GAP
 a(f'<rect id="lbPanel" x="{x1}" y="{y0}" width="760" height="610" rx="16" fill="{PANEL}" stroke="none"/>')
 a(f'<text id="lbHead" x="{x1+32}" y="{y0+52}" font-family="roboto_condensed" font-size="33" font-weight="bold" fill="{ORANGE}">LEADERBOARD · live</text>')
 a(f'<rect id="leaderboard" x="{x1+32}" y="{y0+76}" width="696" height="502" rx="8" fill="{INK}" stroke="none" data-content="No players yet. /join to enter the fight." data-font-family="roboto_condensed" data-font-size="22" data-text-color="{LIGHT}" data-text-align="left" data-text-align-vertical="top"/>')
@@ -73,15 +78,15 @@ ex = {"ridge":"EXAMPLE · a PLAN sticky looks like: PLAN hold the east edge with
       "pine":"EXAMPLE · a PLAN sticky looks like: PLAN hold the west edge with water, firebreak column U",
       "cedar":"EXAMPLE · a PLAN sticky looks like: PLAN hold the east edge with water, firebreak column P",
       "birch":"EXAMPLE · a PLAN sticky looks like: PLAN hold the west edge with water, firebreak column U"}
-for k,n,x,y in [("ridge","RIDGE",2440,340),("pine","PINE VALLEY",3240,340),("cedar","CEDAR CREEK",2440,1300),("birch","BIRCH HOLLOW",3240,1300)]:
+for k,n,x,y in [("ridge","RIDGE",2440+GAP,340),("pine","PINE VALLEY",3240+GAP,340),("cedar","CEDAR CREEK",2440+GAP,1300),("birch","BIRCH HOLLOW",3240+GAP,1300)]:
     a(f'<g id="orders_{k}" transform="translate({x},{y})" data-frame="ORDERS · {n}"><rect data-type="frame" x="0" y="0" width="760" height="900" fill="{PANEL}"/>')
     a(f'<rect id="ordersHead_{k}" x="0" y="0" width="760" height="72" fill="{T[k]}" stroke="none" data-content="ORDERS · {n}" data-font-family="roboto_condensed" data-font-size="33" data-font-weight="bold" data-text-color="{INK}"/>')
     a(f'<textArea id="ordersHint_{k}" x="24" y="88" width="712" font-family="roboto_condensed" font-size="22" fill="{LIGHT}">Boss posts PLAN, ORDER · name, BACKBURN P6-P15 and STATUS here. HELP goes in a neighbour\'s frame. A teammate approves by adding a line YES or NO.</textArea>')
     a(f'<rect id="example_{k}" data-type="sticky" x="24" y="176" width="199" height="228" data-color="light_yellow" data-content="{ex[k]}"/>')
     a('</g>')
 # inbox panel
-a(f'<rect id="inboxPanel" x="0" y="2300" width="4000" height="1500" rx="16" fill="{PANEL}" stroke="none"/>')
-a(f'<text id="inboxHead" x="32" y="2362" font-family="roboto_condensed" font-size="33" font-weight="bold" fill="{ORANGE}">INBOX · one card per player · read only your own</text>')
-a(f'<text id="inboxHint" x="900" y="2360" font-family="roboto_condensed" font-size="18" fill="#b0b0b0">/join Your Name creates your card here. The referee writes your team, role and every refusal on it.</text>')
+a(f'<rect id="inboxPanel" x="0" y="{2300+GAP}" width="{4000+GAP}" height="1500" rx="16" fill="{PANEL}" stroke="none"/>')
+a(f'<text id="inboxHead" x="32" y="{2362+GAP}" font-family="roboto_condensed" font-size="33" font-weight="bold" fill="{ORANGE}">INBOX · one card per player · read only your own</text>')
+a(f'<text id="inboxHint" x="900" y="{2360+GAP}" font-family="roboto_condensed" font-size="18" fill="#b0b0b0">/join Your Name creates your card here. The referee writes your team, role and every refusal on it.</text>')
 a('</svg>')
 open("scaffold.svg","w").write("\n".join(o))

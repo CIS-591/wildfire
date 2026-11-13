@@ -28,6 +28,19 @@ export interface Box {
 }
 
 export const GRID = { cols: 36, rows: 34, cell: 60, pitch: 64, originX: 0, originY: 0 };
+/**
+ * Empty gap (canvas units) between the four team areas: between columns R|S and between rows 17|18.
+ * One square-width, so the areas read as four separate blocks. Purely visual: labels, ids and
+ * adjacency (by col/row) are unchanged, and fire never crosses an area border anyway.
+ */
+export const GAP = 64;
+/** First column / row (0-based) after the gap: S, and row 18. */
+export const GAP_COL = 18;
+export const GAP_ROW = 17;
+/** Top-left x of a column (0-based), gap included. */
+export const colX = (col: number): number => GRID.originX + col * GRID.pitch + (col >= GAP_COL ? GAP : 0);
+/** Top-left y of a row (0-based), gap included. */
+export const rowY = (row: number): number => GRID.originY + row * GRID.pitch + (row >= GAP_ROW ? GAP : 0);
 export const CELL_FONT = 20;
 
 /** Square fills (lowercase hex), from config/colors.json. */
@@ -130,7 +143,7 @@ export function buildCells(): CellDef[] {
   const cells: CellDef[] = [];
   for (let row = 0; row < GRID.rows; row++) {
     for (let col = 0; col < GRID.cols; col++) {
-      cells.push({ label: label(col, row), col, row, sector: sectorOf(col, row), x: GRID.originX + col * GRID.pitch, y: GRID.originY + row * GRID.pitch });
+      cells.push({ label: label(col, row), col, row, sector: sectorOf(col, row), x: colX(col), y: rowY(row) });
     }
   }
   return cells;
@@ -161,16 +174,19 @@ export function cellStroke(cell: CellDef): { color: string; width: number } {
   return { color: TEAM_INFO[cell.sector].color, width: PALETTE.square.teamBorderWidth ?? PALETTE.square.borderWidth };
 }
 
-export const GRID_BOX: Box = { x: GRID.originX, y: GRID.originY, w: GRID.cols * GRID.pitch - (GRID.pitch - GRID.cell), h: GRID.rows * GRID.pitch - (GRID.pitch - GRID.cell) };
+export const GRID_BOX: Box = { x: GRID.originX, y: GRID.originY, w: GRID.cols * GRID.pitch - (GRID.pitch - GRID.cell) + GAP, h: GRID.rows * GRID.pitch - (GRID.pitch - GRID.cell) + GAP };
 
 // Grid squares live in horizontal frames (bands of FRAME_ROWS rows) so the referee can read them in
-// parallel; Miro positions a frame's children from the frame's top-left.
+// parallel; Miro positions a frame's children from the frame's top-left. Every band spans the column gap
+// (GAP wider); the band holding rows 17|18 also spans the row gap (GAP taller).
 export const FRAME_ROWS = 4;
 export function frameBoxes(): Box[] {
   const out: Box[] = [];
   for (let r0 = 0; r0 < GRID.rows; r0 += FRAME_ROWS) {
     const rows = Math.min(FRAME_ROWS, GRID.rows - r0);
-    out.push({ x: GRID.originX - 2, y: GRID.originY + r0 * GRID.pitch - 2, w: GRID.cols * GRID.pitch, h: rows * GRID.pitch });
+    const y0 = rowY(r0) - 2;
+    const y1 = rowY(r0 + rows - 1) + GRID.pitch - 2;
+    out.push({ x: GRID.originX - 2, y: y0, w: GRID.cols * GRID.pitch + GAP, h: y1 - y0 });
   }
   return out;
 }
@@ -179,24 +195,26 @@ export const frameOfRow = (row: number) => Math.floor(row / FRAME_ROWS);
 /** Dark backdrop behind the grid and its row/column headers (static). */
 export const BACKDROP: Box = { x: -96, y: -80, w: GRID_BOX.w + 96 + 36, h: GRID_BOX.h + 80 + 36 };
 
+// Everything right of the grid (rules, leaderboard, TEAMS cards, Orders) sits GAP further right, and the inbox
+// GAP lower, than before the gap was added, so the wider/taller grid never overlaps them.
 export const PANELS = {
   title: { x: 0, y: -330, w: 1400, h: 90 } as Box,
-  rules: { x: 2440, y: -330, w: 760, h: 610 } as Box,
-  leaderboard: { x: 3240, y: -330, w: 760, h: 610 } as Box,
-  inbox: { x: 0, y: 2300, w: 4000, h: 1500 } as Box,
+  rules: { x: 2440 + GAP, y: -330, w: 760, h: 610 } as Box,
+  leaderboard: { x: 3240 + GAP, y: -330, w: 760, h: 610 } as Box,
+  inbox: { x: 0, y: 2300 + GAP, w: 4000 + GAP, h: 1500 } as Box,
   compass: { x: -330, y: -330, w: 200, h: 200 } as Box,
 };
 
 export const ORDERS: Record<Team, Box> = {
-  ridge: { x: 2440, y: 340, w: 760, h: 900 },
-  pine: { x: 3240, y: 340, w: 760, h: 900 },
-  cedar: { x: 2440, y: 1300, w: 760, h: 900 },
-  birch: { x: 3240, y: 1300, w: 760, h: 900 },
+  ridge: { x: 2440 + GAP, y: 340, w: 760, h: 900 },
+  pine: { x: 3240 + GAP, y: 340, w: 760, h: 900 },
+  cedar: { x: 2440 + GAP, y: 1300, w: 760, h: 900 },
+  birch: { x: 3240 + GAP, y: 1300, w: 760, h: 900 },
 };
 export const ordersTitle = (t: Team) => `ORDERS · ${TEAM_INFO[t].name.toUpperCase()}`; // "ORDERS · TEAM 1"
 
 /** Leaderboard row geometry (top-left boxes): a pill per rank slot, a white score badge inside its right end. */
-export const LB_ROW = { x: 3260, y0: -252, pitch: 128, w: 720, h: 118 };
+export const LB_ROW = { x: 3260 + GAP, y0: -252, pitch: 128, w: 720, h: 118 };
 export const LB_BADGE = { w: 96, h: 80, right: 12 };
 /** Water and attacks chips: stacked between the row text and the score badge (an icon at each chip's left). */
 export const LB_CHIP = { w: 136, h: 46, gap: 8, right: 12 };
@@ -224,7 +242,7 @@ function rankFixtures() {
 }
 
 /** TEAMS panel cards (top-left boxes), 4 in a row above the rules and leaderboard panels. */
-export const TEAM_CARD = { x: 2440, y: -790, w: 380, h: 330, gap: 13 };
+export const TEAM_CARD = { x: 2440 + GAP, y: -790, w: 380, h: 330, gap: 13 };
 export const teamCardKey = (t: Team) => `team_${t}` as const;
 function teamFixtures() {
   const out = {} as Record<`team_${Team}`, Box>;
@@ -276,7 +294,7 @@ export const LB_ICONS = { medal: { size: 48, left: 12 }, mascot: { size: 60, lef
 export const LB_INDENT = "&nbsp;".repeat(31);
 export const LB_FONT = 15;
 
-export const INBOX_CARD = { w: 380, h: 150, cols: 9, gapX: 50, gapY: 24, firstX: 40, firstY: 2400 };
+export const INBOX_CARD = { w: 380, h: 150, cols: 9, gapX: 50, gapY: 24, firstX: 40, firstY: 2400 + GAP };
 
 export function inboxSlot(index: number): Box {
   const c = index % INBOX_CARD.cols;

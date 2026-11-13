@@ -69,8 +69,9 @@ Follow `AGENTS.md` "Smart play" (it decides known/small fire vs order vs your ow
   area's own start fire (the 6 × 6 box around `T.startFires` if board.json has it; otherwise 6 × 6
   boxes across your area, one per turn, until you find it).
 - After that: keep `player.json` `fire` = the burning labels you saw last. Scan a 6 × 6 box around the
-  burning square that is deepest into your area, or closest to your largest green patch (x = (colIndex − 2) × 64,
-  y = (row − 3) × 64, w = h = 384, clipped to the grid). Rotate between a few such boxes so you follow
+  burning square that is deepest into your area, or closest to your largest green patch (x = X − 128,
+  y = Y − 128, w = h = 384, where (X, Y) is that square's top-left from CLAUDE.md "The board" (columns
+  S–AJ and rows 18–34 add 64 for the gap between areas), clipped to your team's area box `T.sector`). Rotate between a few such boxes so you follow
   the whole edge. To check a handful of known squares, **peek them by id** from `cells` instead.
 - A new fire on the banner (`NEW FIRE at K4 (Team 2's area)!`, minutes 2, 4, 6, 8): if it is
   in your area or within 2 squares of it, scan the 6 × 6 box around it once.

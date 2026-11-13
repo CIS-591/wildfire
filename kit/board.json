@@ -13,12 +13,18 @@
       "x": 0,
       "y": 0
     },
-    "formula": "square top-left x = colIndex*64, y = (row-1)*64, size 60x60. Inverse: colIndex = floor(x/64), row = floor(y/64)+1. Squares sit inside 9 band frames (4 rows each), so in an SVG read their x/y are frame-relative: identify a square by its label text, not its x/y.",
+    "formula": "square top-left x = colIndex*64 + (colIndex >= 18 ? 64 : 0), y = (row-1)*64 + (row >= 18 ? 64 : 0), size 60x60 (columns S-AJ and rows 18-34 sit one empty square-width further out: the gap between the team areas). Inverse: x < 1152 -> colIndex = floor(x/64); x >= 1216 -> colIndex = floor((x-64)/64); 1152..1215 is the gap. Same for y and row (y < 1088 -> row = floor(y/64)+1; y >= 1152 -> row = floor((y-64)/64)+1). Squares sit inside 9 band frames (4 rows each), so in an SVG read their x/y are frame-relative: identify a square by its label text or id, not its x/y.",
     "box": {
       "x": 0,
       "y": 0,
-      "w": 2304,
-      "h": 2176
+      "w": 2368,
+      "h": 2240
+    },
+    "gap": {
+      "px": 64,
+      "afterColumn": "R",
+      "afterRow": 17,
+      "note": "An empty gap of 64 (one square-width) separates the four team areas: between columns R|S and between rows 17|18."
     }
   },
   "colors": {
@@ -68,20 +74,20 @@
       "columns": "S-AJ",
       "rows": "1-17",
       "sector": {
-        "x": 1152,
+        "x": 1216,
         "y": 0,
         "w": 1152,
         "h": 1088
       },
       "watch": {
-        "x": 960,
+        "x": 1024,
         "y": 0,
         "w": 1344,
         "h": 1280
       },
       "firstFire": "S17",
       "startScan": {
-        "x": 1152,
+        "x": 1216,
         "y": 704,
         "w": 384,
         "h": 384
@@ -102,20 +108,20 @@
       "rows": "18-34",
       "sector": {
         "x": 0,
-        "y": 1088,
+        "y": 1152,
         "w": 1152,
         "h": 1088
       },
       "watch": {
         "x": 0,
-        "y": 896,
+        "y": 960,
         "w": 1344,
         "h": 1280
       },
       "firstFire": "R18",
       "startScan": {
         "x": 768,
-        "y": 1088,
+        "y": 1152,
         "w": 384,
         "h": 384
       },
@@ -134,21 +140,21 @@
       "columns": "S-AJ",
       "rows": "18-34",
       "sector": {
-        "x": 1152,
-        "y": 1088,
+        "x": 1216,
+        "y": 1152,
         "w": 1152,
         "h": 1088
       },
       "watch": {
-        "x": 960,
-        "y": 896,
+        "x": 1024,
+        "y": 960,
         "w": 1344,
         "h": 1280
       },
       "firstFire": "S18",
       "startScan": {
-        "x": 1152,
-        "y": 1088,
+        "x": 1216,
+        "y": 1152,
         "w": 384,
         "h": 384
       },
@@ -189,56 +195,56 @@
       "id": "3458764690210204158"
     },
     "rank_1": {
-      "x": 3260,
+      "x": 3324,
       "y": -252,
       "w": 720,
       "h": 118,
       "id": "3458764690294422088"
     },
     "rank_1_score": {
-      "x": 3834,
+      "x": 3898,
       "y": -233,
       "w": 130,
       "h": 80,
       "id": "3458764690294422102"
     },
     "rank_2": {
-      "x": 3260,
+      "x": 3324,
       "y": -124,
       "w": 720,
       "h": 118,
       "id": "3458764690282608022"
     },
     "rank_2_score": {
-      "x": 3834,
+      "x": 3898,
       "y": -105,
       "w": 130,
       "h": 80,
       "id": "3458764690282608028"
     },
     "rank_3": {
-      "x": 3260,
+      "x": 3324,
       "y": 4,
       "w": 720,
       "h": 118,
       "id": "3458764690282608050"
     },
     "rank_3_score": {
-      "x": 3834,
+      "x": 3898,
       "y": 23,
       "w": 130,
       "h": 80,
       "id": "3458764690285396710"
     },
     "rank_4": {
-      "x": 3260,
+      "x": 3324,
       "y": 132,
       "w": 720,
       "h": 118,
       "id": "3458764690282608058"
     },
     "rank_4_score": {
-      "x": 3834,
+      "x": 3898,
       "y": 151,
       "w": 130,
       "h": 80,
@@ -253,22 +259,22 @@
       "h": 90
     },
     "rules": {
-      "x": 2440,
+      "x": 2504,
       "y": -330,
       "w": 760,
       "h": 610
     },
     "inbox": {
       "x": 0,
-      "y": 2300,
-      "w": 4000,
+      "y": 2364,
+      "w": 4064,
       "h": 1500
     }
   },
   "orders": {
     "ridge": {
       "title": "ORDERS · TEAM 1",
-      "x": 2440,
+      "x": 2504,
       "y": 340,
       "w": 760,
       "h": 900,
@@ -276,7 +282,7 @@
     },
     "pine": {
       "title": "ORDERS · TEAM 2",
-      "x": 3240,
+      "x": 3304,
       "y": 340,
       "w": 760,
       "h": 900,
@@ -284,7 +290,7 @@
     },
     "cedar": {
       "title": "ORDERS · TEAM 3",
-      "x": 2440,
+      "x": 2504,
       "y": 1300,
       "w": 760,
       "h": 900,
@@ -292,7 +298,7 @@
     },
     "birch": {
       "title": "ORDERS · TEAM 4",
-      "x": 3240,
+      "x": 3304,
       "y": 1300,
       "w": 760,
       "h": 900,
@@ -421,7 +427,7 @@
     "h": 150,
     "createIn": {
       "x": 40,
-      "y": 2400,
+      "y": 2464,
       "w": 3500,
       "h": 1300
     }

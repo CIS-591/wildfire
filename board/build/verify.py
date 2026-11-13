@@ -20,7 +20,8 @@ for fn in ["rf1.json","rf2.json","rf3.json"]:
         ax,ay=float(x)+tx,float(y)+ty
         if lab in cells: problems.append(("dup",lab))
         cells[lab]=mid
-        if (ax,ay)!=(e["col"]*64,e["row"]*64): problems.append(("pos",lab,ax,ay))
+        GAP=64  # the gap between the team areas (referee/src/layout.ts GAP)
+        if (ax,ay)!=(e["col"]*64+(GAP if e["col"]>=18 else 0),e["row"]*64+(GAP if e["row"]>=17 else 0)): problems.append(("pos",lab,ax,ay))
         if F.index(cur)!=e["row"]//4: problems.append(("frame",lab))
         if fill!=e["fill"]: problems.append(("fill",lab,fill))
         if not st or st.group(1)!=e["stroke"] or st.group(2)!="3": problems.append(("stroke",lab,st and st.groups()))

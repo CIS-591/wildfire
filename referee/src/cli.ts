@@ -5,8 +5,8 @@ import path from "node:path";
 import { pool } from "./board.js";
 import { GAME_FILE, LIVE_IDS_FILE, ROOT, loadEnv, loadGame, loadLayoutIds, loadRules, loadTeams, saveGame, saveLiveIds } from "./config.js";
 import {
-  BACKDROP, CELL_FONT, COLORS, FIXTURES, GRID, ORDERS, PANELS, STATE_COLOR, TEAMS, TEAM_INFO, buildCells, cellStroke, center, colName, frameBoxes, frameOfRow, ordersTitle,
-  sectorText, startFill, startState, textColorFor, type Box, type CellState,
+  BACKDROP, CELL_FONT, COLORS, FIXTURES, GRID, ORDERS, PANELS, STATE_COLOR, TEAMS, TEAM_INFO, buildCells, cellStroke, center, colName, colX, frameBoxes, frameOfRow, ordersTitle,
+  rowY, sectorText, startFill, startState, textColorFor, type Box, type CellState,
 } from "./layout.js";
 import { acquireLock, lockOwner as lockPid, releaseLock } from "./lock.js";
 import { MiroRest } from "./miro-rest.js";
@@ -217,8 +217,8 @@ async function build() {
     { content: "<b>LEADERBOARD · live</b>", x: PANELS.leaderboard.x + 24, y: PANELS.leaderboard.y + 40, w: 600, fontSize: 30, color: COLORS.heading },
     { content: "<b>PLAYERS</b>", x: PANELS.inbox.x + 40, y: PANELS.inbox.y + 50, w: 1600, fontSize: 36, color: COLORS.heading },
     { content: rulesHtml(loadRules(rulesFile())).map((l) => `<p>${l}</p>`).join(""), x: PANELS.rules.x + 24, y: PANELS.rules.y + 250, w: PANELS.rules.w - 48, fontSize: 17, color: COLORS.text },
-    ...Array.from({ length: GRID.cols }, (_, c) => ({ content: `<b>${colName(c)}</b>`, x: c * GRID.pitch, y: -36, w: GRID.cell, fontSize: 24, color: TEAM_INFO[c < 18 ? "ridge" : "pine"].color, align: "center" as const })),
-    ...Array.from({ length: GRID.rows }, (_, r) => ({ content: `<b>${r + 1}</b>`, x: -84, y: r * GRID.pitch + 30, w: 70, fontSize: 24, color: TEAM_INFO[r < 17 ? "ridge" : "cedar"].color, align: "right" as const })),
+    ...Array.from({ length: GRID.cols }, (_, c) => ({ content: `<b>${colName(c)}</b>`, x: colX(c), y: -36, w: GRID.cell, fontSize: 24, color: TEAM_INFO[c < 18 ? "ridge" : "pine"].color, align: "center" as const })),
+    ...Array.from({ length: GRID.rows }, (_, r) => ({ content: `<b>${r + 1}</b>`, x: -84, y: rowY(r) + 30, w: 70, fontSize: 24, color: TEAM_INFO[r < 17 ? "ridge" : "cedar"].color, align: "right" as const })),
   ];
   staticIds.push(...(await board.createTexts(texts)));
   const frames = await board.createFrames(frameBoxes(), COLORS.frame);
