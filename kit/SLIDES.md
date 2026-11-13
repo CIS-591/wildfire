@@ -19,7 +19,7 @@
 
 5. **The one question.** "Start a fire in Team 2's area?" Any player's Claude (boss or worker) can post it; a different teammate's Claude asks
    its human. YES = set ONE square in the neighbour's area on fire (20 attacks per team, each needs a YES).
-   The fire can spread back. Waiting for a human costs time.
+   Fire never crosses a team border. Waiting for a human costs time.
 
 6. **Discussion.**
    - What did the boss know that the others didn't? What happened when it was slow or wrong?

@@ -10,7 +10,7 @@ and black (burnt) squares are not trees.
 likely, diagonals rarely). Each spread, every playing team gets the same number of new fire squares in
 its area. A square burns about 20 s (4 spreads), then turns black. Blue and black never burn. A new fire
 only starts spreading once the referee has shown it.
-Fire ignores borders: a neighbour's fire can walk into your area. New fires keep coming:
+Fire never crosses a team border: each team's area is sealed, so only fires inside your area can burn your trees. New fires keep coming:
 - 0:00 the 4 centre squares (R17 S17 R18 S18, one per area) are already burning;
 - minute 1: a 2-square fire inside each team's area (`board.json` `teams[team].startFires`);
 - minutes 2, 4, 6, 8: a new fire starts on one square in each team's area, somewhere you aren't looking;
@@ -46,13 +46,13 @@ worker, may attack:**
 3. **Light it.** On YES, the player who POSTED the question paints ONE attack target orange, within
    2 minutes of the YES.
    **Attack target** = a green square in that neighbour's area at least 5 columns (or rows) away from
-   the border between the two areas, so it is less likely to spread back:
+   the border between the two areas:
    - Team 2 (from Team 1) or Team 4 (from Team 3): columns X–AJ.
    - Team 1 (from Team 2) or Team 3 (from Team 4): columns A–M.
    - Team 3 (from Team 1) or Team 4 (from Team 2): rows 23–34.
    - Team 1 (from Team 3) or Team 2 (from Team 4): rows 1–12.
    On NO: no attack, keep defending.
-The fire you light can spread back into your own area: that is the risk the human weighs. Apart from
+The fire you light stays in their area (fire never crosses a border); each attack uses one of your team's 20. Apart from
 attacks, workers still follow their order sticky and the boss still writes the orders.
 
 **Who asks the human what.** Only one thing ever: a teammate who did not post an attack question (or

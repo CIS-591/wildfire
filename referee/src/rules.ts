@@ -52,6 +52,8 @@ export interface RuleSet {
   burnAfterShown?: boolean;
   /** false: the boss's attack fire (orange) skips the paint cooldown. */
   attackCooldown?: boolean;
+  /** Fire never spreads across a team border: each team's area is sealed. */
+  fireStaysInArea?: boolean;
   /** A player joining gets a random team among the smallest open ones (off: the first smallest, Team 1 first). */
   randomTeams?: boolean;
   /** Fire and water follow the class size, set once when the game starts (see scaleRules). */
@@ -595,10 +597,11 @@ export function spread(state: GameState, rules: RuleSet, cells: CellDef[], byPos
     NEIGHBOURS.forEach((w, i) => {
       const n = byPos.get(`${f.col + w.dc},${f.row + w.dr}`);
       if (!n || state.cells[n.label] !== "forest" || lit.has(n.label)) return;
+      if (rules.fireStaysInArea && n.sector !== f.sector) return; // team areas are sealed: fire never crosses a border
       if (rng() < igniteChance(rules, i, state.wind)) lit.set(n.label, state.origin[f.label] ?? "wild");
     });
   }
-  if (rules.equalSpread) equalize(state, fires, byPos, lit, rng);
+  if (rules.equalSpread) equalize(state, rules, fires, byPos, lit, rng);
   const changed: string[] = [];
   for (const f of fires) {
     state.burnLeft[f.label] = (state.burnLeft[f.label] ?? 1) - 1;
@@ -628,7 +631,7 @@ export function spread(state: GameState, rules: RuleSet, cells: CellDef[], byPos
  * A team over k keeps a random k; a team under k gets more of the green squares next to its own fires (never
  * fires out of nowhere, so a team that put its fire out stays rewarded). Other areas spread by chance.
  */
-function equalize(state: GameState, fires: CellDef[], byPos: Map<string, CellDef>, lit: Map<string, Origin>, rng: Rng) {
+function equalize(state: GameState, rules: RuleSet, fires: CellDef[], byPos: Map<string, CellDef>, lit: Map<string, Origin>, rng: Rng) {
   const playing = playingTeams(state);
   if (!playing.length) return;
   const cellOf = new Map<string, CellDef>();
@@ -644,7 +647,7 @@ function equalize(state: GameState, fires: CellDef[], byPos: Map<string, CellDef
       const extra: [string, Origin][] = [];
       for (const f of fires) for (const w of NEIGHBOURS) {
         const n = byPos.get(`${f.col + w.dc},${f.row + w.dr}`);
-        if (n && n.sector === t && state.cells[n.label] === "forest" && !lit.has(n.label) && !extra.some(([l]) => l === n.label)) extra.push([n.label, state.origin[f.label] ?? "wild"]);
+        if (n && n.sector === t && (!rules.fireStaysInArea || f.sector === t) && state.cells[n.label] === "forest" && !lit.has(n.label) && !extra.some(([l]) => l === n.label)) extra.push([n.label, state.origin[f.label] ?? "wild"]);
       }
       for (const [lab, o] of shuffle(extra).slice(0, k - mine.length)) lit.set(lab, o);
     }

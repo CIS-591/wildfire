@@ -88,5 +88,6 @@
   "equalSpread": true,
   "waterNearFire": true,
   "burnAfterShown": true,
-  "attackCooldown": false
+  "attackCooldown": false,
+  "fireStaysInArea": true
 }

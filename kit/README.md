@@ -29,7 +29,7 @@ Then watch the board. Your Claude plays by itself.
 ## Your one decision
 
 Your Claude may ask: *"Start a fire in Team 2's area?"*
-YES = one square of their forest catches fire. But fire can spread back to you.
+YES = one square of their forest catches fire. Fire never crosses a team border, so it can't reach you.
 
 ## If something goes wrong
 
