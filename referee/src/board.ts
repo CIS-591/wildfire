@@ -80,6 +80,8 @@ export interface BoardAdapter {
   listByType?(types: string[]): Promise<BoardItem[]>;
   /** Fast path: only the grid squares, read frame by frame in parallel. Absent = use listItems. */
   listGridItems?(): Promise<BoardItem[]>;
+  /** The children of these frames (GET /items?parent_item_id=, one paged listing each); box = where the frame is meant to be (TOP-LEFT). */
+  listFrameItems?(frames: { id: string; x: number; y: number; w: number; h: number }[]): Promise<BoardItem[]>;
   updateShape(id: string, patch: ShapePatch): Promise<void>;
   deleteItem(id: string): Promise<void>;
   createShapes(shapes: NewShape[]): Promise<string[]>;

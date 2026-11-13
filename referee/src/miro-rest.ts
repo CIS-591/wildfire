@@ -128,6 +128,19 @@ export class MiroRest implements BoardAdapter {
     return out;
   }
 
+  /** Children of some frames (the Orders frames): positions are relative to the frame as last listed, else to `box`. */
+  async listFrameItems(frames: { id: string; x: number; y: number; w: number; h: number }[]): Promise<BoardItem[]> {
+    const out: BoardItem[] = [];
+    await pool(
+      frames.map((f) => async () => {
+        const box = this.seenFrames.get(f.id) ?? this.frames.get(f.id) ?? f;
+        for (const r of await this.pages(`&parent_item_id=${encodeURIComponent(f.id)}`)) out.push(this.toItem(r, box));
+      }),
+      frames.length,
+    );
+    return out;
+  }
+
   private async req<T>(method: string, path: string, body?: unknown, attempt = 0): Promise<T> {
     let res: Response;
     try {

@@ -2,10 +2,13 @@
 // (crash, uncaught error, kill, a hung tick), so a class game keeps going without the instructor.
 // It stops supervising when the game is over, when `npm run referee stop` was used, or on Ctrl-C (which
 // pauses the game exactly like Ctrl-C on `run`). The policy is pure (`decide`, `isHung`) and unit-tested.
+// With MIRO_ACCESS_TOKEN_2 in .env it also runs the guard referee (`serve --role guard`, the second token) as
+// a second child, restarted on its own (it guards in every phase); it stops when the game referee's
+// supervision ends.
 import { spawn, type ChildProcess } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import path from "node:path";
-import { ROOT } from "./config.js";
+import { ROOT, loadEnv } from "./config.js";
 import { acquireLock, lockOwner, releaseLock } from "./lock.js";
 
 export const BACKOFF_START_MS = 2_000;
@@ -39,12 +42,12 @@ export type Decision = { action: "stop"; reason: string } | { action: "restart";
 
 export const initialPolicy = (): PolicyState => ({ backoffMs: BACKOFF_START_MS, restarts: 0 });
 
-/** What to do when the child exits. Pure. */
-export function decide(exit: ExitFacts, st: PolicyState): Decision {
-  if (exit.signalled) return { action: "stop", reason: "supervisor interrupted: game paused" };
-  if (exit.gameOver) return { action: "stop", reason: "the game is over" };
-  if (exit.stopRequested) return { action: "stop", reason: "stop was requested (state/stop): run `npm run referee stop` again to end the game" };
-  if (exit.code === 2) return { action: "stop", reason: "configuration error (exit 2: MIRO_ACCESS_TOKEN / MIRO_BOARD_ID missing in .env)" };
+/** What to do when the child exits. Pure. The guard (second token) is restarted whatever the game's phase. */
+export function decide(exit: ExitFacts, st: PolicyState, guard = false): Decision {
+  if (exit.signalled) return { action: "stop", reason: guard ? "supervisor interrupted" : "supervisor interrupted: game paused" };
+  if (!guard && exit.gameOver) return { action: "stop", reason: "the game is over" };
+  if (!guard && exit.stopRequested) return { action: "stop", reason: "stop was requested (state/stop): run `npm run referee stop` again to end the game" };
+  if (exit.code === 2) return { action: "stop", reason: `configuration error (exit 2: ${guard ? "MIRO_ACCESS_TOKEN_2" : "MIRO_ACCESS_TOKEN"} / MIRO_BOARD_ID missing in .env)` };
   const base = exit.ranMs > HEALTHY_RUN_MS ? BACKOFF_START_MS : st.backoffMs;
   const nextBackoff = exit.ranMs < FAST_CRASH_MS ? Math.min(base * 2, BACKOFF_MAX_MS) : base;
   return { action: "restart", delayMs: base, next: { backoffMs: nextBackoff, restarts: st.restarts + 1 } };
@@ -69,6 +72,8 @@ function settings() {
     gameFile: path.join(stateDir, "game.json"),
     stopFlag: path.join(stateDir, "stop"),
     lock: path.join(stateDir, "referee.lock"),
+    guardLock: path.join(stateDir, "guard.lock"),
+    guardHeartbeat: path.join(stateDir, "guard.heartbeat"),
     superLock: path.join(stateDir, "supervise.lock"),
     logFile: process.env.WILDFIRE_SUPERVISE_LOG ? path.resolve(process.env.WILDFIRE_SUPERVISE_LOG) : path.join(ROOT, "results/supervise.log"),
     hangMs: sec("WILDFIRE_HANG_SECONDS", 60_000),
@@ -76,6 +81,7 @@ function settings() {
     killGraceMs: sec("WILDFIRE_KILL_GRACE_SECONDS", 10_000),
     pauseGraceMs: 45_000,
     childCmd: process.env.WILDFIRE_CHILD,
+    guardCmd: process.env.WILDFIRE_GUARD_CHILD,
   };
 }
 
@@ -131,8 +137,16 @@ export async function supervise(runArgs: string[]): Promise<void> {
     console.error(`a referee is already running (pid ${other}). Ctrl-C it first, then supervise.`);
     process.exit(1);
   }
+  loadEnv();
+  const withGuard = !!process.env.MIRO_ACCESS_TOKEN_2 && (!s.childCmd || !!s.guardCmd);
+  const otherGuard = withGuard ? lockOwner(s.guardLock) : null;
+  if (otherGuard) {
+    console.error(`a guard referee is already running (pid ${otherGuard}). Ctrl-C it first, then supervise.`);
+    process.exit(1);
+  }
 
   let child: ChildProcess | null = null;
+  let guardChild: ChildProcess | null = null;
   let signalled = false;
   let signalledAt = 0;
   const wake: { cancel?: () => void } = {};
@@ -148,6 +162,12 @@ export async function supervise(runArgs: string[]): Promise<void> {
     signalled = true;
     signalledAt = Date.now();
     wake.cancel?.();
+    guardWake.cancel?.();
+    if (guardChild && guardChild.exitCode === null && guardChild.signalCode === null) {
+      guardChild.kill("SIGINT");
+      const g = guardChild;
+      setTimeout(() => g.exitCode === null && g.signalCode === null && g.kill("SIGKILL"), s.pauseGraceMs).unref();
+    }
     if (child && child.exitCode === null && child.signalCode === null) {
       log(`${sig}: pausing the referee (pid ${child.pid}); Ctrl-C again to kill it`);
       child.kill("SIGINT"); // the referee's Ctrl-C path: pause, save, banner PAUSED
@@ -157,62 +177,125 @@ export async function supervise(runArgs: string[]): Promise<void> {
   };
   for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(sig, () => onSignal(sig));
 
-  let policy = initialPolicy();
-  log(`supervising: ${s.childCmd ?? `run ${runArgs.join(" ")}`}`.trim());
-  for (;;) {
-    const started = Date.now();
-    // detached: the child gets its own process group, so a terminal Ctrl-C reaches it once, forwarded by us.
-    child = s.childCmd
-      ? spawn(s.childCmd, { shell: true, stdio: "inherit", detached: true, cwd: ROOT })
-      : spawn(process.execPath, ["--import", "tsx", "src/cli.ts", "serve", ...runArgs], { stdio: "inherit", detached: true, cwd: ROOT });
-    const c = child;
-    let hangKilled = false;
-    const watchdog = setInterval(() => {
-      if (hangKilled || signalled || c.exitCode !== null || c.signalCode !== null) return;
-      if (!isHung(Date.now(), started, mtimeMs(s.gameFile), s.hangMs, s.startupGraceMs)) return;
-      hangKilled = true;
-      log(`referee (pid ${c.pid}) looks hung: ${path.basename(s.gameFile)} unchanged for ${Math.round(s.hangMs / 1000)} s; SIGTERM`);
-      c.kill("SIGTERM");
-      setTimeout(() => {
-        if (c.exitCode === null && c.signalCode === null) {
-          log(`referee (pid ${c.pid}) ignored SIGTERM; SIGKILL`);
-          c.kill("SIGKILL");
-        }
-      }, s.killGraceMs).unref();
-    }, 1000);
-    const { code, signal } = await new Promise<{ code: number | null; signal: string | null }>((res) => {
-      c.once("exit", (code, signal) => res({ code, signal }));
-      c.once("error", (e) => {
-        log(`could not start the referee: ${e.message}`);
-        res({ code: 1, signal: null });
+  // The guard: its own child and restart loop, watched by its heartbeat file; never decides for the game.
+  const guardWake: { cancel?: () => void } = {};
+  let guardStop = false;
+  const guardLoop = async () => {
+    let gp = initialPolicy();
+    log(`supervising the guard (MIRO_ACCESS_TOKEN_2): ${s.guardCmd ?? `serve --role guard ${runArgs.join(" ")}`}`.trim());
+    while (!signalled && !guardStop) {
+      const started = Date.now();
+      guardChild = s.guardCmd
+        ? spawn(s.guardCmd, { shell: true, stdio: "inherit", detached: true, cwd: ROOT })
+        : spawn(process.execPath, ["--import", "tsx", "src/cli.ts", "serve", ...runArgs, "--role", "guard"], { stdio: "inherit", detached: true, cwd: ROOT });
+      const c = guardChild;
+      let hangKilled = false;
+      const watchdog = setInterval(() => {
+        if (hangKilled || signalled || guardStop || c.exitCode !== null || c.signalCode !== null) return;
+        if (!isHung(Date.now(), started, mtimeMs(s.guardHeartbeat), s.hangMs, s.startupGraceMs)) return;
+        hangKilled = true;
+        log(`guard (pid ${c.pid}) looks hung: no heartbeat for ${Math.round(s.hangMs / 1000)} s; SIGTERM`);
+        c.kill("SIGTERM");
+        setTimeout(() => c.exitCode === null && c.signalCode === null && c.kill("SIGKILL"), s.killGraceMs).unref();
+      }, 1000);
+      const { code, signal } = await new Promise<{ code: number | null; signal: string | null }>((res) => {
+        c.once("exit", (code, signal) => res({ code, signal }));
+        c.once("error", (e) => {
+          log(`could not start the guard: ${e.message}`);
+          res({ code: 1, signal: null });
+        });
       });
-    });
-    clearInterval(watchdog);
-    child = null;
-    // A killed referee leaves its pid in the lock. That pid is ours and dead: clear it, so the restart
-    // can't be refused if the OS hands the pid to some other process in the meantime.
-    try {
-      if (c.pid && readFileSync(s.lock, "utf8").trim() === String(c.pid)) unlinkSync(s.lock);
-    } catch {
-      /* no lock: the referee released it */
+      clearInterval(watchdog);
+      guardChild = null;
+      try {
+        if (c.pid && readFileSync(s.guardLock, "utf8").trim() === String(c.pid)) unlinkSync(s.guardLock);
+      } catch {
+        /* released */
+      }
+      if (guardStop) return log(`guard exited (${describeExit(code, signal)}): the game referee's supervision ended`);
+      const d = decide({ code, signal, ranMs: Date.now() - started, gameOver: false, stopRequested: false, signalled }, gp, true);
+      if (d.action === "stop") return log(`guard exited (${describeExit(code, signal)}${hangKilled ? ", hung" : ""}); not restarting: ${d.reason}`);
+      gp = d.next;
+      log(`guard exited (${describeExit(code, signal)}${hangKilled ? ", hung" : ""}); restarting in ${d.delayMs / 1000} s (restart #${gp.restarts})`);
+      await sleep(d.delayMs, guardWake);
+      const holder = lockOwner(s.guardLock);
+      if (holder) return log(`another guard (pid ${holder}) holds the lock; not restarting the guard`);
     }
+  };
+  const guardDone = withGuard ? guardLoop() : Promise.resolve();
+  try {
+    await superviseGame();
+  } finally {
+    // The game referee's supervision ended (game over and exited, stop, Ctrl-C...): the guard goes too.
+    guardStop = true;
+    guardWake.cancel?.();
+    const g = guardChild as ChildProcess | null;
+    if (g && g.exitCode === null && g.signalCode === null) {
+      g.kill("SIGINT");
+      setTimeout(() => g.exitCode === null && g.signalCode === null && g.kill("SIGKILL"), s.killGraceMs).unref();
+    }
+    await guardDone;
+  }
+  return;
 
-    const d = decide({ code, signal, ranMs: Date.now() - started, gameOver: readPhase(s.gameFile) === "over", stopRequested: existsSync(s.stopFlag), signalled }, policy);
-    if (d.action === "stop") {
-      log(`referee exited (${describeExit(code, signal)}${hangKilled ? ", hung" : ""}); not restarting: ${d.reason}`);
-      return;
+  async function superviseGame(): Promise<void> {
+    let policy = initialPolicy();
+    log(`supervising: ${s.childCmd ?? `run ${runArgs.join(" ")}`}`.trim());
+    for (;;) {
+      const started = Date.now();
+      // detached: the child gets its own process group, so a terminal Ctrl-C reaches it once, forwarded by us.
+      child = s.childCmd
+        ? spawn(s.childCmd, { shell: true, stdio: "inherit", detached: true, cwd: ROOT })
+        : spawn(process.execPath, ["--import", "tsx", "src/cli.ts", "serve", ...runArgs], { stdio: "inherit", detached: true, cwd: ROOT });
+      const c = child;
+      let hangKilled = false;
+      const watchdog = setInterval(() => {
+        if (hangKilled || signalled || c.exitCode !== null || c.signalCode !== null) return;
+        if (!isHung(Date.now(), started, mtimeMs(s.gameFile), s.hangMs, s.startupGraceMs)) return;
+        hangKilled = true;
+        log(`referee (pid ${c.pid}) looks hung: ${path.basename(s.gameFile)} unchanged for ${Math.round(s.hangMs / 1000)} s; SIGTERM`);
+        c.kill("SIGTERM");
+        setTimeout(() => {
+          if (c.exitCode === null && c.signalCode === null) {
+            log(`referee (pid ${c.pid}) ignored SIGTERM; SIGKILL`);
+            c.kill("SIGKILL");
+          }
+        }, s.killGraceMs).unref();
+      }, 1000);
+      const { code, signal } = await new Promise<{ code: number | null; signal: string | null }>((res) => {
+        c.once("exit", (code, signal) => res({ code, signal }));
+        c.once("error", (e) => {
+          log(`could not start the referee: ${e.message}`);
+          res({ code: 1, signal: null });
+        });
+      });
+      clearInterval(watchdog);
+      child = null;
+      // A killed referee leaves its pid in the lock. That pid is ours and dead: clear it, so the restart
+      // can't be refused if the OS hands the pid to some other process in the meantime.
+      try {
+        if (c.pid && readFileSync(s.lock, "utf8").trim() === String(c.pid)) unlinkSync(s.lock);
+      } catch {
+        /* no lock: the referee released it */
+      }
+
+      const d = decide({ code, signal, ranMs: Date.now() - started, gameOver: readPhase(s.gameFile) === "over", stopRequested: existsSync(s.stopFlag), signalled }, policy);
+      if (d.action === "stop") {
+        log(`referee exited (${describeExit(code, signal)}${hangKilled ? ", hung" : ""}); not restarting: ${d.reason}`);
+        return;
+      }
+      policy = d.next;
+      log(`referee exited (${describeExit(code, signal)}${hangKilled ? ", hung" : ""}); restarting in ${d.delayMs / 1000} s (restart #${policy.restarts})`);
+      await sleep(d.delayMs, wake);
+      if (signalled) {
+        log("interrupted while waiting to restart; the game stays paused/saved. `npm run referee run` resumes it");
+        return;
+      }
+      // While we waited, `stop` may have ended the game itself, or someone started a referee by hand.
+      if (readPhase(s.gameFile) === "over") return log("the game is over; not restarting");
+      if (existsSync(s.stopFlag)) return log("stop was requested; not restarting");
+      const holder = lockOwner(s.lock);
+      if (holder) return log(`another referee (pid ${holder}) holds the lock; not restarting`);
     }
-    policy = d.next;
-    log(`referee exited (${describeExit(code, signal)}${hangKilled ? ", hung" : ""}); restarting in ${d.delayMs / 1000} s (restart #${policy.restarts})`);
-    await sleep(d.delayMs, wake);
-    if (signalled) {
-      log("interrupted while waiting to restart; the game stays paused/saved. `npm run referee run` resumes it");
-      return;
-    }
-    // While we waited, `stop` may have ended the game itself, or someone started a referee by hand.
-    if (readPhase(s.gameFile) === "over") return log("the game is over; not restarting");
-    if (existsSync(s.stopFlag)) return log("stop was requested; not restarting");
-    const holder = lockOwner(s.lock);
-    if (holder) return log(`another referee (pid ${holder}) holds the lock; not restarting`);
   }
 }

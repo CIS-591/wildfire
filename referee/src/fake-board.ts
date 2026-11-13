@@ -45,10 +45,13 @@ const miroErr = (status: number, what: string, body = "") => {
 export class FakeBoard implements BoardAdapter {
   items = new Map<string, BoardItem>();
   frames = new Map<string, BoardItem>();
-  private seq = 1000;
+  /** Shared by every identity (see `as`): ids never repeat. */
+  private ids = { seq: 1000 };
+  /** Who the adapter calls act as: the referee's token user (another identity with `as`). */
+  actor = REFEREE_USER;
   now: () => number;
   names: Record<string, string> = {};
-  calls = { list: 0, grid: 0, typed: 0, get: 0, update: 0, delete: 0, create: 0, frame: 0, failed: 0, image: 0 };
+  calls = { list: 0, grid: 0, typed: 0, orders: 0, get: 0, update: 0, delete: 0, create: 0, frame: 0, failed: 0, image: 0 };
   /** Set (or call enableFastReads) to exercise the referee's fast (per-frame) read path. */
   listGridItems?: () => Promise<BoardItem[]>;
   private byLabel = new Map<string, string>();
@@ -122,14 +125,14 @@ export class FakeBoard implements BoardAdapter {
   }
 
   add(partial: Omit<BoardItem, "id" | "createdBy" | "modifiedBy" | "createdAt" | "modifiedAt">, user: string, at = this.now()): BoardItem {
-    const item: BoardItem = { ...partial, content: miroEncode(partial.content), id: String(this.seq++), createdBy: user, modifiedBy: user, createdAt: at, modifiedAt: at };
+    const item: BoardItem = { ...partial, content: miroEncode(partial.content), id: String(this.ids.seq++), createdBy: user, modifiedBy: user, createdAt: at, modifiedAt: at };
     this.items.set(item.id, item);
     return item;
   }
 
   /** A frame (box TOP-LEFT). */
   addFrame(bx: Box, fill: string, title: string, user = REFEREE_USER): string {
-    const id = String(this.seq++);
+    const id = String(this.ids.seq++);
     const at = this.now();
     this.frames.set(id, { id, type: "frame", content: title, fill, ...center(bx), w: bx.w, h: bx.h, createdBy: user, modifiedBy: user, createdAt: at, modifiedAt: at });
     this.builtBox.set(id, bx);
@@ -251,6 +254,26 @@ export class FakeBoard implements BoardAdapter {
     };
   }
 
+  /** Like GET /items?parent_item_id= per frame (the Orders frames): current, absolute positions. */
+  async listFrameItems(frames: { id: string }[]): Promise<BoardItem[]> {
+    this.calls.orders += frames.length;
+    await this.lag();
+    this.readFault("items?parent_item_id=");
+    const ids = new Set(frames.map((f) => f.id));
+    return [...this.items.values()].filter((i) => i.parentId && ids.has(i.parentId)).map((i) => this.view(i));
+  }
+
+  /**
+   * The same board seen through another Miro user's token (a second referee): everything is shared, but its
+   * writes are made (createdBy/modifiedBy) as `user`. Calls are counted on the board's own `calls`.
+   */
+  as(user: string): FakeBoard {
+    const v = Object.create(this) as FakeBoard;
+    v.actor = user;
+    v.listGridItems = undefined;
+    return v;
+  }
+
   /** Like MiroRest: the frames the last full listing saw (no extra call). */
   async listFrames(): Promise<BoardItem[]> {
     return (this.framesSeen ?? [...this.frames.values()]).map((f) => ({ ...f }));
@@ -260,17 +283,17 @@ export class FakeBoard implements BoardAdapter {
     this.calls.frame++;
     await this.lag();
     if (this.writeFault("POST frames")) {
-      this.addFrame(box, fill, title);
+      this.addFrame(box, fill, title, this.actor);
       throw miroErr(504, "POST frames");
     }
-    return this.addFrame(box, fill, title);
+    return this.addFrame(box, fill, title, this.actor);
   }
 
   async updateFrame(id: string, box: FrameBox): Promise<void> {
     this.calls.frame++;
     await this.lag();
     this.writeFault("PATCH frames", id);
-    this.moveFrameTo(id, box, REFEREE_USER);
+    this.moveFrameTo(id, box, this.actor);
   }
 
   setGridFrames(ids: string[]): void {
@@ -292,7 +315,7 @@ export class FakeBoard implements BoardAdapter {
     const kind = this.items.get(id)?.type === "sticky_note" ? "sticky_notes" : this.items.get(id)?.type === "text" ? "texts" : "shapes";
     const ghost = this.writeFault(`PATCH ${kind}`, id);
     const it = this.items.get(id)!;
-    this.apply(it, patch, REFEREE_USER);
+    this.apply(it, patch, this.actor);
     if (ghost) throw miroErr(504, `PATCH ${kind}/${id}`);
   }
 
@@ -315,7 +338,7 @@ export class FakeBoard implements BoardAdapter {
     await this.lag(Math.ceil(shapes.length / 20));
     for (const s of shapes) if (s.parentId && !this.frames.has(s.parentId)) throw (this.calls.failed++, miroErr(404, `POST items/bulk`, `{"status":404,"message":"parent ${s.parentId} not found"}`));
     const ghost = this.writeFault("POST items/bulk");
-    const ids = shapes.map((s) => this.add({ type: "shape", content: `<p>${s.content}</p>`, fill: s.fill, x: s.x, y: s.y, w: s.w, h: s.h, parentId: s.parentId }, REFEREE_USER).id);
+    const ids = shapes.map((s) => this.add({ type: "shape", content: `<p>${s.content}</p>`, fill: s.fill, x: s.x, y: s.y, w: s.w, h: s.h, parentId: s.parentId }, this.actor).id);
     shapes.forEach((s, k) => {
       this.borders.set(ids[k]!, { color: s.borderColor, width: s.borderWidth });
       this.styles.set(ids[k]!, { fontSize: s.fontSize, fontFamily: s.fontFamily, textColor: s.textColor });
@@ -328,7 +351,7 @@ export class FakeBoard implements BoardAdapter {
     this.calls.image++; // icons are counted apart: "nothing rebuilt" means no square or fixture
     await this.lag();
     const ghost = this.writeFault("POST images");
-    const id = this.add({ type: "image", content: img.url, x: img.x, y: img.y, w: img.w, h: img.w }, REFEREE_USER).id;
+    const id = this.add({ type: "image", content: img.url, x: img.x, y: img.y, w: img.w, h: img.w }, this.actor).id;
     if (ghost) throw miroErr(504, "POST images");
     return id;
   }

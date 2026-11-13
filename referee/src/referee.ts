@@ -20,6 +20,7 @@ import {
   type PaintEvent, type Rng, type RuleSet, type StickyView, type TamperEvent,
   emptyIllegal,
 } from "./rules.js";
+import type { GuardLink, JoinRequest } from "./guard-link.js";
 
 export type FixtureKey = keyof typeof FIXTURES;
 const FIXTURE_KEYS = Object.keys(FIXTURES) as FixtureKey[];
@@ -45,7 +46,18 @@ export interface GameFile {
   fixtureStyle?: Partial<Record<FixtureKey, Partial<NewShape>>>;
   /** Items that refused every write (locked): never adopted again, deleted when Miro lets us. */
   stuck?: string[];
+  /** Game referee with a guard: label -> square id, so the guard (read-only) knows every square. */
+  cells?: Record<string, string>;
+  /** Game referee with a guard: bytes of the guard's join and feedback files already consumed. */
+  guardRead?: { joins: number; notes: number };
 }
+
+/**
+ * solo: one referee does everything (one Miro token). With a second token the work is split: "game" judges
+ * paints, runs the fire and writes squares, fixtures and inbox cards (it alone writes game.json); "guard"
+ * removes junk, puts static items back, polices foreign stickies and spots new inbox cards (joins).
+ */
+export type RefereeRole = "solo" | "game" | "guard";
 
 export function emptyGame(): GameFile {
   return { fixtureIds: {} };
@@ -66,6 +78,9 @@ interface StaticSnap extends Shadow {
   /** Degrees as built (the area labels stand at 90/270): put back as it was, never flattened. */
   rotation?: number;
 }
+
+/** A penalty, with the key it is counted once by (the guard sends it to the game referee). */
+type Tamper = TamperEvent & { key?: string };
 
 /** One planned board write. */
 interface Op {
@@ -191,6 +206,14 @@ export interface RefereeOptions {
   maxWritesPerTick?: number;
   /** Every judged paint, for logs and audits. */
   onPaint?: (ev: PaintEvent, d: Decision) => void;
+  /** Two referees (two Miro tokens): which half this one does. Default solo (everything). */
+  role?: RefereeRole;
+  /** The other referee's Miro user id(s): its writes are never judged or undone either. */
+  selfIds?: string[];
+  /** The files (or memory) the game and guard referees share. */
+  link?: GuardLink;
+  /** Fixtures are read by id every this many ticks (default 1: every tick). Their writes don't wait. */
+  fixtureReadEvery?: number;
 }
 
 export class Referee {
@@ -273,6 +296,12 @@ export class Referee {
   private probeAt = 0;
   /** Question stickies the referee removed (spam, wrong frame, non-neighbour, over the cap). */
   private removedStickies = new Set<string>();
+  readonly role: RefereeRole;
+  private otherSelf: Set<string>;
+  private link?: GuardLink;
+  private fixtureReadEvery: number;
+  /** Game role: join requests already handled (by card id). */
+  private joinedCards = new Set<string>();
 
   constructor(
     public board: BoardAdapter,
@@ -296,6 +325,10 @@ export class Referee {
     this.selfId = this.rehearsal ? undefined : opts.selfId;
     this.maxWritesPerTick = opts.maxWritesPerTick ?? 120;
     this.onPaint = opts.onPaint;
+    this.role = opts.role ?? "solo";
+    this.otherSelf = new Set((opts.selfIds ?? []).filter(Boolean));
+    this.link = opts.link;
+    this.fixtureReadEvery = Math.max(1, Math.floor(opts.fixtureReadEvery ?? 1));
     for (const id of game.stuck ?? []) this.stuck.add(id);
   }
 
@@ -304,8 +337,9 @@ export class Referee {
     return this.rehearsal ? `card:${it.id}` : it.createdBy;
   }
 
+  /** One of the referees' own tokens (this one, or the other half of a split referee). */
   private isSelf(userId: string | undefined): boolean {
-    return !!userId && !!this.selfId && userId === this.selfId;
+    return !!userId && ((!!this.selfId && userId === this.selfId) || this.otherSelf.has(userId));
   }
 
   private teamPlayers(team: Team): string[] {
@@ -385,6 +419,7 @@ export class Referee {
     if (this.frameIds.length === 9 && this.frameIds.every(Boolean)) this.game.frames = [...this.frameIds];
     this.game.orders = { ...this.ordersIds };
     this.game.stuck = [...this.stuck].slice(-500);
+    if (this.role === "game") this.game.cells = Object.fromEntries(this.cellId);
   }
 
   /**
@@ -706,14 +741,50 @@ export class Referee {
   }
 
   /** Squares are always fresh; `full` says whether the rest of the board is in `items` too. */
-  private async readBoard(): Promise<{ items: BoardItem[]; full: boolean; since: number }> {
+  private async readBoard(): Promise<{ items: BoardItem[]; full: boolean; since: number; orders?: BoardItem[] }> {
     const r = await this.readBoardRaw();
-    if (this.gone.size) r.items = r.items.filter((i) => !this.gone.has(i?.id));
+    if (this.gone.size) {
+      r.items = r.items.filter((i) => !this.gone.has(i?.id));
+      if (r.orders) r.orders = r.orders.filter((i) => !this.gone.has(i?.id));
+    }
     return r;
   }
 
-  private async readBoardRaw(): Promise<{ items: BoardItem[]; full: boolean; since: number }> {
+  /** Game role: one full read on the next tick (an Orders frame answered 404: the full read recreates it). */
+  private fullNext = false;
+
+  /** Game role: the Orders frames' children (stickies), one cheap listing per frame. Null when unknown this tick. */
+  private async readOrders(): Promise<BoardItem[] | null> {
+    const frames = TEAMS.filter((t) => this.ordersIds[t]).map((t) => ({ id: this.ordersIds[t]!, ...ORDERS[t] }));
+    if (!this.board.listFrameItems || !frames.length) return null;
+    this.readsThisTick += frames.length;
+    try {
+      return await this.board.listFrameItems(frames);
+    } catch (e) {
+      if (isGone(e)) this.fullNext = true;
+      return null;
+    }
+  }
+
+  private async readBoardRaw(): Promise<{ items: BoardItem[]; full: boolean; since: number; orders?: BoardItem[] }> {
     if (!this.fastPath()) return { items: await this.board.listItems(), full: true, since: Infinity };
+    if (this.role === "game") {
+      // No sweep: the guard reads the whole board. The squares and the Orders frames are all the game needs.
+      if (this.fullNext) {
+        this.fullNext = false;
+        return { items: await this.board.listItems(), full: true, since: Infinity };
+      }
+      const ordersRead = this.readOrders();
+      let cells: BoardItem[];
+      try {
+        cells = await this.board.listGridItems!();
+      } catch (e) {
+        await ordersRead;
+        this.log(`fast read failed (${errMsg(e)}); reading the whole board`);
+        return { items: await this.board.listItems(), full: true, since: Infinity };
+      }
+      return { items: cells, full: false, since: 0, orders: (await ordersRead) ?? undefined };
+    }
     if (!this.sweep) {
       this.sweepStartedAt = this.now();
       this.sweep = this.board
@@ -792,12 +863,12 @@ export class Referee {
   }
 
   /** One penalty per change (id + modification time), however many ticks its repair takes. */
-  private penalize(tampers: TamperEvent[], userId: string, what: TamperEvent["what"], target: string, key: string, at: number) {
+  private penalize(tampers: Tamper[], userId: string, what: TamperEvent["what"], target: string, key: string, at: number) {
     if (!userId || this.isSelf(userId)) return;
     const k = `${key}@${at}`;
     if (this.penalized.has(k)) return;
     this.penalized.add(k);
-    tampers.push({ userId, what, target, at });
+    tampers.push({ userId, what, target, at, key: k });
   }
 
   async tick(): Promise<TickResult> {
@@ -806,7 +877,7 @@ export class Referee {
     this.readsThisTick = 0;
     this.placing.clear();
     try {
-      return await this.tickInner();
+      return await (this.role === "guard" ? this.guardTickInner() : this.tickInner());
     } catch (e) {
       // Last line of defence: a bug or a board shape nobody foresaw must not stop the game.
       this.log(`tick error (the game goes on): ${errMsg(e)}`);
@@ -815,7 +886,7 @@ export class Referee {
     } finally {
       this.lastWrites = this.writesThisTick;
       this.lastReads = this.readsThisTick;
-      this.persistIds();
+      if (this.role !== "guard") this.persistIds();
     }
   }
 
@@ -833,11 +904,11 @@ export class Referee {
         p.announced = true;
         this.pushFeedback(p.userId, this.welcome(p.name, p.team, p.role));
       }
-    let read: { items: BoardItem[]; full: boolean; since: number };
+    let read: { items: BoardItem[]; full: boolean; since: number; orders?: BoardItem[] };
     // The independent reads run at once: the squares (and the slow sweep), the fixtures and a few cards by
     // id, and the type-filtered junk listing. A tick costs about one paged grid read, not the sum of all.
     const byIdRead = this.fetchById();
-    const typedRead = this.fetchTypedJunk();
+    const typedRead = this.role === "game" ? this.fetchIcons() : this.fetchTypedJunk();
     try {
       read = await this.readBoard();
     } catch (e) {
@@ -859,20 +930,20 @@ export class Referee {
     // Squares and items read by id are always fresh. Anything else only when the sweep began after we last touched that aspect of it.
     const fresh = (m: Map<string, number>, id: string) => this.idCell.has(id) || this.freshIds.has(id) || (full && (m.get(id) ?? -Infinity) < since);
     const paints: (PaintEvent & { stale?: boolean })[] = [];
-    const tampers: TamperEvent[] = [];
+    const tampers: Tamper[] = [];
     const ops: Op[] = [];
     let joins = 0;
     // Memes: images (and embeds, documents...) anywhere on the board, by a cheap type-filtered listing every poll.
     const junk = new Map<string, { at: number; it: BoardItem }>();
     const typed = await typedRead;
-    this.scanTypedJunk(typed ?? [], junk, tampers, now);
+    if (this.role !== "game") this.scanTypedJunk(typed ?? [], junk, tampers, now);
     await this.guardIcons(typed, now);
 
     const fixtureKeyOf = (id: string) => FIXTURE_KEYS.find((k) => this.game.fixtureIds[k] === id);
     const cardOwnerOf = (id: string) => [...this.inboxCard].find(([, cid]) => cid === id)?.[0];
 
     // 0. frames (full reads): grid bands and Orders frames moved, resized or deleted
-    const framesOff = full ? await this.guardFrames(tampers, since) : new Set<string>();
+    const framesOff = full ? await this.guardFrames(tampers, since, this.role === "game" ? "recreate" : "all") : new Set<string>();
 
     // 1. tracked items that vanished (confirmed on a second read: a partial page is not a delete)
     for (const [id] of [...this.shadow]) {
@@ -891,6 +962,7 @@ export class Referee {
         this.idCell.delete(id);
         this.cellId.delete(lab); // rebuilt below, in batches
         this.formerCells.set(id, lab); // dragged out of its frame (the fast read lost it): judged as moved if seen again
+        if (this.role === "game") this.stuck.add(id); // the guard removes it wherever it went
         tampers.push({ userId: "unknown", what: "deleted", target: lab, at: now });
         continue;
       }
@@ -971,8 +1043,8 @@ export class Referee {
       }
     }
 
-    // 3. everything else on a full read: new inbox cards (= joins), junk on the forest, static items
-    if (full) {
+    // 3. everything else on a full read: new inbox cards (= joins), junk on the forest, static items (the guard's, when there is one)
+    if (full && this.role !== "game") {
       for (const it of items) {
         if (this.idCell.has(it.id) || this.shadow.has(it.id)) continue;
         const firstSight = !this.seen.has(it.id);
@@ -1005,12 +1077,13 @@ export class Referee {
     const doomed = [...junk.values()].sort((a, b) => b.at - a.at);
     for (const { it } of doomed.slice(0, JUNK_DELETES_PER_TICK)) ops.push({ key: `junk:${it.id}`, prio: 4, run: () => this.board.deleteItem(it.id), ok: () => this.stuck.delete(it.id) });
 
-    // 4. approvals: sticky notes in the Orders frames (full reads only)
-    if (full) {
-      this.stickies = this.readStickies(items);
+    // 4. approvals: sticky notes in the Orders frames (full reads; the game role reads the Orders frames every tick)
+    const stickyItems = full ? items : read.orders;
+    if (stickyItems) {
+      this.stickies = this.readStickies(stickyItems);
       // Before the draw nobody knows their team: questions wait (judged once the teams are drawn).
       if (!this.rehearsal && !this.beforeDraw()) {
-        this.policeForeign(ops, tampers, now);
+        if (this.role !== "game") this.policeForeign(ops, tampers, now); // the guard's, when there is one
         this.policeQuestions(ops);
       }
       for (const s of this.beforeDraw() ? [] : this.stickies) {
@@ -1020,6 +1093,12 @@ export class Referee {
           this.log(`sticky ${s.id} skipped: ${errMsg(e)}`);
         }
       }
+    }
+
+    // The guard's findings: new inbox cards (joins) and penalties for its players.
+    if (this.role === "game") {
+      joins += await this.takeGuardJoins(ops);
+      this.takeGuardNotes(tampers);
     }
 
     // 5. paints, in time order (many paints by one player in one poll: the first counts, the rest wait the cooldown)
@@ -1074,6 +1153,174 @@ export class Referee {
     if (this.goneThisTick) deferred += (await this.execute([...this.rebuildOps(), ...this.fixtureOps(), ...this.cardOps()])).deferred;
     this.prevReadAt = now;
     return { paints: paints.length, tampers: tampers.length, joins, fire: this.burning(), changed: adv.changed.length, writes: this.writesThisTick, reads: this.readsThisTick, deferred };
+  }
+
+  // ---------- two referees: the game's side of the link ----------
+  /** Game role: only the images (our icons), on fixture-read ticks; the guard lists every junk type. */
+  private async fetchIcons(): Promise<BoardItem[] | null> {
+    if (!this.board.listByType || (this.tickNo - 1) % this.fixtureReadEvery !== 0) return null;
+    this.readsThisTick++;
+    try {
+      return await this.board.listByType(["image"]);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Join requests the guard could not get to us yet (a failed read of the card): tried again next tick. */
+  private retryJoins: JoinRequest[] = [];
+
+  /** Game role: new inbox cards the guard saw become joins here (team, role, card text), each card once. */
+  private async takeGuardJoins(ops: Op[]): Promise<number> {
+    const todo = [...this.retryJoins.splice(0), ...(this.link?.takeJoins?.() ?? [])];
+    let n = 0;
+    for (const j of todo) {
+      if (!j?.cardId || this.joinedCards.has(j.cardId) || [...this.inboxCard.values()].includes(j.cardId)) continue;
+      let it: BoardItem | null;
+      if (this.board.getItem) {
+        // Read now: its text, type and place as they are (and the REST adapter learns it is a sticky or a shape).
+        this.readsThisTick++;
+        try {
+          it = await this.board.getItem(j.cardId);
+        } catch {
+          this.retryJoins.push(j);
+          continue;
+        }
+      } else {
+        it = { id: j.cardId, type: j.type, content: j.content, x: j.x, y: j.y, w: j.w, h: j.h, createdBy: j.createdBy, modifiedBy: j.createdBy, createdAt: j.createdAt, modifiedAt: j.createdAt };
+      }
+      this.joinedCards.add(j.cardId);
+      if (!it || !this.isInboxCard(it)) continue; // deleted or moved out of the Inbox since
+      this.seen.add(it.id);
+      n += await this.newCard(it, ops);
+    }
+    return n;
+  }
+
+  /** Game role: the guard's lines and penalties go on the players' cards; a penalty is counted once (same key as ours). */
+  private takeGuardNotes(tampers: Tamper[]) {
+    for (const n of this.link?.takeNotes?.() ?? []) {
+      if (!n?.userId) continue;
+      if (n.line) this.pushFeedback(n.userId, n.line);
+      if (!n.tamper || this.isSelf(n.userId) || this.penalized.has(n.tamper.key)) continue;
+      this.penalized.add(n.tamper.key);
+      tampers.push({ userId: n.userId, what: n.tamper.what, target: n.tamper.target, at: n.tamper.at, key: n.tamper.key });
+    }
+  }
+
+  // ---------- two referees: the guard ----------
+  /** Guard role: the game referee's latest save (read-only): players, phase, and which items are the game's. */
+  private syncFromGame() {
+    const g = this.link?.readGame?.();
+    if (!g) return;
+    if (g.state) this.game.state = g.state;
+    this.game.fixtureIds = { ...g.fixtureIds };
+    this.game.cards = { ...(g.cards ?? {}) };
+    this.game.icons = { ...(g.icons ?? {}) };
+    this.game.resetAt = g.resetAt;
+    this.inboxCard = new Map(Object.entries(g.cards ?? {}));
+    this.stuck = new Set(g.stuck ?? []);
+    if (g.cells) {
+      this.cellId = new Map(Object.entries(g.cells));
+      this.idCell = new Map([...this.cellId].map(([l, id]) => [id, l]));
+    }
+    if (g.orders) this.ordersIds = { ...this.ordersIds, ...g.orders };
+    if (g.frames?.length === 9 && g.frames.every(Boolean)) this.frameIds = [...g.frames];
+  }
+
+  /** Guard role, at startup: the board's own items (baseline), statics as they stand, frames, cards already handled. */
+  async discoverGuard(): Promise<{ items: number }> {
+    this.syncFromGame();
+    const items = await this.board.listItems();
+    const cutoff = this.game.resetAt ?? this.game.state?.startedAt ?? Infinity;
+    this.baseline = new Set(items.filter((i) => !(i.createdAt > cutoff)).map((i) => i.id));
+    await this.discoverFrames();
+    const state = this.state;
+    for (const it of items) {
+      const pendingJoin = this.isInboxCard(it) && !state.players[this.cardOwner(it)] && !Object.values(this.game.cards ?? {}).includes(it.id);
+      if (!pendingJoin) this.seen.add(it.id);
+    }
+    for (const id of this.staticIds) {
+      const it = items.find((i) => i.id === id);
+      if (it) this.staticSnap.set(id, { content: norm(it.content), raw: it.content, type: it.type, fill: it.fill, x: it.x, y: it.y, w: it.w, h: it.h, rotation: it.rotation });
+    }
+    this.stickies = this.readStickies(items);
+    return { items: items.length };
+  }
+
+  /**
+   * Guard role, every tick: one full listing and the junk types. Junk is removed, statics and frames put back,
+   * stickies in another team's Orders removed, new inbox cards sent to the game referee as joins, and every
+   * penalty sent to it (it alone writes cards and game.json). Never touches squares, fixtures, cards or icons:
+   * anything the referees' tokens made is the game's, unless the game gave up on it (its stuck list).
+   */
+  private async guardTickInner(): Promise<TickResult> {
+    this.syncFromGame();
+    const state = this.state;
+    const typedRead = this.fetchTypedJunk();
+    const since = this.now();
+    let items: BoardItem[];
+    this.readsThisTick++;
+    try {
+      items = await this.board.listItems();
+    } catch (e) {
+      await typedRead;
+      this.log(`board read failed (${errMsg(e)}); trying again next tick`);
+      return { paints: 0, tampers: 0, joins: 0, fire: this.burning(), changed: 0, writes: 0, deferred: 0, skipped: true };
+    }
+    items = items.filter((i) => i && typeof i.id === "string" && !this.gone.has(i.id));
+    const now = this.now();
+    this.learnSkew(items, now);
+    const byId = new Map(items.map((i) => [i.id, i]));
+    // After a reset (resetAt moved on), what survived it is the board's own, as a restarted referee would see it.
+    const cutoff = this.game.resetAt ?? state.startedAt ?? Infinity;
+    if (Number.isFinite(cutoff)) for (const it of items) if (!(it.createdAt > cutoff)) this.baseline.add(it.id);
+    const tampers: Tamper[] = [];
+    const ops: Op[] = [];
+    const junk = new Map<string, { at: number; it: BoardItem }>();
+    this.scanTypedJunk((await typedRead) ?? [], junk, tampers, now);
+    await this.guardFrames(tampers, since, "repair");
+    const fresh = (m: Map<string, number>, id: string) => (m.get(id) ?? -Infinity) < since;
+    const cards = new Set(this.inboxCard.values());
+    let joins = 0;
+    for (const it of items) {
+      if (this.idCell.has(it.id) || cards.has(it.id)) continue;
+      const firstSight = !this.seen.has(it.id);
+      this.seen.add(it.id);
+      if (this.staticIds.has(it.id)) continue;
+      const stuck = this.stuck.has(it.id);
+      const ours = this.isSelf(it.createdBy) && !stuck; // a square, fixture, card or icon the game just made
+      if (firstSight && !ours && !stuck && this.isInboxCard(it)) {
+        this.link?.postJoin?.({ cardId: it.id, createdBy: it.createdBy, content: it.content, type: it.type, x: it.x, y: it.y, w: it.w, h: it.h, createdAt: it.createdAt, at: now });
+        joins++;
+        continue;
+      }
+      if (ours || !this.isJunk(it)) continue;
+      const lab = it.type === "shape" && parseLabel(norm(it.content)) ? norm(it.content).toUpperCase() : "";
+      if (stuck) {
+        // A square the game gave up on (moved, dragged off the forest, locked): removed. Moved by a player: a
+        // penalty, counted once with the game's own (same key).
+        if (lab && this.cells.has(lab) && !this.cellGeomOk(it, lab) && it.modifiedBy && !this.isSelf(it.modifiedBy)) this.penalize(tampers, it.modifiedBy, "moved", lab, it.id, this.when(it.modifiedAt, now));
+      } else {
+        const who = lab && it.w < 2 * GRID.pitch ? it.modifiedBy : it.createdBy;
+        this.penalize(tampers, who, "added", this.junkWhat(it), it.id, this.when(it.createdAt, now));
+      }
+      junk.set(it.id, { at: it.createdAt || 0, it });
+    }
+    this.guardStatics(byId, fresh, tampers, ops, now);
+    this.stickies = this.readStickies(items);
+    if (!this.rehearsal && !this.beforeDraw()) this.policeForeign(ops, tampers, now);
+    const doomed = [...junk.values()].sort((a, b) => b.at - a.at);
+    for (const { it } of doomed.slice(0, JUNK_DELETES_PER_TICK)) ops.push({ key: `junk:${it.id}`, prio: 4, run: () => this.board.deleteItem(it.id) });
+    for (const t of tampers) {
+      if (t.userId === "unknown") {
+        this.log(`\nput back: ${t.target} (${t.what === "deleted" ? DELETED : t.what})`);
+        continue;
+      }
+      this.link?.postNote?.({ userId: t.userId, tamper: { what: t.what, target: t.target, at: t.at, key: t.key ?? `${t.target}@${t.at}` }, at: now });
+    }
+    const { deferred } = await this.execute(ops);
+    return { paints: 0, tampers: tampers.length, joins, fire: this.burning(), changed: 0, writes: this.writesThisTick, reads: this.readsThisTick, deferred };
   }
 
   /**
@@ -1155,7 +1402,7 @@ export class Referee {
     }
   }
 
-  private scanTypedJunk(items: BoardItem[], junk: Map<string, { at: number; it: BoardItem }>, tampers: TamperEvent[], now: number) {
+  private scanTypedJunk(items: BoardItem[], junk: Map<string, { at: number; it: BoardItem }>, tampers: Tamper[], now: number) {
     for (const it of items) {
       if (!it || !this.isMeme(it)) continue;
       this.seen.add(it.id);
@@ -1307,7 +1554,7 @@ export class Referee {
   }
   private labelColor = new Map<string, string>();
 
-  private guardStatics(byId: Map<string, BoardItem>, fresh: (m: Map<string, number>, id: string) => boolean, tampers: TamperEvent[], ops: Op[], now: number) {
+  private guardStatics(byId: Map<string, BoardItem>, fresh: (m: Map<string, number>, id: string) => boolean, tampers: Tamper[], ops: Op[], now: number) {
     this.areaLabelOps(ops);
     for (const [id, snap] of this.staticSnap) {
       const it = byId.get(id);
@@ -1348,7 +1595,8 @@ export class Referee {
   }
 
   /** Grid bands and Orders frames: moved/resized are put back (their squares move with them), deleted are recreated. */
-  private async guardFrames(tampers: TamperEvent[], since: number): Promise<Set<string>> {
+  /** scope: "all" (solo), "recreate" (game role: deleted frames only; moves are the guard's), "repair" (guard: moves and stray frames). */
+  private async guardFrames(tampers: Tamper[], since: number, scope: "all" | "recreate" | "repair" = "all"): Promise<Set<string>> {
     const off = new Set<string>();
     if (!this.board.listFrames) return off;
     let frames: BoardItem[];
@@ -1371,7 +1619,7 @@ export class Referee {
       const f = id ? byId.get(id) : undefined;
       const c = center(g.box);
       if (!f) {
-        if (!id) continue;
+        if (!id || scope === "repair") continue;
         const n = (this.missing.get(`frame:${g.key}`) ?? 0) + 1;
         this.missing.set(`frame:${g.key}`, n);
         if (n < MISSING_READS) continue;
@@ -1401,7 +1649,7 @@ export class Referee {
       // Not judged on a sweep older than our own last move of it (fast reads).
       if (!bad || (this.geomWriteAt.get(f.id) ?? -Infinity) >= since) continue;
       off.add(f.id);
-      if (!this.board.updateFrame) continue;
+      if (!this.board.updateFrame || scope === "recreate") continue;
       this.penalize(tampers, f.modifiedBy, "moved", g.key.startsWith("band") ? "a row of the forest" : "an Orders frame", f.id, f.modifiedAt);
       ops.push({
         key: `frame:${g.key}`,
@@ -1414,7 +1662,7 @@ export class Referee {
     }
     // A frame a vandal drew over the forest or a fixture (it can swallow squares): removed.
     const mine = new Set(guarded.map((g) => g.get()).filter(Boolean));
-    for (const f of frames) {
+    for (const f of scope === "recreate" ? [] : frames) {
       if (mine.has(f.id) || this.staticIds.has(f.id) || this.baseline.has(f.id)) continue;
       if (!intersects(f, GRID_BOX) && !FIXTURE_KEYS.some((k) => intersects(f, FIXTURES[k]))) continue;
       this.penalize(tampers, f.createdBy, "added", "frame on the forest", f.id, f.createdAt);
@@ -1430,7 +1678,9 @@ export class Referee {
     this.freshIds.clear();
     const got = new Map<string, BoardItem | null>();
     if (!this.board.getItem) return { fixtures: [], got };
-    const fixtures = FIXTURE_KEYS.map((k) => this.game.fixtureIds[k]).filter((x): x is string => !!x && !this.stuck.has(x));
+    // Every fixtureReadEvery-th tick (their writes don't wait for a read: they follow the engine).
+    const readFx = (this.tickNo - 1) % this.fixtureReadEvery === 0;
+    const fixtures = readFx ? FIXTURE_KEYS.map((k) => this.game.fixtureIds[k]).filter((x): x is string => !!x && !this.stuck.has(x)) : [];
     const cards = [...this.inboxCard.values()].filter((id) => !this.placing.has(id));
     const probes = cards.length <= CARD_PROBES_PER_TICK ? cards : Array.from({ length: CARD_PROBES_PER_TICK }, (_, i) => cards[(this.probeAt + i) % cards.length]!);
     this.probeAt = cards.length ? (this.probeAt + CARD_PROBES_PER_TICK) % cards.length : 0;
@@ -1455,8 +1705,9 @@ export class Referee {
         byId.delete(id);
         continue;
       }
-      // Fixtures: judged on this read (geometry and text). Cards: only proven present here.
-      if (fixtures.includes(id)) {
+      // Fixtures: judged on this read (geometry and text). Cards: only proven present here (judged too in the
+      // game role, which has no sweep to see them in).
+      if (fixtures.includes(id) || (this.role === "game" && [...this.inboxCard.values()].includes(id))) {
         byId.set(id, it);
         this.freshIds.add(id);
       }
@@ -1510,7 +1761,7 @@ export class Referee {
    * penalty), and an edit by a joined player of another team to a sticky there is put back to that team's
    * last version (tamper penalty). The instructor, guests and the referee are left alone.
    */
-  private policeForeign(ops: Op[], tampers: TamperEvent[], now: number) {
+  private policeForeign(ops: Op[], tampers: Tamper[], now: number) {
     const state = this.state;
     for (const s of this.stickies) {
       if (this.isSelf(s.createdBy) || this.removedStickies.has(s.id)) continue;
@@ -1558,10 +1809,16 @@ export class Referee {
       ops.push({ key: `junk:${s.id}`, prio: 3, run: () => this.board.deleteItem(s.id) });
     };
     const open = new Map<string, StickyView[]>();
+    const foreign = new Set<string>();
     for (const s of this.stickies) {
       if (stickyKind(s.text) !== "QUESTION" || this.isSelf(s.createdBy) || state.approvals[s.id]) continue;
       const creator = state.players[s.createdBy];
       if (!creator || creator.team !== s.team) {
+        // Game role: a sticky in another team's Orders (or by a non-player) is the guard's to remove; never judged here.
+        if (this.role === "game") {
+          foreign.add(s.id);
+          continue;
+        }
         remove(s, `🗑️ Removed your question in ${teamName(s.team)}'s Orders: put it in your own team's Orders.`);
         continue;
       }
@@ -1582,7 +1839,7 @@ export class Referee {
       list.sort((a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0) || Number(a.id) - Number(b.id));
       for (const s of list.slice(MAX_OPEN_QUESTIONS)) remove(s, `🗑️ Removed an extra question: at most ${MAX_OPEN_QUESTIONS} open questions each. Wait for a YES or NO.`);
     }
-    this.stickies = this.stickies.filter((s) => !this.removedStickies.has(s.id));
+    this.stickies = this.stickies.filter((s) => !this.removedStickies.has(s.id) && !foreign.has(s.id));
   }
 
   /** A square moved/edited/locked: forget it (deleted when Miro lets us) and build a fresh one. */
@@ -1593,6 +1850,7 @@ export class Referee {
     this.shadow.delete(id);
     this.missing.delete(id);
     this.stuck.add(id); // until the delete succeeds
+    if (this.role === "game") return; // the guard deletes it (it is in game.json's stuck list)
     ops.push({ key: `junk:${id}`, prio: 2, run: () => this.board.deleteItem(id), ok: () => this.stuck.delete(id) });
   }
 
@@ -2052,6 +2310,11 @@ export class Referee {
 
   private pushFeedback(userId: string, line: string) {
     if (!userId) return;
+    if (this.role === "guard") {
+      // The guard writes no cards: the game referee puts the line on the player's card.
+      this.link?.postNote?.({ userId, line, at: this.now() });
+      return;
+    }
     const arr = this.feedback.get(userId) ?? [];
     arr.push(line);
     while (arr.length > FEEDBACK_LINES) arr.shift();
