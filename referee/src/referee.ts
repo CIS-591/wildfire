@@ -18,7 +18,7 @@ import {
   MAX_OPEN_QUESTIONS, advance, closeUnopenedCentre, openTeams, aheadOf, decideJunk, drawTeams, placeTeams, playingTeams, rankTeams, windOn, paintsOf, applyJoin, createState, decidePaint, decideTamper, judgeSticky, mulberry32, pendingStickies, questionAnswered, questionTarget, questionText, scaleRules, scores, startGame,
   stickyKind, stopGame, teamName, type Decision, type GameState,
   type PaintEvent, type Rng, type RuleSet, type StickyView, type TamperEvent,
-  emptyIllegal,
+  emptyIllegal, aliveTeams, isOut, lastStanding, nextNewFireAt,
 } from "./rules.js";
 import type { GuardLink, JoinRequest } from "./guard-link.js";
 
@@ -728,7 +728,7 @@ export class Referee {
 
   /** The instructor ends the game now: highest % wins. */
   async stop(): Promise<void> {
-    stopGame(this.state, this.cellList, this.now());
+    stopGame(this.state, this.cellList, this.now(), this.rules);
     await this.updateBoards();
   }
 
@@ -1139,8 +1139,13 @@ export class Referee {
     const dt = this.lastAdvanceAt === null ? 0 : Math.min(this.outage ? MAX_STEP_MS : MAX_TICK_STEP_MS, Math.max(0, now - this.lastAdvanceAt));
     this.outage = false;
     this.lastAdvanceAt = now;
+    const outBefore = state.outTeams?.length ?? 0;
     const adv = advance(state, this.rules, this.cellList, this.byPos, this.rng, dt, now);
     for (const e of adv.events) this.log(`\n${e}`);
+    // Last team standing: tell each player of a team that just went out (once) to stop.
+    for (const o of (state.outTeams ?? []).slice(outBefore)) {
+      for (const u of this.teamPlayers(o.team)) this.pushFeedback(u, `🏳️ ${teamName(o.team)} IS OUT: no green trees left in your area. Stop playing; watch who is the last team standing.`);
+    }
     for (const g of adv.ended) {
       for (const u of this.teamPlayers(g.team)) this.pushFeedback(u, `⌛ Your attack on ${teamName(g.to)}'s area is over: paint blue in your team's area again.`);
     }
@@ -1825,7 +1830,7 @@ export class Referee {
         continue;
       }
       const to = questionTarget(s.text);
-      const near = TEAM_INFO[s.team].neighbours.filter((t) => playingTeams(state).includes(t));
+      const near = TEAM_INFO[s.team].neighbours.filter((t) => aliveTeams(state).includes(t));
       if (!near.length) {
         remove(s, `🗑️ Removed your question: no neighbouring team is playing this game, nobody to attack. Keep defending.`);
         continue;
@@ -2373,7 +2378,7 @@ export class Referee {
     const r = this.rules;
     const p = (a: string, b: string) => `<p><b>${a}</b></p><p>${b}</p>`;
     const inGame = TEAMS.filter((t) => !this.sitsOut(t));
-    const water = `WATER ${inGame.map((t) => `T${TEAM_INFO[t].num} ${s.water[t]}`).join(" · ")}`;
+    const water = `WATER ${inGame.map((t) => `T${TEAM_INFO[t].num} ${isOut(s, t) ? "OUT" : s.water[t]}`).join(" · ")}`;
     const out = TEAMS.filter((t) => this.sitsOut(t));
     const who = out.length ? `PLAYING: ${inGame.map((t) => TEAM_INFO[t].name.toUpperCase()).join(", ")} · NOT PLAYING: ${out.map((t) => TEAM_INFO[t].name.toUpperCase()).join(", ")}` : "";
     const w = windOn(r) ? WIND[s.wind]! : null;
@@ -2382,29 +2387,42 @@ export class Referee {
     const sc = scores(s, this.cellList);
     const order = rankTeams(s, this.cellList);
     const caps = (t: Team) => TEAM_INFO[t].name.toUpperCase();
+    const lts = lastStanding(r);
+    if (s.phase === "over" && lts) {
+      const ws = s.winners?.length ? s.winners : [s.winner!];
+      const head =
+        ws.length > 1 ? `${ws.map(caps).join(" AND ")} SHARE THE WIN` : s.endReason === "last" ? `${caps(ws[0]!)} IS THE LAST TEAM STANDING (${sc[ws[0]!].pct}%)` : `${caps(ws[0]!)} WINS WITH ${sc[ws[0]!].pct}%`;
+      const outs = (s.outTeams ?? []).map((o) => `${caps(o.team)} OUT ${mmss(o.at)}`);
+      const why = s.endReason === "stopped" ? ["stopped"] : s.endReason === "cap" ? ["time cap"] : [];
+      return p(`GAME OVER · ${head}`, [...outs, ...why, `${mmss(s.elapsed)} played`].join(" · "));
+    }
     if (s.phase === "over") {
       const why = s.endReason === "out" ? "the fire is out" : s.endReason === "time" ? "time is up" : "stopped";
       const podium = order.filter((t) => t !== s.winner).slice(0, 2).map((t, i) => `${["2ND", "3RD"][i]} ${caps(t)} ${sc[t].pct}%`);
       return p(`GAME OVER · ${caps(s.winner!)} WINS WITH ${sc[s.winner!].pct}%`, [...podium, why].join(" · "));
     }
-    const left = r.gameMinutes * 60_000 - s.elapsed;
+    // Last team standing: no clock; time played, teams left and the next new fires instead of "x:xx left".
+    const left = lts ? Infinity : r.gameMinutes * 60_000 - s.elapsed;
     const spreadIn = Math.max(0, Math.ceil((s.nextSpreadAt - s.elapsed) / 1000));
-    const line1 = `LIVE · ${mmss(left)} left${windTxt} · next spread ${spreadIn}s · ${water}`;
+    const nextBolt = lts ? nextNewFireAt(s, r) - s.elapsed : s.lightningDone < r.lightningAt.length ? r.lightningAt[s.lightningDone]! * 60_000 - s.elapsed : Infinity;
+    const playingNow = playingTeams(s);
+    const line1 = lts
+      ? `LIVE · ${mmss(s.elapsed)} played · TEAMS LEFT ${aliveTeams(s).length}/${playingNow.length} · NEW FIRES in ${mmss(nextBolt)}${windTxt} · next spread ${spreadIn}s · ${water}`
+      : `LIVE · ${mmss(left)} left${windTxt} · next spread ${spreadIn}s · ${water}`;
     const windIn = w && !s.windTurned ? r.wind!.turnAt * 60_000 - s.elapsed : Infinity;
-    const nextBolt = s.lightningDone < r.lightningAt.length ? r.lightningAt[s.lightningDone]! * 60_000 - s.elapsed : Infinity;
     const recent = s.events.filter((e) => s.elapsed - e.at < 25_000).at(-1);
     const burning = Object.values(s.cells).filter((c) => c === "fire").length;
     // Close race: the top two playing teams within 2%, once the fire has had time to do damage.
     const [a, b] = order;
-    const close = a && b && s.elapsed >= 3 * 60_000 && sc[a].pct - sc[b].pct <= 2 ? `${caps(a)} AND ${caps(b)} ARE NECK AND NECK` : "";
+    const close = a && b && !isOut(s, b) && s.elapsed >= 3 * 60_000 && sc[a].pct - sc[b].pct <= 2 ? `${caps(a)} AND ${caps(b)} ARE NECK AND NECK` : "";
     let line2: string;
     if (left <= 60_000) line2 = `FINAL MINUTE! ${recent ? recent.text : close || (a ? `${caps(a)} LEADS WITH ${sc[a].pct}%` : "")}`.trim();
     else if (windIn <= 30_000) line2 = `Wind turning in ${Math.ceil(windIn / 1000)} s!`;
     else if (recent) line2 = recent.text;
-    else if (nextBolt <= 60_000) line2 = `NEW FIRE in ${mmss(nextBolt)}: one more fire starts in a team's area`;
+    else if (nextBolt <= 60_000) line2 = lts ? `NEW FIRES in ${mmss(nextBolt)}: one more fire starts in every team's area` : `NEW FIRE in ${mmss(nextBolt)}: one more fire starts in a team's area`;
     else if (close) line2 = close;
     else {
-      const low = TEAMS.filter((t) => s.water[t] <= r.waterPerTeam / 5).map((t) => `T${TEAM_INFO[t].num}`);
+      const low = TEAMS.filter((t) => !isOut(s, t) && s.water[t] <= r.waterPerTeam / 5).map((t) => `T${TEAM_INFO[t].num}`);
       line2 = `${burning} squares on fire${low.length ? ` · LOW WATER: ${low.join(" ")}` : ""}`;
     }
     return p(line1, line2);
@@ -2419,7 +2437,9 @@ export class Referee {
     const cell = (t: Team) =>
       this.sitsOut(t)
         ? `${TEAM_INFO[t].name.toUpperCase()} not playing`
-        : `${TEAM_INFO[t].name.toUpperCase()} ${sc[t].pct}%${t === best ? " LEAD" : ""}${sc[t].fire ? ` · ON FIRE ${sc[t].fire}` : ""}`;
+        : isOut(s, t)
+          ? `${TEAM_INFO[t].name.toUpperCase()} OUT`
+          : `${TEAM_INFO[t].name.toUpperCase()} ${sc[t].pct}%${t === best ? " LEAD" : ""}${sc[t].fire ? ` · ON FIRE ${sc[t].fire}` : ""}`;
     return `<p><b>${cell("ridge")}   |   ${cell("pine")}</b></p><p><b>${cell("cedar")}   |   ${cell("birch")}</b></p>`;
   }
 
@@ -2478,6 +2498,8 @@ export class Referee {
     const crew = players.filter((p) => p.role === "worker").map((p) => clamp(p.name));
     const mvp = players.slice().sort((a, b) => paintsOf(b) - paintsOf(a))[0]!;
     const painted = players.reduce((a, p) => a + paintsOf(p), 0);
+    const outAt = s.outTeams?.find((o) => o.team === t);
+    if (outAt) return rows(`<b>${name} · OUT at ${mmss(outAt.at)} · Boss ${boss ? clamp(boss) : "-"}</b>`, `Painted ${painted} · Fires set ${s.stats.lit?.[t] ?? 0} · Trees burned ${s.stats.burnedOthers?.[t] ?? 0}`, `Crew: ${crew.length ? crew.join(", ") : "-"}`, "No green trees left: this team is out");
     const lines = [
       `<b>${name} · Boss ${boss ? clamp(boss) : "-"} · MVP ${paintsOf(mvp) ? `${clamp(mvp.name)} (${paintsOf(mvp)})` : "-"}</b>`,
       `Painted ${painted} · Fires set ${s.stats.lit?.[t] ?? 0} · Trees burned ${s.stats.burnedOthers?.[t] ?? 0}`,
@@ -2497,7 +2519,7 @@ export class Referee {
       const order = this.rankOrder();
       const i = order.indexOf(t);
       const other = order[i === 0 ? 1 : i - 1];
-      if (other && this.ranked(other)) {
+      if (other && this.ranked(other) && !isOut(s, other)) {
         const gap = Math.abs(sc[t].pct - sc[other].pct);
         lines.push(i === 0 ? (gap ? `Leading by ${gap}%` : `Tied with ${TEAM_INFO[other].name}`) : gap ? `${gap}% behind ${TEAM_INFO[other].name}` : `Tied with ${TEAM_INFO[other].name}`);
       }
@@ -2532,6 +2554,7 @@ export class Referee {
   badgeHtml(n: number): string {
     const t = this.rankOrder()[n - 1]!;
     if (this.beforeDraw() || this.sitsOut(t)) return "<p><b>-</b></p>";
+    if (isOut(this.state, t)) return "<p><b>OUT</b></p>";
     return `<p><b>${scores(this.state, this.cellList)[t].pct}%</b></p>`;
   }
 
@@ -2558,8 +2581,19 @@ export class Referee {
     const sc = scores(s, this.cellList);
     const mins = Math.round(s.elapsed / 6000) / 10;
     const approved = Object.values(s.approvals).filter((a) => a.status === "approved");
+    const lts = lastStanding(this.rules);
+    const ws = s.winners?.length ? s.winners : s.winner ? [s.winner] : [];
+    const caps = (t: Team) => TEAM_INFO[t].name.toUpperCase();
+    const ltsHead = () =>
+      ws.length > 1
+        ? `🏆 ${ws.map(caps).join(" AND ")} SHARE THE WIN`
+        : s.endReason === "last"
+          ? `🏆 ${caps(ws[0]!)} IS THE LAST TEAM STANDING (${sc[ws[0]!].pct}%)`
+          : `🏆 ${caps(ws[0]!)} WINS WITH ${sc[ws[0]!].pct}% (${s.endReason === "cap" ? "time cap" : "stopped"}; most green among the teams left)`;
+    const outOrder = (s.outTeams ?? []).map((o, i) => `${i + 1}. ${TEAM_INFO[o.team].name} at ${mmss(o.at)}`).join(" · ") || "nobody";
     const out: string[] = [
-      s.phase === "over" ? `🏆 ${TEAM_INFO[s.winner!].name.toUpperCase()} WINS (${s.endReason === "out" ? "the fire went out" : s.endReason === "time" ? "time is up" : "stopped"})` : `phase: ${s.phase}`,
+      ...(lts && s.phase === "over" ? [ltsHead(), `went out: ${outOrder} · game lasted ${mmss(s.elapsed)}`] : []),
+      ...(lts && s.phase === "over" ? [] : [s.phase === "over" ? `🏆 ${TEAM_INFO[s.winner!].name.toUpperCase()} WINS (${s.endReason === "out" ? "the fire went out" : s.endReason === "time" ? "time is up" : "stopped"})` : `phase: ${s.phase}`]),
       `forest saved: ${TEAMS.map((t) => `${TEAM_INFO[t].name} ${sc[t].pct}%`).join(" · ")} · ${mins} min of fire`,
       `paints ${s.stats.accepted} · water left ${TEAMS.map((t) => `${t} ${s.water[t]}`).join(" ")} (of ${this.rules.waterPerTeam} each) · ignitions ${s.stats.ignitions} · burnt out ${s.stats.burntOut} · lightning ${s.stats.strikes.join(" ") || "-"}`,
       `attacks approved: ${approved.map((a) => `${a.team}→${a.to}`).join(" ") || "none"} · lit ${TEAMS.map((t) => `${t} ${s.stats.lit[t]}`).join(" ")} · burned others' trees ${TEAMS.map((t) => `${t} ${s.stats.burnedOthers[t]}`).join(" ")} · blowback ${TEAMS.map((t) => `${t} ${s.stats.blowback[t]}`).join(" ")} · refused by a human: ${Object.values(s.approvals).filter((a) => a.status === "refused").length}`,

@@ -1,7 +1,7 @@
 # Wildfire run-day runbook (instructor only)
 
 Two terminals in this folder: **A** runs the referee, **B** is for one-off commands. Board on the projector.
-The game itself lasts **10 minutes**.
+The game has no time limit: it runs until one team is left with green trees (`lastTeamStanding` in config/rules.json; `npm run referee stop` ends it early, most green among the teams left wins). With `lastTeamStanding: false` it lasts **10 minutes**.
 
 ## The day before
 
@@ -93,7 +93,7 @@ the forest).
 | 0:00 | Slides: the forest, the 4 areas, boss/worker, blue in your area, the one human question (attack a neighbour), one water bucket per team | |
 | 0:08 | A: `npm run referee lobby` | `/join Your Name` (card: "you're in! 🎲"), then `/play` |
 | 0:12 | Everyone has a card: Ctrl-C A, then A: `npm run referee supervise -- --team-size 4` (not `run`: a watchdog restarts the referee if it crashes or hangs; the draw: each card gets its team and role) | Agents paint; humans answer the attack question when their Claude asks |
-| 0:22 | The game ends by itself (10 min, or the fire is out after the lightning) | |
+| 0:22 | The game ends by itself when one team is left (timed mode: 10 min, or the fire is out after the lightning); `stop` ends it early | |
 | 0:24 | B: `npm run referee results`; debrief (SPEC.md section 4) | |
 
 ## If something goes wrong

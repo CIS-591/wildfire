@@ -35,6 +35,9 @@
   "attackSquares": 1,
   "attacksPerTeam": 20,
   "gameMinutes": 10,
+  "lastTeamStanding": true,
+  "newFireEveryMinutes": 2,
+  "maxMinutes": null,
   "drawTeams": false,
   "autoScale": {
     "enabled": true,

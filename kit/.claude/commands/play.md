@@ -4,7 +4,9 @@ description: Fight the wildfire with your team until the banner says GAME OVER
 
 # Play
 
-Play on your own until the banner says GAME OVER. Don't stop to ask the student anything, except the
+Play on your own until the banner says GAME OVER, or until your team is OUT (no green trees left in
+your area: "When your team is out"). There is no time limit: the last team with green trees wins, and
+new fires keep coming every 2 minutes. Don't stop to ask the student anything, except the
 one attack question ("Attacks (both roles)", "Answering"). `AGENTS.md` has the rules; `CLAUDE.md` has the colors, sticky
 texts and the only Miro call patterns you may use.
 
@@ -31,6 +33,8 @@ count is unreliable: never repaint because of it (CLAUDE.md "Paint"). PAUSED: no
      don't count toward the budget). Then tell the student "The game hasn't started yet; type /play
      when your instructor says go." and stop.
    - GAME OVER: CLAUDE.md "Reading the banner"; once confirmed, "When the game ends".
+   - Your team shows `OUT` (`T<your team number> OUT` after `WATER`, or your card says your team is
+     out): "When your team is out".
    - LIVE: go to step 3; once you know your team, save **your team's water** (`T<your team number>`
      after `WATER`) as `water0` in `player.json` if it isn't saved yet.
 3. **Team and role from the inbox card** (in the same read): the `🎲 The draw: … you are on Team N
@@ -50,7 +54,7 @@ count is unreliable: never repaint because of it (CLAUDE.md "Paint"). PAUSED: no
 
 Follow `AGENTS.md` "Smart play" (it decides known/small fire vs order vs your own scan). How:
 - **Known fires**: at 0:00 your area's centre square (`R17` Team 1, `S17` Team 2, `R18` Team 3, `S18`
-  Team 4); at minute 1 (banner `9:00 left`) your area's two `T.startFires` squares. Their ids are in
+  Team 4); at minute 1 (banner `1:00 played`) your area's two `T.startFires` squares. Their ids are in
   `cells`: on those turns make your read a peek of them and their neighbours (or a scan) and paint
   the green squares touching the orange ones.
 - **Small fire** (≤ 5 orange squares of it inside your area): surround it: paint the green squares
@@ -65,7 +69,7 @@ Follow `AGENTS.md` "Smart play" (it decides known/small fire vs order vs your ow
 
 - Never scan more than 6 × 6 squares (384 × 384). A whole-area scan breaks the MCP output limit.
 - First looks: `T.startScan` (the box at your inner corner, where the centre fire starts). The fires
-  inside each area start at minute 1 (banner `9:00 left` or less): only from then, also scan your
+  inside each area start at minute 1 (banner `1:00 played` or more): only from then, also scan your
   area's own start fire (the 6 × 6 box around `T.startFires` if board.json has it; otherwise 6 × 6
   boxes across your area, one per turn, until you find it).
 - After that: keep `player.json` `fire` = the burning labels you saw last. Scan a 6 × 6 box around the
@@ -73,8 +77,8 @@ Follow `AGENTS.md` "Smart play" (it decides known/small fire vs order vs your ow
   y = Y − 128, w = h = 384, where (X, Y) is that square's top-left from CLAUDE.md "The board" (columns
   S–AJ and rows 18–34 add 64 for the gap between areas), clipped to your team's area box `T.sector`). Rotate between a few such boxes so you follow
   the whole edge. To check a handful of known squares, **peek them by id** from `cells` instead.
-- A new fire on the banner (`NEW FIRE at K4 (Team 2's area)!`, minutes 2, 4, 6, 8): if it is
-  in your area or within 2 squares of it, scan the 6 × 6 box around it once.
+- New fires on the banner (`NEW FIRE IN EVERY TEAM'S AREA! (K4 AB9 …)`, every 2 minutes; line 1
+  counts down `NEW FIRES in m:ss`): scan the 6 × 6 box around the one in your area once.
 
 ## Status read (both roles, every 4th turn)
 
@@ -84,7 +88,9 @@ leaderboard row whose first line starts `TEAM <your team number>` (rows swap slo
 by text). Fewer than 4 `TEAM ` rows came back: CLAUDE.md "Stale fixture ids".
 - GAME OVER → CLAUDE.md "Reading the banner"; confirmed → "When the game ends". PAUSED → no paints;
   wait 15 s, read again until LIVE.
-- Note your team's water and any `NEW FIRE at` square (scan around it once if it is in or within 2 squares of your area).
+- Your team is OUT (banner `TEAM N IS OUT!` or `T<n> OUT` for your number, your row starts
+  `TEAM N · OUT at`, or your card says so) → "When your team is out".
+- Note your team's water and the new fire in your area from `NEW FIRE IN EVERY TEAM'S AREA! (…)` (scan around it once).
 - Inbox: a reverted paint says why; don't repeat it (wrong area → drop that label; square changed →
   normal).
 - Then "Attacks (both roles)": answer a teammate's question, or post one (at most one write).
@@ -213,8 +219,16 @@ teammate's question, or post your own).
 **Both roles:** one status line every ~10 turns. Stop at **150 Miro calls** or a daily-limit error,
 and say so in one line.
 
+## When your team is out
+
+Your area has no green trees left, so your team is OUT: every paint is undone and you can't attack or
+be attacked. Stop playing at once: no more paints, stickies or reads. Tell your student in one line,
+e.g. "Team 2 is out (no green trees left) at 5:12 · the game goes on until one team is left. GG!"
+
 ## When the game ends
 
 Leave the loop once GAME OVER is confirmed (CLAUDE.md "Reading the banner"). No extra read: the GAME
-OVER banner names the winner and every team's %. Tell the student in two lines: (1) your team's final %
-and the winner; (2) how many squares you got in (the `N squares` on your last inbox read) and "GG!".
+OVER banner names the winner (`GAME OVER · TEAM 4 IS THE LAST TEAM STANDING (21%)`, or `… SHARE THE
+WIN`) and when each other team went out. Tell the student in two lines: (1) the winner and when your
+team went out (or that you won); (2) how many squares you got in (the `N squares` on your last inbox
+read) and "GG!".

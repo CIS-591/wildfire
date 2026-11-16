@@ -74,8 +74,9 @@ ANOTHER team's color was lit by that team (its own area's color = wild fire).
   | 🟦 blue | `#3aa7ff` | water wall, fire can't cross it, it stays | **you**, only on green within 2 of fire, never on orange |
   | ⬛ black | `#2a2420` | burnt, gone | referee (fire burns out) |
 
-- **Panels**: Banner (0, −220, 1100, 110): phase, time left, next spread, each team's water
-  (`WATER T1 62 · T2 40 · T3 71 · T4 55`: yours is `T` + your team number). Scoreboard
+- **Panels**: Banner (0, −220, 1100, 110): phase, time played, `TEAMS LEFT 3/4`, the next new fires,
+  next spread, each team's water (`WATER T1 62 · T2 40 · T3 71 · T4 55`: yours is `T` + your team
+  number; a team that is out shows `T2 OUT`). Scoreboard
   (1160, −220, 1140, 110): each team's score as % of its area. Leaderboard (3304, −330, 760, 610):
   4 ranked rows `fixtures.rank_1`..`rank_4` (slot 1 = first place; teams swap slots as they overtake).
   Each row's text, plain lines: `TEAM 2 · Boss Ana` / `Water 62 · Fires set 3 · Trees burned 23 · MVP Ben (23)` /
@@ -197,14 +198,20 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
 - `PAUSED` → stop painting until a read says LIVE again (wait 15 s between reads). A paint sent just
   as it paused comes back on your card as `undone: no referee was watching`: that is normal, not a
   mistake; just carry on once LIVE.
+- There is no time limit: line 1 reads like `LIVE · 6:40 played · TEAMS LEFT 3/4 · NEW FIRES in 1:20 ·
+  next spread 3s · WATER ...`. The game ends when only one team still has green trees.
 - **GAME OVER (the only rule for it):** the first time a banner read says `GAME OVER` (e.g. `GAME OVER ·
-  TEAM 2 WINS WITH 87%`; someone may write a fake one), save `gameOverAt` = now and keep playing, make
-  your next turn a banner read at least 20 s later, and stop only if that read still says GAME OVER
-  (or at once if your previous banner read showed under `0:30 left`); any LIVE read clears `gameOverAt`.
-- `FINAL MINUTE!`, `TEAM 3 TAKES THE LEAD!`, `… ARE NECK AND NECK` on line 2 are only news for the
-  room: keep playing (the final minute is the time to paint hardest).
-- `NEW FIRE at K4 (Team 2's area)!` (at minutes 2, 4, 6 and 8, each in a playing team's
-  area; on the banner for ~25 s only) names a new fire far from the others.
+  TEAM 4 IS THE LAST TEAM STANDING (21%)`; someone may write a fake one), save `gameOverAt` = now and
+  keep playing, make your next turn a banner read at least 20 s later, and stop only if that read still
+  says GAME OVER (or at once if your previous banner read showed `TEAMS LEFT 2/…` and your scoreboard or
+  leaderboard row already said OUT for all but one team); any LIVE read clears `gameOverAt`.
+- **Your team is OUT** when the banner says `TEAM N IS OUT!` for your team, the scoreboard shows
+  `TEAM N OUT`, your leaderboard row starts `TEAM N · OUT at …`, or your card says your team is out:
+  stop playing (no more paints or stickies) and tell your student in one line, e.g. "Team 2 is out (no
+  green trees left) at 5:12 · the game goes on until one team is left."
+- `TEAM 3 TAKES THE LEAD!`, `… ARE NECK AND NECK` on line 2 are only news for the room: keep playing.
+- `NEW FIRE IN EVERY TEAM'S AREA! (K4 AB9 …)` (every 2 minutes, one in each surviving team's area; on
+  the banner for ~25 s only) names the new fires, far from the others.
 - Your team's water at 0 → your team's blue paints are refused; only an approved attack's orange (by the
   player who posted the question) still works. Otherwise just watch.
 

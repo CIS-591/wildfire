@@ -65,7 +65,7 @@ const RULES = [
   ["Your team's area has a thick border in your team's color.", 1],
   ["Your Claude paints <b>blue</b> (water) on trees next to the fire.", 1],
   ["Fire spreads every 5 s. Blue walls stop it. Black is burnt.", 1],
-  ["Most green trees left after 10 minutes wins.", 1],
+  ["Last team with green trees left wins. No time limit.", 1],
   [`Attack: a teammate says <b>YES</b>, 1 square next door burns.`, 1],
   [`Each team has ${r.attacksPerTeam} attacks and one water bucket.`, 1],
   ["Write only in your own team's Orders.", 1],

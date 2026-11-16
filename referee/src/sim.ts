@@ -56,6 +56,9 @@ export interface SimResult {
   fireOutAt: number | null; // game minute the fire went out, if it did
   perPlayerMin: number; // accepted blue squares per player per minute of play
   squareWastePct: number; // blue paints refused as "square" (already burnt/blue), % of accepted + those
+  /** Last team standing: teams in the order they went out, with the game minute. */
+  outOrder: { team: Team; minute: number }[];
+  winners: string[];
 }
 
 export class FakePlayerBoard implements PlayerBoard {
@@ -123,6 +126,8 @@ export class FakePlayerBoard implements PlayerBoard {
 }
 
 export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Promise<SimResult> {
+  // Last team standing has no clock: the sim stops itself after 120 game minutes if no cap is set.
+  if (rules.lastTeamStanding && !rules.maxMinutes) rules = { ...rules, maxMinutes: 120 };
   const n = opts.players ?? 28;
   const seed = opts.seed ?? 1;
   const rng = mulberry32(seed);
@@ -253,12 +258,15 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
     fireOutAt: s.endReason === "out" && out ? Math.round(out.at / 6000) / 10 : null,
     perPlayerMin: Math.round((10 * s.stats.accepted) / n / playMin) / 10,
     squareWastePct: Math.round((100 * s.stats.illegal.square) / Math.max(1, s.stats.accepted + s.stats.illegal.square)),
+    outOrder: (s.outTeams ?? []).map((o) => ({ team: o.team, minute: Math.round(o.at / 6000) / 10 })),
+    winners: s.winners?.length ? [...s.winners] : s.winner ? [s.winner] : [],
   };
 }
 
 export function formatSim(r: SimResult, full = true): string {
   const pct = (p: Record<Team, number>) => TEAMS.map((t) => String(p[t]).padStart(6)).join("");
   const lines = [
+    ...(r.outOrder.length || r.endReason === "last" ? [`seed ${r.seed}: last team standing: ${r.winners.join(" + ")} after ${r.minutes} min · went out: ${r.outOrder.map((o) => `${o.team} at ${o.minute} min`).join(", ") || "-"}`] : []),
     `seed ${r.seed}: ${r.winner} wins (${r.endReason}${r.fireOutAt !== null ? ` at ${r.fireOutAt} min` : ""}) after ${r.minutes} min · burning at min 8: ${r.burningAt8} squares · final % ridge/pine/cedar/birch:${pct(r.pct)}`,
     `  squares ${r.paints} blue accepted of ${r.attempts} tried (${r.wastedPct}% wasted; ${r.squareWastePct}% refused as already burnt/blue) · ${r.perPlayerMin}/min/player`,
     `  ${r.scaled ? `auto-scale ${r.scaled} · ` : ""}water used ${r.waterUsedPct}% (per team ${TEAMS.map((t) => r.waterUsedByTeam[t]).join("/")}) · lightning ${r.strikes.join(" ") || "-"} · max writes/tick ${r.maxWritesPerTick} · by-id reads/tick avg ${r.avgReadsPerTick} max ${r.maxReadsPerTick}`,

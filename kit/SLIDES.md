@@ -6,7 +6,8 @@
 
 2. **Four colors.** 🟩 green = tree, protect these. 🟧 orange = fire, spreads by itself. 🟦 blue =
    water, you paint it in your area, fire can't cross it; each team has its own bucket of water. ⬛ black = burnt, gone.
-   Most green left in your team's area after 10 minutes wins. The leaderboard ranks the teams live,
+   The last team with green trees left wins: no time limit, new fires keep coming every 2 minutes, and a
+   team with no green left is OUT. The leaderboard ranks the teams live,
    first place on top: % saved, water left, fires set, trees burned, MVP. Each square has a border in its team's color;
    a thicker one on fire shows which team lit it.
 

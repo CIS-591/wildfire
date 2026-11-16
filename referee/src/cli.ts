@@ -154,7 +154,8 @@ async function makeReferee(board: MiroRest, role: RefereeRole = "solo") {
   const seed = opt("seed");
   const rules = loadRules(rulesFile());
   const minutes = opt("minutes");
-  if (minutes) {
+  if (minutes && rules.lastTeamStanding) rules.maxMinutes = Number(minutes); // no clock: --minutes is the safety cap
+  else if (minutes) {
     rules.gameMinutes = Number(minutes);
     rules.lightningAt = rules.lightningAt.filter((m) => m < rules.gameMinutes);
   }
@@ -295,6 +296,9 @@ async function loop(ref: Referee, game: ReturnType<typeof loadGame>, done: () =>
   return stopping;
 }
 
+/** "LIVE until one team is left" (last team standing) or "LIVE for 10 min". */
+const liveFor = (r: RuleSet) => (r.lastTeamStanding ? `LIVE until one team is left${r.maxMinutes ? ` (cap ${r.maxMinutes} min)` : ""}` : `LIVE for ${r.gameMinutes} min`);
+
 /** `--rules config/rules.8players.json`: another tuning (fewer players, slower agents); default config/rules.json. */
 const rulesFile = () => (opt("rules") ? path.resolve(opt("rules")!) : undefined);
 
@@ -305,7 +309,7 @@ const rulesHtml = (r: RuleSet) => [
     "Your team's area has a thick border in your team's color.",
     "Your Claude paints <b>blue</b> (water) on fire or trees there.",
     "Fire spreads every 20 s. Blue stops it. Black is burnt.",
-    "Most green trees left after 10 minutes wins.",
+    r.lastTeamStanding ? "Last team with green trees left wins. No time limit." : `Most green trees left after ${r.gameMinutes} minutes wins.`,
     "Attack: a teammate says <b>YES</b>, 1 square next door burns.",
     `Each team has ${r.attacksPerTeam} attacks and one water bucket.`,
     "Write only in your own team's Orders.",
@@ -529,7 +533,8 @@ async function main() {
       return;
     }
     case "run": {
-      // The fire. Starts it from the lobby, or resumes a paused game. Ends at gameMinutes (10) or when the fire is out.
+      // The fire. Starts it from the lobby, or resumes a paused game. Ends when one team is left (rules.lastTeamStanding),
+      // else at gameMinutes (10) or when the fire is out.
       takeLock();
       if (existsSync(STOP_FLAG)) unlinkSync(STOP_FLAG); // an old request must not end this game
       const { ref, game } = await makeReferee(miro());
@@ -541,7 +546,7 @@ async function main() {
         return;
       }
       await ref.start();
-      console.log(`🔥 LIVE for ${ref.rules.gameMinutes} min. Ctrl-C pauses (resume with \`run\`); \`stop\` ends it now.`);
+      console.log(`🔥 ${liveFor(ref.rules)}. Ctrl-C pauses (resume with \`run\`); \`stop\` ends it now.`);
       const paused = await loop(ref, game, () => ref.state.phase === "over", pollMs);
       if (paused) await ref.pause();
       saveGame(game);
@@ -576,7 +581,7 @@ async function main() {
       }
       if (ref.state.phase !== "over") {
         await ref.start();
-        console.log(`🔥 LIVE for ${ref.rules.gameMinutes} min. \`npm run referee stop\` ends it now.`);
+        console.log(`🔥 ${liveFor(ref.rules)}. \`npm run referee stop\` ends it now.`);
         const paused = await loop(ref, game, () => ref.state.phase === "over", pollMs);
         if (paused) {
           await ref.pause();
@@ -649,7 +654,7 @@ async function main() {
   npm run referee serve -- --role guard   the second referee (MIRO_ACCESS_TOKEN_2): junk, panels, joins; supervise starts it by itself
   npm run referee stop       end now: highest % wins
   npm run referee results    print the result
-  options: --poll 3 (seconds between board reads), --seed N (repeatable fire), --minutes N (shorter game),
+  options: --poll 3 (seconds between board reads), --seed N (repeatable fire), --minutes N (shorter game; last team standing: a time cap),
            --teams N (1-4 teams play, Team 1 first), --team-size N (players per team: uses only the teams that needs),
            --no-draw (place players as they join instead of a random draw at the start),
            --rehearsal (test with ONE Miro account: every inbox card is its own player; never in class)

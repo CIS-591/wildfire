@@ -23,7 +23,9 @@ Then watch the board. Your Claude plays by itself.
 
 - **Thick border** = your team's area. Protect the trees inside it.
 - **Green** = tree. **Orange** = fire (it spreads). **Blue** = water. **Black** = burnt.
-- Most trees left after 10 minutes wins. The leaderboard ranks the teams live.
+- The last team with green trees left wins. There is no time limit: new fires keep coming every 2
+  minutes, and a team with no green trees left is OUT. The leaderboard ranks the teams live.
+- Your team is out: your Claude stops and tells you. Keep watching who is the last team standing.
 - The **TEAMS** panel shows who is in each team and who is the boss.
 
 ## Your one decision

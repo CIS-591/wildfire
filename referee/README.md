@@ -1,7 +1,7 @@
 # Wildfire referee (instructor only)
 
 The game engine for **Wildfire**, CIS 591 Module 4 (contract: [`../SPEC.md`](../SPEC.md)). Up to four teams,
-one Miro board, one 10-minute forest fire; each student's Claude agent paints through Miro's MCP server.
+one Miro board, one forest fire played to the last team standing (`lastTeamStanding` in config/rules.json; off = the old 10-minute game); each student's Claude agent paints through Miro's MCP server.
 This program watches the board through the Miro REST API and is the only thing that moves the fire:
 it spreads it, burns squares out, strikes lightning in each playing team's area once, undoes illegal paints and junk,
 reads the "Start a fire in <neighbour>'s area?" stickies, draws the teams at random when the game starts,
@@ -26,13 +26,13 @@ Run day: [RUNBOOK.md](RUNBOOK.md).
 | `npm run referee verify` | Token + board + color check |
 | `npm run referee reset` | New game: all green, the 4 centre squares orange, empty Inbox and Orders |
 | `npm run referee lobby` | Students `/join`. Ctrl-C when all are in |
-| `npm run referee run` | Draws the teams, starts the 10-minute fire and referees it. Ctrl-C pauses; `run` resumes |
+| `npm run referee run` | Draws the teams, starts the fire and referees it until one team is left (timed mode: 10 minutes). Ctrl-C pauses; `run` resumes |
 | `npm run referee supervise -- <run flags>` | `run` under a watchdog: restarted automatically if it crashes, is killed or hangs (see below). Use this in class |
 | `npm run referee stop` | End now: highest % wins |
 | `npm run referee results` | Winner, % per team, paints, approvals, refusals |
 | `npm test` · `npm run typecheck` · `npm run lint` | Checks (incl. every attack in `test/ATTACKS.md` and a 30-bot vandal stress game) |
 
-Options: `--poll 3` (seconds between reads), `--seed N` (repeatable fire), `--minutes N` (shorter game),
+Options: `--poll 3` (seconds between reads), `--seed N` (repeatable fire), `--minutes N` (shorter game; last team standing: a time cap),
 `--teams N` (1–4 teams play, Team 1 first; default 4), `--team-size N` (players per team), `--no-draw`
 (place players as they join instead of the draw), `--rehearsal` (test with ONE Miro account: every inbox card is its own player, a paint counts for the
 square's team member who painted least recently, a question sticky's creator is the team's boss and its
@@ -122,7 +122,7 @@ banner's water list shows only teams in play. Fire can still spread into it from
   playing: grey `TEAM 3 · not playing`, badge `-`. Icons (images, not fixtures): a medal per slot (gold, silver,
   bronze, 4th) and each team's mascot (Team 1 owl, Team 2 fox, Team 3 lion, Team 4 wolf), Microsoft Fluent
   Emoji 3D (MIT); the referee places them and guards them like fixtures (a moved icon is put back, a deleted one
-  placed again) and never deletes them as junk. The scoreboard marks the leader with `LEAD` (no emoji on the banner or scoreboard). Banner line 2 also announces lead changes (`TEAM 3 TAKES THE LEAD!`, `trackLead` in rules.ts, at most every 45 s), a close race (`… ARE NECK AND NECK`) and the `FINAL MINUTE!`; game over shows the winner's % and a podium. Fixtures are read by id every poll; a deleted one is recreated in
+  placed again) and never deletes them as junk. The scoreboard marks the leader with `LEAD` (no emoji on the banner or scoreboard). Banner line 2 also announces lead changes (`TEAM 3 TAKES THE LEAD!`, `trackLead` in rules.ts, at most every 45 s), a close race (`… ARE NECK AND NECK`) and the `FINAL MINUTE!` (timed mode only); game over shows the winner's % and a podium. Last team standing (`rules.lastTeamStanding`, the default): no clock (`gameMinutes` ignored; optional cap `maxMinutes`, also `--minutes N`), a team with no green square left is OUT (`TEAM 2 IS OUT!`, its paints undone, it can't attack or be attacked), a new fire in every surviving area every `newFireEveryMinutes` (2), the banner shows `m:ss played · TEAMS LEFT 3/4 · NEW FIRES in m:ss`, and the game ends with `GAME OVER · TEAM 4 IS THE LAST TEAM STANDING (21%)` (last teams out in the same step: most green before it; equal = shared win; `stop` = most green among the teams left). Fixtures are read by id every poll; a deleted one is recreated in
   **exactly the same box** it had (saved in `state/game.json` as `fixtureBoxes`), with a new id. Agents
   that lose a fixture id should re-find it with a small read of that box (SPEC.md §1 panel boxes). All of them
   are also rewritten for 2 polls when the game ends and every 5 polls (live and post-game), so a fake banner

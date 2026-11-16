@@ -36,6 +36,16 @@ export interface RuleSet {
   attackSquares: number; // ... and may light at most this many green squares
   attacksPerTeam: number; // approved attacks per team per game
   gameMinutes: number;
+  /**
+   * Last team standing: no clock. A team whose area has no green square left is OUT; the game ends when at most
+   * one team still has green (that team wins). gameMinutes, lightningAt and "the fire is out" don't end it:
+   * a new fire comes in every surviving team's area every newFireEveryMinutes.
+   */
+  lastTeamStanding?: boolean;
+  /** Last team standing: minutes between new-fire rounds (default 2; first round at that minute). */
+  newFireEveryMinutes?: number;
+  /** Last team standing: optional safety cap in game minutes (null/absent: none); reached = ends like `stop`. */
+  maxMinutes?: number | null;
   /** How many teams play (1-4, Team 1 first; default 4). The instructor sets it with --teams. */
   teams?: number;
   /** Players per team (--team-size): the draw uses as few teams as that needs; extras are spread evenly. */
@@ -152,13 +162,27 @@ export interface GameEvent {
   text: string;
 }
 
+export type EndReason = "time" | "out" | "stopped" | "last" | "cap";
+
+/** A team that went out (last team standing): when (game ms) and its green squares just before that step. */
+export interface OutTeam {
+  team: Team;
+  at: number;
+}
+
 export interface GameState {
   version: 3;
   phase: Phase;
   startedAt: number | null; // real ms
   endedAt: number | null; // real ms
-  endReason: "time" | "out" | "stopped" | null;
+  endReason: EndReason | null;
   winner: Team | null;
+  /** Every winner (last team standing can end in a shared win); absent: just `winner`. */
+  winners?: Team[];
+  /** Last team standing: teams that are out, in the order they went out. */
+  outTeams?: OutTeam[];
+  /** Last team standing: green squares per team at the end of the last check (the start of the next step). */
+  lastGreen?: Partial<Record<Team, number>>;
   elapsed: number; // game ms since the start (only advance() moves it)
   cells: Record<string, CellState>;
   burnLeft: Record<string, number>; // label -> spreads left before it burns out
@@ -330,16 +354,89 @@ function lightStartFires(state: GameState, rules: RuleSet): string[] {
   return extra;
 }
 
-export function stopGame(state: GameState, cells: CellDef[], at: number): void {
+export function stopGame(state: GameState, cells: CellDef[], at: number, rules?: Pick<RuleSet, "lastTeamStanding">): void {
   if (state.phase === "over") return;
-  endGame(state, cells, at, "stopped");
+  endGame(state, cells, at, "stopped", rules);
 }
 
-function endGame(state: GameState, cells: CellDef[], at: number, reason: "time" | "out" | "stopped") {
+function endGame(state: GameState, cells: CellDef[], at: number, reason: EndReason, rules?: Pick<RuleSet, "lastTeamStanding">, winners?: Team[]) {
   state.phase = "over";
   state.endedAt = at;
   state.endReason = reason;
-  state.winner = byScore(state, cells, playingTeams(state))[0]!;
+  if (!winners && lastStanding(rules)) {
+    // Stopped (or the cap): the surviving team(s) with the most green win.
+    const alive = aliveTeams(state);
+    const sc = scores(state, cells);
+    const r = (t: Team) => sc[t].points / (state.startScore[t] || 1);
+    const best = Math.max(...alive.map(r));
+    if (alive.length) winners = alive.filter((t) => r(t) === best);
+  }
+  winners = winners?.length ? winners : [byScore(state, cells, playingTeams(state))[0]!];
+  state.winner = winners[0]!;
+  state.winners = winners;
+  state.attacks = [];
+  if (lastStanding(rules)) {
+    const caps = (t: Team) => teamName(t).toUpperCase();
+    const pct = scores(state, cells)[winners[0]!].pct;
+    pushEvent(
+      state,
+      winners.length > 1
+        ? `GAME OVER · ${winners.map(caps).join(" AND ")} SHARE THE WIN`
+        : reason === "last"
+          ? `GAME OVER · ${caps(winners[0]!)} IS THE LAST TEAM STANDING (${pct}%)`
+          : `GAME OVER · ${caps(winners[0]!)} WINS WITH ${pct}%`,
+    );
+  }
+}
+
+/** Last-team-standing mode is on (rules.lastTeamStanding). */
+export const lastStanding = (rules?: Pick<RuleSet, "lastTeamStanding">) => !!rules?.lastTeamStanding;
+
+/** The team is out (last team standing: its area has no green square left). */
+export const isOut = (state: GameState, t: Team) => !!state.outTeams?.some((o) => o.team === t);
+
+/** Teams in play that are not out (in the timed mode: every team in play). */
+export function aliveTeams(state: GameState): Team[] {
+  return playingTeams(state).filter((t) => !isOut(state, t));
+}
+
+/** Last team standing: game ms of the next new-fire round. */
+export function nextNewFireAt(state: GameState, rules: RuleSet): number {
+  const every = Math.max(0.1, rules.newFireEveryMinutes ?? 2) * 60_000;
+  return (state.lightningDone + 1) * every;
+}
+
+/**
+ * Last team standing: teams in play with no green square left go OUT ("TEAM 2 IS OUT!"); their running attacks
+ * stop. Returns true when the game just ended: at most one team still has green (with one team in play: none).
+ * The winner is that team; if the last teams all went out in this step, the one(s) with the most green before it.
+ */
+function checkOut(state: GameState, rules: RuleSet, cells: CellDef[], realNow: number, events: string[]): boolean {
+  if (!lastStanding(rules) || state.phase !== "live") return false;
+  const sc = scores(state, cells);
+  const before = state.lastGreen ?? {};
+  const alive = aliveTeams(state);
+  const gone = alive.filter((t) => sc[t].points === 0);
+  state.outTeams ??= [];
+  for (const t of gone) {
+    state.outTeams.push({ team: t, at: state.elapsed });
+    pushEvent(state, `${teamName(t).toUpperCase()} IS OUT!`);
+    events.push(`${teamName(t)} is out`);
+  }
+  if (gone.length) state.attacks = state.attacks.filter((g) => !gone.includes(g.team) && !gone.includes(g.to));
+  state.lastGreen = Object.fromEntries(playingTeams(state).map((t) => [t, sc[t].points]));
+  const left = aliveTeams(state);
+  const playing = playingTeams(state);
+  if (left.length > (playing.length > 1 ? 1 : 0)) return false;
+  let winners = left;
+  if (!winners.length) {
+    const g = (t: Team) => before[t] ?? 0;
+    const best = Math.max(...gone.map(g));
+    winners = gone.filter((t) => g(t) === best);
+  }
+  endGame(state, cells, realNow, "last", rules, winners);
+  events.push(`game over: ${winners.map(teamName).join(" and ")}`);
+  return true;
 }
 
 /** Teams by forest saved, exactly (points / start score, not the rounded %); ties keep the given order. */
@@ -354,9 +451,12 @@ function byScore(state: GameState, cells: CellDef[], teams: Team[]): Team[] {
  * exact forest saved, like the winner is picked; once the game is over the winner is first.
  */
 export function rankTeams(state: GameState, cells: CellDef[]): Team[] {
-  const order = byScore(state, cells, playingTeams(state));
-  const w = state.phase === "over" ? state.winner : undefined;
-  return w && order.includes(w) ? [w, ...order.filter((t) => t !== w)] : order;
+  // Teams that are out (last team standing) come below the survivors, the last one out first.
+  const outs = (state.outTeams ?? []).map((o) => o.team).filter((t) => playingTeams(state).includes(t)).reverse();
+  const order = [...byScore(state, cells, aliveTeams(state)), ...outs];
+  const ws = state.phase === "over" ? (state.winners?.length ? state.winners : state.winner ? [state.winner] : []) : [];
+  const top = ws.filter((t) => order.includes(t));
+  return [...top, ...order.filter((t) => !top.includes(t))];
 }
 
 /** a is strictly ahead of b (exact forest saved). */
@@ -379,7 +479,7 @@ export const LEAD_COOLDOWN_MS = 45_000;
  */
 export function trackLead(state: GameState, cells: CellDef[]): void {
   if (state.phase !== "live") return;
-  const playing = playingTeams(state);
+  const playing = aliveTeams(state);
   if (playing.length < 2) return;
   const order = rankTeams(state, cells);
   const top = order[0]!;
@@ -632,7 +732,7 @@ export function spread(state: GameState, rules: RuleSet, cells: CellDef[], byPos
  * fires out of nowhere, so a team that put its fire out stays rewarded). Other areas spread by chance.
  */
 function equalize(state: GameState, rules: RuleSet, fires: CellDef[], byPos: Map<string, CellDef>, lit: Map<string, Origin>, rng: Rng) {
-  const playing = playingTeams(state);
+  const playing = aliveTeams(state); // teams that are out (last team standing) don't count
   if (!playing.length) return;
   const cellOf = new Map<string, CellDef>();
   for (const c of byPos.values()) cellOf.set(c.label, c);
@@ -658,29 +758,29 @@ function equalize(state: GameState, rules: RuleSet, fires: CellDef[], byPos: Map
  * Lightning: each strike hits a different team's area (each team once, in random order), on a green square
  * at least lightningMinDistance (Chebyshev) from any fire; closer if that area has no such square.
  */
-export function strike(state: GameState, rules: RuleSet, cells: CellDef[], rng: Rng): string | null {
+export function strike(state: GameState, rules: RuleSet, cells: CellDef[], rng: Rng, only?: Team, announce = true): string | null {
   state.struck ??= [];
   const fires = cells.filter((c) => state.cells[c.label] === "fire");
-  const playing = playingTeams(state);
+  const playing = aliveTeams(state);
   let teams = playing.filter((t) => !state.struck.includes(t));
   if (!teams.length) {
     teams = [...playing];
     state.struck = []; // every team in play was hit: a second round
   }
-  const area = teams[Math.floor(rng() * teams.length)]!;
+  const area = only ?? teams[Math.floor(rng() * teams.length)]!;
   const green = (t?: Team) => cells.filter((c) => state.cells[c.label] === "forest" && (!t || c.sector === t));
   const distTo = (c: CellDef) => fires.reduce((d, f) => Math.min(d, Math.max(Math.abs(f.col - c.col), Math.abs(f.row - c.row))), Infinity);
   const inArea = green(area);
   const far = inArea.filter((c) => distTo(c) >= rules.lightningMinDistance);
   // No far square left there: the farthest green squares of that area; no green there: anywhere.
   const best = inArea.length ? Math.max(...inArea.map(distTo)) : 0;
-  const pool = far.length ? far : inArea.length ? inArea.filter((c) => distTo(c) === best) : green();
+  const pool = far.length ? far : inArea.length ? inArea.filter((c) => distTo(c) === best) : only ? [] : green();
   if (!pool.length) return null;
   const hit = pool[Math.floor(rng() * pool.length)]!;
   state.struck.push(hit.sector);
   ignite(state, rules, hit.label);
   state.stats.strikes.push(hit.label);
-  pushEvent(state, `NEW FIRE at ${hit.label} (${teamName(hit.sector)}'s area)!`);
+  if (announce) pushEvent(state, `NEW FIRE at ${hit.label} (${teamName(hit.sector)}'s area)!`);
   return hit.label;
 }
 
@@ -695,17 +795,26 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
   const events: string[] = [];
   if (state.phase !== "live") return { changed: [], events, ended: [] };
   const target = state.elapsed + Math.max(0, dtMs);
-  const gameEnd = rules.gameMinutes * 60_000;
+  const lts = lastStanding(rules);
+  // Last team standing: no clock (only the optional safety cap rules.maxMinutes).
+  const gameEnd = lts ? (rules.maxMinutes ? rules.maxMinutes * 60_000 : Infinity) : rules.gameMinutes * 60_000;
+  // A team may have lost its last green square to a paint since the last step.
+  if (checkOut(state, rules, cells, realNow, events)) return finishAdvance(state, rules, fresh, changed, events);
   for (;;) {
-    const nextLightning = state.lightningDone < rules.lightningAt.length ? rules.lightningAt[state.lightningDone]! * 60_000 : Infinity;
+    const nextLightning = lts ? nextNewFireAt(state, rules) : state.lightningDone < rules.lightningAt.length ? rules.lightningAt[state.lightningDone]! * 60_000 : Infinity;
     const windAt = windOn(rules) && !state.windTurned ? rules.wind!.turnAt * 60_000 : Infinity;
     const startAt = state.startFiresLit === false ? (rules.startFiresAt ?? 0) * 60_000 : Infinity;
     const next = Math.min(state.nextSpreadAt, windAt, nextLightning, gameEnd, startAt);
     if (next > target) break;
     state.elapsed = next;
     if (next === gameEnd) {
-      endGame(state, cells, realNow, "time");
-      pushEvent(state, "TIME IS UP!");
+      if (lts) {
+        pushEvent(state, "TIME CAP REACHED!");
+        endGame(state, cells, realNow, "cap", rules);
+      } else {
+        endGame(state, cells, realNow, "time");
+        pushEvent(state, "TIME IS UP!");
+      }
       events.push("⏱ Time is up");
       break;
     }
@@ -718,10 +827,24 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
       }
     } else if (next === nextLightning) {
       state.lightningDone++;
-      const hit = strike(state, rules, cells, rng);
-      if (hit) {
-        changed.add(hit);
-        events.push(`new fire at ${hit}`);
+      if (lts) {
+        // One new fire in every surviving team's area (each far from the fires already burning).
+        const hits: string[] = [];
+        for (const t of aliveTeams(state)) {
+          const hit = strike(state, rules, cells, rng, t, false);
+          if (hit) hits.push(hit);
+        }
+        for (const h of hits) changed.add(h);
+        if (hits.length) {
+          pushEvent(state, `NEW FIRE IN EVERY TEAM'S AREA! (${hits.join(" ")})`);
+          events.push(`new fires at ${hits.join(" ")}`);
+        }
+      } else {
+        const hit = strike(state, rules, cells, rng);
+        if (hit) {
+          changed.add(hit);
+          events.push(`new fire at ${hit}`);
+        }
       }
     } else if (next === windAt) {
       state.windTurned = true;
@@ -732,8 +855,9 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
       for (const l of spread(state, rules, cells, byPos, rng, rules.burnAfterShown ? fresh : undefined)) changed.add(l);
       state.nextSpreadAt += rules.spreadSeconds * 1000;
     }
+    if (checkOut(state, rules, cells, realNow, events)) break;
     trackLead(state, cells);
-    if (state.phase === "live" && fireOut(state, rules)) {
+    if (state.phase === "live" && !lts && fireOut(state, rules)) {
       endGame(state, cells, realNow, "out");
       pushEvent(state, "THE FIRE IS OUT!");
       events.push("fire out");
@@ -741,6 +865,10 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
     }
   }
   if (state.phase === "live") state.elapsed = target;
+  return finishAdvance(state, rules, fresh, changed, events);
+}
+
+function finishAdvance(state: GameState, rules: RuleSet, fresh: Set<string>, changed: Set<string>, events: string[]): AdvanceResult {
   if (rules.burnAfterShown) state.unshown = [...fresh];
   const ended = state.attacks.filter((g) => g.until <= state.elapsed || state.phase !== "live");
   state.attacks = state.attacks.filter((g) => !ended.includes(g));
@@ -789,6 +917,7 @@ export function decidePaint(state: GameState, rules: RuleSet, cells: Map<string,
   const player = state.players[ev.userId];
   if (!player) return reject(state, ev.userId, "unjoined", `❌ ${lab} undone: you haven't joined. Run /join first.`);
   const team = player.team;
+  if (isOut(state, team)) return reject(state, ev.userId, "over", `🏳️ ${lab} undone: your team is out (no green trees left). Stop painting.`);
   const frozen = state.timeoutUntil[ev.userId];
   if (rules.freeze !== false && frozen !== undefined && ev.at < frozen) return reject(state, ev.userId, "timeout", `🧊 ${lab} undone: you are frozen ${Math.ceil((frozen - ev.at) / 1000)} s more.`);
   // Batches: up to paintBatch squares in one go (same poll, within BATCH_WINDOW of its first square), then the cooldown.
@@ -838,6 +967,7 @@ export function decidePaint(state: GameState, rules: RuleSet, cells: Map<string,
 
   if (color === "fire") {
     if (!away) return reject(state, ev.userId, "color", `🎨 ${lab} undone: in your team's area paint only ${BLUE()}. ${ORANGE()} is for an approved attack on a neighbour.`);
+    if (isOut(state, cell.sector)) return reject(state, ev.userId, "area", `🧭 ${lab} undone: ${teamName(cell.sector)} is out; its area can't be attacked.`);
     const atk = TEAM_INFO[team].neighbours.includes(cell.sector) ? attackOn(state, team, cell.sector) : null;
     if (!atk) return reject(state, ev.userId, "area", `🧭 ${lab} undone: setting fire in ${teamName(cell.sector)}'s area needs a teammate's YES to "${questionLine(cell.sector)}?".`);
     if (atk.left <= 0) return reject(state, ev.userId, "attack", `🔥 ${lab} undone: your attack on ${teamName(cell.sector)}'s area has lit its ${rules.attackSquares} squares.`);
@@ -945,8 +1075,9 @@ export function judgeSticky(state: GameState, rules: RuleSet, s: StickyView): No
   const teamOf = (t: Team) => Object.values(state.players).filter((p) => p.team === t).map((p) => p.userId);
   const team = s.team;
   if (creator.team !== team) return tellCreator(`❓ Your question is in ${teamName(team)}'s Orders. Put it in your own team's Orders.`);
+  if (isOut(state, team)) return tellCreator(`🏳️ Your team is out: it can't attack any more.`);
   const to = questionTarget(s.text);
-  const near = TEAM_INFO[team].neighbours.filter((t) => playingTeams(state).includes(t));
+  const near = TEAM_INFO[team].neighbours.filter((t) => aliveTeams(state).includes(t));
   if (!near.length) return tellCreator(`❓ No neighbouring team is playing this game: nobody to attack. Keep defending.`);
   if (!to || !near.includes(to)) return tellCreator(`❓ Ask about a neighbour that is playing, like: ${questionLine(near[0]!)}?${near[1] ? ` (or ${teamName(near[1])}'s).` : ""}`);
   if (state.phase === "over") return notes;
@@ -1001,7 +1132,7 @@ export function pendingStickies(state: GameState, stickies: StickyView[], rules?
     if (stickyKind(s.text) !== "QUESTION") continue;
     const creator = state.players[s.createdBy];
     const to = questionTarget(s.text);
-    if (!creator || creator.team !== s.team || !to || !TEAM_INFO[s.team].neighbours.includes(to) || !playingTeams(state).includes(to)) continue;
+    if (!creator || creator.team !== s.team || !to || !TEAM_INFO[s.team].neighbours.includes(to) || !aliveTeams(state).includes(to) || isOut(state, s.team)) continue;
     if (rules && (state.attacksUsed?.[s.team] ?? 0) >= rules.attacksPerTeam) continue;
     const a = state.approvals[s.id];
     // A refused question rewritten without its NO line is asking again.

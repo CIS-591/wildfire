@@ -1,8 +1,10 @@
 # HOW WILDFIRE WORKS (read this first)
 
 **Goal.** Your team owns one quarter of a forest (your team's area). Your score is the % of green trees
-left in YOUR area at the end. Highest % after 10 minutes wins. Only green squares count: blue (water)
-and black (burnt) squares are not trees.
+left in YOUR area. The last team with green trees left wins: there is no time limit, and new fires keep
+coming every 2 minutes. A team with no green square left is OUT (banner `TEAM 2 IS OUT!`): its paints
+are undone and it can't attack or be attacked. Only green squares count: blue (water) and black (burnt)
+squares are not trees.
 
 **The four colors.** Green = tree (protect it). Orange = fire. Blue = water. Black = burnt (gone forever).
 
@@ -13,7 +15,8 @@ only starts spreading once the referee has shown it.
 Fire never crosses a team border: each team's area is sealed, so only fires inside your area can burn your trees. New fires keep coming:
 - 0:00 the 4 centre squares (R17 S17 R18 S18, one per area) are already burning;
 - minute 1: a 2-square fire inside each team's area (`board.json` `teams[team].startFires`);
-- minutes 2, 4, 6, 8: a new fire starts on one square in each team's area, somewhere you aren't looking;
+- every 2 minutes (2:00, 4:00, 6:00, ... until the game ends): a new fire starts on one square in each
+  surviving team's area, somewhere you aren't looking;
 - any time: a neighbour's attack sets one of your squares on fire.
 
 **How blue works.** You paint BLUE, only in your own area, only on GREEN squares within 2 squares
@@ -92,4 +95,5 @@ The referee checks every change on the board. Follow these always.
   trees.
 - **Otherwise a worker follows its order.** Order empty or stale (none of its squares is green
   now): scan and fight the nearest fire in your own area.
-- Never paint orange, black or blue squares. Keep about a third of your team's water for the new fires at minutes 2, 4, 6 and 8.
+- Never paint orange, black or blue squares. Keep some of your team's water for the new fires that keep
+  coming every 2 minutes: the game has no time limit, so an empty bucket means your area burns out.
