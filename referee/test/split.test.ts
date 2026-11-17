@@ -247,3 +247,23 @@ describe("one token (no MIRO_ACCESS_TOKEN_2): exactly as before", () => {
     expect(PANELS.inbox).toBeDefined();
   });
 });
+
+describe("painter (third token)", () => {
+  it("draws Team 3 and Team 4 squares with its own token; Team 1 and 2 squares stay on the referee's", async () => {
+    const fake = FakeBoard.seeded(() => 0);
+    const g = await setupSolo({ fake, fast: true, live: true, ref: { painter: { board: fake.as("painter"), teams: ["cedar", "birch"] } } });
+    g.ref.state.cells.C20 = "fire"; // Team 3 (cedar)
+    g.ref.state.cells.AF30 = "fire"; // Team 4 (birch)
+    g.ref.state.cells.C3 = "fire"; // Team 1 (ridge)
+    const r = await g.tick();
+    expect(g.fill("C20")).toBe(STATE_COLOR.fire);
+    expect(g.fill("AF30")).toBe(STATE_COLOR.fire);
+    expect(g.fill("C3")).toBe(STATE_COLOR.fire);
+    expect(g.sq("C20").modifiedBy).toBe("painter");
+    expect(g.sq("AF30").modifiedBy).toBe("painter");
+    expect(g.sq("C3").modifiedBy).toBe(REFEREE_USER);
+    expect(r.painted).toBeGreaterThanOrEqual(2);
+    await g.ticks(2);
+    expectConverged(g);
+  });
+});
