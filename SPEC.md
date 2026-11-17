@@ -73,7 +73,7 @@ All coordinates are Miro canvas units, TOP-LEFT of each box (the MCP SVG convent
   | Scoreboard (fixture) | (1160, −220, 1140, 110) | referee writes: each team's % forest left (`TEAM 3 not playing`), `LEAD` after the leader, `ON FIRE 3`; no emoji |
   | Rules panel | (2504, −330, 760, 610) | static: the rules + color legend |
   | Leaderboard panel | (3304, −330, 760, 610) | static frame for the ranked rows |
-  | Leaderboard rows (fixtures `rank_1`..`rank_4`, slot 1 = first place) | x 3324, y −252 + (N−1)×128 (−252, −124, 4, 132); each 720 × 118 pill | game-style ranked list: filled with the team's color, white text; rows swap slots as teams overtake. Plain text, no emoji: `TEAM 2 · Boss Ana` / `Water 62 · Fires set 3 · Trees burned 23 · MVP Ben (23)` / `Crew: Ben, Cy` / optional status `Waiting for a YES: start a fire in Team 4's area` or `ATTACK ON TEAM 4: 2 fires left (1:20)`. Lobby: rows in team order, `TEAM 2` / `Waiting for the draw`. Not playing: `TEAM 3 · not playing`, grey row |
+  | Leaderboard rows (fixtures `rank_1`..`rank_4`, slot 1 = first place) | x 3324, y −252 + (N−1)×128 (−252, −124, 4, 132); each 720 × 118 pill | game-style ranked list: filled with the team's color, white text; rows swap slots as teams overtake. Plain text, no emoji: `TEAM 2 · Boss Ana` / `Water 62 · Fires set 3 · Trees burned 23 · MVP Ben (23)` / `Crew: Ben, Cy` / optional status `Waiting for a YES: start a fire in Team 4's area · votes 1 YES 0 NO of 3` (votes only with `teamVote`) or `ATTACK ON TEAM 4: 2 fires left (1:20)`. Lobby: rows in team order, `TEAM 2` / `Waiting for the draw`. Not playing: `TEAM 3 · not playing`, grey row |
   | Score badges (fixtures `rank_1_score`..`rank_4_score`) | 130 × 80, inside the right end of each row | white rounded box, the team's `87%` (`-` for a team not playing) |
   | Leaderboard icons (referee-placed images) | on each row | a medal per slot (gold, silver, bronze, 4th) and the team's mascot (Team 1 owl, Team 2 fox, Team 3 lion, Team 4 wolf); Microsoft Fluent Emoji 3D, MIT; agents ignore them |
   | Orders · Team 1 | (2504, 340, 760, 900) | header "ORDERS · TEAM 1", team color accent |
@@ -108,8 +108,10 @@ All coordinates are Miro canvas units, TOP-LEFT of each box (the MCP SVG convent
    - **Worker**: reads its ORDER, re-checks the exact square, paints it blue, repeats. No order: paint
      blue on the green square nearest the fire inside its sector.
 3. **The one human decision: "Start a fire in <neighbour>'s area?"** (rules in 2b). The boss posts it in its
-   own team's Orders frame; a worker's `/play` sees it, **stops and asks its student** (YES / NO), then
-   writes `YES` or `NO` on the sticky. Only a teammate who did not post it counts.
+   own team's Orders frame; every teammate's `/play` sees it, **stops and asks its student** (YES / NO),
+   then writes `<name>: YES` or `<name>: NO` on the sticky. With `teamVote` the team's majority of
+   those who did not post it decides (a tie is NO), as soon as the result is certain or `voteSeconds`
+   (60) after the first vote; without it, the first YES or NO from a teammate decides.
 
    Stickies are plain sentences, no keywords:
 
@@ -117,7 +119,7 @@ All coordinates are Miro canvas units, TOP-LEFT of each box (the MCP SVG convent
    |---|---|---|
    | Order | boss | `Ana: paint N9 N10 N11` (worker name, colon, `paint`, labels) |
    | Question | boss | `Start a fire in Team 2's area?` / optional reason line |
-   | Answer | a teammate (asked by their Claude) | a new line `YES` or `NO` on the question sticky |
+   | Vote | every teammate who did not post it (asked by their Claude) | a new line `<name>: YES` or `<name>: NO` on the question sticky |
 
    Students only ever type `/join Your Name` and `/play`. There is no `/approve` command.
    In everything students read, say "your team's area", never "sector".
@@ -126,7 +128,7 @@ All coordinates are Miro canvas units, TOP-LEFT of each box (the MCP SVG convent
 ## 2b. Attack: set fire to a neighbour's area (replaces "stealing")
 
 - **The question** a boss posts in its own Orders frame: `Start a fire in Team 2's area?` (neighbours
-  only; same approval rule: a YES line by a teammate who did not post it). Old "Grab squares …" /
+  only; same approval rule: the team's vote, see section 1 step 3). Old "Grab squares …" /
   "Spray water in …" forms are no longer valid questions.
 - **On YES** the team may, within `attackMinutes` (2), paint **orange** `#ff5a1f` on
   `attackSquares` (1) **green** square in that neighbour's area. Max `attacksPerTeam` (5) approved
@@ -161,7 +163,9 @@ All coordinates are Miro canvas units, TOP-LEFT of each box (the MCP SVG convent
 - **Batches**: one paint = up to `paintBatch` (5) squares changed by the same player within the same
   poll; then `cooldownSeconds` (5). Squares beyond 5 in one batch are reverted.
 - **A paint is accepted only if**: the game is live; the painter joined; ≥ `cooldownSeconds` (5) since their
-  last accepted batch; and it is either **blue** on a green or orange square in their own area, or
+  last accepted batch; and it is either **blue** on a green square within 2 squares of a fire in their own area
+  (`waterNearFire`; without it, on green or orange; with it, orange counts as green when the board did not
+  show it orange before the paint or showed it less than `waterGraceSeconds` (10) earlier), or
   **orange** on a green square in a neighbour's area during their team's approved attack (max 1 per
   attack). Anything else is reverted, with
   the reason on the painter's inbox card. Moving/editing/deleting squares or fixtures is reverted

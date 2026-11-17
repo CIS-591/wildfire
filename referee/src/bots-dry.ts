@@ -115,7 +115,7 @@ export async function runBotsDryRun(rules: RuleSet, o: DryRunOptions): Promise<D
   await guard.discoverGuard();
 
   const io = new FakeBotIO(fake, botUser, () => game.fixtureIds);
-  const runner = new BotRunner(io, { players: o.players, seed: o.seed, profile: o.profile, readEveryMs: o.readEveryMs, writesPerMin: o.writesPerMin, log: (s) => log(`[bots] ${s}`) });
+  const runner = new BotRunner(io, { players: o.players, seed: o.seed, profile: o.profile, teamVote: !!rules.teamVote, readEveryMs: o.readEveryMs, writesPerMin: o.writesPerMin, log: (s) => log(`[bots] ${s}`) });
   let lastGame = clock.t;
   let lastGuard = clock.t;
   let startAt: number | null = null;

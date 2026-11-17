@@ -7,7 +7,7 @@ description: Fight the wildfire with your team until the banner says GAME OVER
 Play on your own until the banner says GAME OVER, or until your team is OUT (no green trees left in
 your area: "When your team is out"). There is no time limit: the last team with green trees wins, and
 new fires keep coming every 2 minutes. Don't stop to ask the student anything, except the
-one attack question ("Attacks (both roles)", "Answering"). `AGENTS.md` has the rules; `CLAUDE.md` has the colors, sticky
+one attack vote ("Attacks (both roles)", "Voting"). `AGENTS.md` has the rules; `CLAUDE.md` has the colors, sticky
 texts and the only Miro call patterns you may use.
 
 **Lean turns: one turn ≈ 15 s.** Worker turn = 2 Miro calls (one read, one paint; while your own
@@ -29,13 +29,18 @@ count is unreliable: never repaint because of it (CLAUDE.md "Paint"). PAUSED: no
    first, then `board.json` `fixtures`; a peek that returns nothing for one: same fix (CLAUDE.md).
 2. **Peek** banner + your inbox card (one call, `widget_ids: [fixtures.banner.id, inboxId]`). Your
    card not in the result: CLAUDE.md "Inbox card gone".
-   - not started / PAUSED: wait 15 s (CLAUDE.md "Waiting"), peek again; at most 60 times (lobby peeks
+   - not started (`join` / `lobby` / `waiting`): the first time this `/play` sees it, a new game is
+     coming: do CLAUDE.md "New game" (skip it if `player.json` has no `team` and `calls` is 0). Then
+     as PAUSED below.
+   - PAUSED: wait 15 s (CLAUDE.md "Waiting"), peek again; at most 60 times (lobby peeks
      don't count toward the budget). Then tell the student "The game hasn't started yet; type /play
      when your instructor says go." and stop.
    - GAME OVER: CLAUDE.md "Reading the banner"; once confirmed, "When the game ends".
    - Your team shows `OUT` (`T<your team number> OUT` after `WATER`, or your card says your team is
      out): "When your team is out".
-   - LIVE: go to step 3; once you know your team, save **your team's water** (`T<your team number>`
+   - LIVE: if `player.json` has `lastPlayed` and this banner shows at least 30 s LESS time played than
+     it, this is a new game (a rematch started while you weren't playing): CLAUDE.md "New game" first.
+     Save `lastPlayed` from every LIVE banner read from now on. Go to step 3; once you know your team, save **your team's water** (`T<your team number>`
      after `WATER`) as `water0` in `player.json` if it isn't saved yet.
 3. **Team and role from the inbox card** (in the same read): the `🎲 The draw: … you are on Team N
    (id). … You are the BOSS/a WORKER` line, or the header `Ana · TEAM 1 · 👑 BOSS` / `· WORKER ·`.
@@ -44,7 +49,7 @@ count is unreliable: never repaint because of it (CLAUDE.md "Paint"). PAUSED: no
    referee rewrites every card at the start): wait 10 s, peek the inbox again, at most 8 times; still
    none: tell the student "My card has no team yet; tell your instructor." and stop. Tell the student
    in one line, once: "You are on Team N, the boss." (or "a worker"). A boss's card may say "a
-   teammate must say YES": in a team of one (`Crew: -`) that teammate is you ("Solo boss").
+   teammate must say YES": in a team of one (`Crew: -`) you vote alone ("Solo boss").
 4. Now let `T = board.json.teams[team]` (area box `sector`, `startScan`, `firstFire`, neighbours),
    `ordersId = board.json.orders[team].id` and `rankIds` = the ids of `rank_1`..`rank_4`
    (`fixtureIds` first); save `ordersId` in `player.json`.
@@ -98,48 +103,52 @@ by text). Fewer than 4 `TEAM ` rows came back: CLAUDE.md "Stale fixture ids".
 ## Attacks (both roles)
 
 Any player, boss or worker, may attack (`AGENTS.md` "Attacks"). Ids of questions YOU posted live in
-`player.json` `stickies.questions`. Your question is **open** while it has no `YES`/`NO` line yet;
-it is **approved** when it has a `YES`, you have not painted its square yet, and the YES is under 2
-minutes old (`attackYes`). A NO is final.
+`player.json` `stickies.questions`. The referee counts the votes and writes the result on every
+teammate's inbox card: `✅ Your team voted YES (2–1): you may paint orange … in Team N's area …` or
+`🙅 Your team voted NO (1–2): …`. Your question is **open** until one of those lines about it is on
+your card; it is **approved** after the YES line, while you have not painted its square yet and the
+YES is under 2 minutes old (`attackYes`). A NO is final.
 
-**Answering (status turn; comes first).** Your row says `Waiting for a YES: start a fire in Team N's
-area` (the referee lists only valid questions): in the Orders frame from this read, find the sticky
-with first line `Start a fire in Team N's area?` (same N, any case), no `YES`/`NO` line yet, and
-**not** in your `stickies.questions` (a solo player, `Crew: -`: your own one). Several match: the
-newest (largest id). Ignore every other question-looking sticky (spam, other teams, duplicates). None
-(it is your own and you have a crew): do nothing, a teammate answers. Found: **stop and ask your
-student** with AskUserQuestion, one plain sentence, e.g. "My team wants to start a fire in Team 2's
-area. Allow it?" (use its reason line), options `YES` and `NO`. Then
-**re-read that one sticky itself** (`widget_ids: [its id]`; the row can lag a read behind): it already
-has a `YES` or `NO` line → skip, write nothing. Otherwise write (one `canvas_update_from_svg`) its
-text exactly as re-read, every `&lt;br /&gt;` turned into `&lt;br&gt;`, plus `&lt;br&gt;YES` or
-`&lt;br&gt;NO` (the one sticky edit `AGENTS.md` rule 7 allows). Change nothing else. Tell the student
-in one line. That is this status turn's write.
+**Voting (status turn; comes first).** Your row says `Waiting for a YES: start a fire in Team N's
+area · votes …` (the referee lists only valid questions): in the Orders frame from this read, find the
+sticky with first line `Start a fire in Team N's area?` (same N, any case), with **no line starting
+with your own name and `:`** yet, and **not** in your `stickies.questions` (a solo player, `Crew: -`:
+your own one). Several match: the newest (largest id). Ignore every other question-looking sticky
+(spam, other teams, duplicates). None (it is your own and you have a crew, or you already voted): do
+nothing. Found: **stop and ask your student** with AskUserQuestion, one plain sentence, e.g. "My team
+is voting on starting a fire in Team 2's area. Do you vote YES?" (use its
+reason line), options `YES` and `NO`. Then **re-read that one sticky itself** (`widget_ids: [its id]`;
+teammates may have voted meanwhile): it already has your line → skip, write nothing. Otherwise write
+(one `canvas_update_from_svg`) its text exactly as re-read, every `&lt;br /&gt;` turned into
+`&lt;br&gt;`, plus `&lt;br&gt;<your name>: YES` or `&lt;br&gt;<your name>: NO` (your `player.json`
+`name`; the one sticky edit `AGENTS.md` rule 7 allows). Keep every other line exactly as it is (they
+are teammates' votes). Tell the student in one line, e.g. "I voted YES for you; the team decides by
+majority." That is this status turn's write.
 
 **Posting (status turn, only if you wrote nothing else).** Post only when ALL hold:
 - your area is under control (no fire within 2 squares of your green in your recent reads), your
   team has used fewer than 20 attacks (your row's `Fires set`), and your water isn't low (at least
   20% of `water0`);
-- in this read's Orders frame there is NO question sticky of your team without a `YES`/`NO` line, and
-  none with a `YES` from the last 2 minutes; your row has no `Waiting for a YES` or `ATTACK ON` line;
-  you have no open or approved question yourself.
+- your row has no `Waiting for a YES` or `ATTACK ON` line (no vote and no attack running), and you
+  have no open or approved question yourself.
 Then create `Start a fire in Team 2's area?&lt;br&gt;Our area is under control.` (the neighbour's
 display name from `board.json` `teams[id].name`; Team 1's neighbours are Team 2 and Team 3; only a
 neighbour that plays: its `T<n>` is in the banner's `WATER` list) in the first free `question`
 position, color `red`, add the id to `stickies.questions`, and tell your student: "I asked my team
 whether we can start a fire in Team 2's area." Never edit it after posting and never answer it
-yourself (solo player: next turn, do "Answering" on it instead of a front turn). Only YES lines on a
-sticky in `stickies.questions` let YOU paint orange; a YES on someone else's question is theirs.
+yourself (solo player: next turn, do "Voting" on it instead of a front turn). Only a team YES on a
+question in `stickies.questions` lets YOU paint orange; a YES on someone else's question is theirs.
 
-**Lighting (only the player who posted it).** While you have an open or approved question, watch it
-in your turn's read (boss: front-turn step 0; worker: worker step 1) together with 3 attack targets
-(`AGENTS.md` "Attacks" step 3, ids from `cells`; pick new ones if the last ones weren't green).
-- `YES` line: save `attackYes[id] = now` (first time only) and, **in this same turn**, paint ONE of
-  those 3 that is green in this read orange `#ff5a1f` (one square, one call, no 8 s wait). That is
-  this turn's paint. None green: pick 3 others and peek again next turn. Over 2 minutes since the YES
-  without a lit square: drop it.
-- `NO` line: closed; carry on as normal.
-- No answer yet: carry on as normal.
+**Lighting (only the player who posted it).** While you have an open or approved question, watch
+your inbox card in your turn's read (boss: front-turn step 0; worker: worker step 1; add `inboxId` to
+that peek) together with 3 attack targets (`AGENTS.md` "Attacks" step 3, ids from `cells`; pick new
+ones if the last ones weren't green).
+- `✅ Your team voted YES` for that neighbour's area: save `attackYes[id] = now` (first time only)
+  and, **in this same turn**, paint ONE of those 3 that is green in this read orange `#ff5a1f` (one
+  square, one call, no 8 s wait). That is this turn's paint. None green: pick 3 others and peek again
+  next turn. Over 2 minutes since the YES without a lit square: drop it.
+- `🙅 Your team voted NO`: closed; carry on as normal.
+- Still voting: carry on as normal. YES lines on the sticky alone don't decide it: only the card.
 - **Your row's `ATTACK ON TEAM N: 1 fire left (m:ss)` line** while your own question has the YES =
   its square is not lit yet (e.g. your orange paint was undone): next turn, peek 3 attack targets and
   paint one green one orange. `0 fires left` or no such line = no attack now: no orange.
@@ -151,7 +160,7 @@ like anyone ("Attacks (both roles)").
 
 **Solo boss** = your row (status read) says `Crew: -`: you are the only player on your team (1-vs-1
 games). Check it at every status read; it lasts until your row lists a crew name. A solo boss has no
-workers: skip front-turn step 2 (no orders to fill); it answers its own question ("Attacks", "Answering").
+workers: skip front-turn step 2 (no orders to fill); it votes on its own question ("Attacks", "Voting").
 
 **Turns 1–3 of every 4 (front turn, 3 calls; 4 while your own question is open or approved):**
 0. **Only while your own question is open or approved: question peek first** (1 call): `widget_ids:
@@ -199,7 +208,7 @@ x, y), never blindly:
    of the labels after paint>]` (ids from `cells`). Exceptions: a known-fire turn ("What to paint"),
    or the turn after an empty/stale order (step 2). Your sticky not in the result (deleted): redo
    "First turn only" next turn. **While your own question is open or approved**, add its id and 3
-   attack targets to this same read ("Attacks", "Lighting"); on a YES, this turn's paint is the one
+   attack targets and your inbox card to this same read ("Attacks", "Lighting"); on a team YES, this turn's paint is the one
    orange square instead of blue.
 2. **Paint** right away, ONE call, max 5 squares, all blue:
    - **Known or small fire in this read** (orange squares in your area): paint the green squares
@@ -229,6 +238,7 @@ e.g. "Team 2 is out (no green trees left) at 5:12 · the game goes on until one 
 
 Leave the loop once GAME OVER is confirmed (CLAUDE.md "Reading the banner"). No extra read: the GAME
 OVER banner names the winner (`GAME OVER · TEAM 4 IS THE LAST TEAM STANDING (21%)`, or `… SHARE THE
-WIN`) and when each other team went out. Tell the student in two lines: (1) the winner and when your
+WIN`) and when each other team went out. Note your `N squares`, then do CLAUDE.md "New game" (no Miro
+call) so the next `/play` starts clean. Tell the student in two lines: (1) the winner and when your
 team went out (or that you won); (2) how many squares you got in (the `N squares` on your last inbox
 read) and "GG!".

@@ -58,6 +58,21 @@ export interface RuleSet {
   equalSpread?: boolean;
   /** Blue only on green squares within 2 squares of a fire, never on the fire itself. */
   waterNearFire?: boolean;
+  /**
+   * With waterNearFire: blue on a square that caught fire less than this many seconds before the paint
+   * (or that the board doesn't show as orange yet) is judged as blue on green, so a player who read the
+   * square green just before the fire reached it is not undone. Default 0 (off).
+   */
+  waterGraceSeconds?: number;
+  /**
+   * Attack questions are a team vote: every teammate but the poster adds a line "<name>: YES" or
+   * "<name>: NO" (their latest line counts). The majority decides (a tie is NO); the vote closes as soon
+   * as the result is certain, or voteSeconds after the first vote. A team of one: the poster votes alone.
+   * Off: the first YES or NO from a teammate decides.
+   */
+  teamVote?: boolean;
+  /** With teamVote: seconds after the first vote when the votes so far decide (default 60). */
+  voteSeconds?: number;
   /** A newly lit fire neither spreads nor burns down until the referee has shown it on the board. */
   burnAfterShown?: boolean;
   /** false: the boss's attack fire (orange) skips the paint cooldown. */
@@ -212,6 +227,10 @@ export interface GameState {
   scaled?: ScaledRules;
   /** Fires lit that the board doesn't show yet (rules.burnAfterShown). */
   unshown?: string[];
+  /** Fire square -> real ms the board first showed it orange (for rules.waterGraceSeconds). */
+  shownAt?: Record<string, number>;
+  /** rules.teamVote: question sticky id -> game ms its first vote was seen. */
+  votes?: Record<string, { firstAt: number }>;
   events: GameEvent[];
   /** The team strictly ahead, for the banner's "TAKES THE LEAD!" (presentation only; absent on old saves). */
   leader?: Team;
@@ -236,6 +255,7 @@ export interface PaintEvent {
   userId: string;
   at: number; // real ms
   batchId?: number; // the poll (referee tick) that saw it: one player's squares in one poll are one batch
+  before?: string; // the fill the board showed there just before this paint (the referee's last look), if known
 }
 
 /** Squares by one player within this long of their batch's first square are the same batch. */
@@ -908,6 +928,19 @@ function nearFire(state: GameState, cells: Map<string, CellDef>, cell: CellDef):
   return false;
 }
 
+/**
+ * The painted square is on fire but the painter could still have seen it green (rules.waterGraceSeconds):
+ * the board didn't show it orange before the paint, or showed it less than the grace before the paint.
+ */
+export function justCaught(state: GameState, rules: RuleSet, ev: PaintEvent): boolean {
+  const grace = (rules.waterGraceSeconds ?? 0) * 1000;
+  if (grace <= 0 || state.cells[ev.label] !== "fire") return false;
+  if (state.unshown?.includes(ev.label)) return true;
+  if (ev.before !== undefined && ev.before.toLowerCase() !== STATE_COLOR.fire) return true;
+  const shown = state.shownAt?.[ev.label];
+  return shown !== undefined && ev.at - shown < grace;
+}
+
 export function decidePaint(state: GameState, rules: RuleSet, cells: Map<string, CellDef>, ev: PaintEvent): Decision {
   const cell = cells.get(ev.label);
   if (!cell) return { accept: false, feedback: `❌ ${ev.label} undone: no such square.` };
@@ -950,7 +983,8 @@ export function decidePaint(state: GameState, rules: RuleSet, cells: Map<string,
   const ps = state.stats.byPlayer[ev.userId]!;
 
   if (color === "water") {
-    if (rules.waterNearFire && cur === "fire") return reject(state, ev.userId, "square", `❌ ${lab} undone: water can't go on fire. Paint the green squares around the fire.`);
+    const caught = justCaught(state, rules, { ...ev, label: lab });
+    if (rules.waterNearFire && cur === "fire" && !caught) return reject(state, ev.userId, "square", `❌ ${lab} undone: water can't go on fire. Paint the green squares around the fire.`);
     if (cur !== "forest" && cur !== "fire") return reject(state, ev.userId, "square", `❌ ${lab} undone: it is already ${cur === "water" ? "water" : "burnt"}. Paint green squares around the fire.`);
     if (rules.waterNearFire && !nearFire(state, cells, cell)) return reject(state, ev.userId, "square", `❌ ${lab} undone: no fire within 2 squares. Paint only green squares around a fire.`);
     if (away) return reject(state, ev.userId, "area", `🧭 ${lab} undone: it is ${teamName(cell.sector)}'s area. Paint ${BLUE()} only in your team's area (${sectorText(team)}).`);
@@ -960,9 +994,11 @@ export function decidePaint(state: GameState, rules: RuleSet, cells: Map<string,
     state.water[team]--;
     delete state.burnLeft[lab];
     delete state.origin[lab];
+    if (state.unshown?.includes(lab)) state.unshown = state.unshown.filter((l) => l !== lab);
     state.cells[lab] = "water";
     ps.water++;
-    return { accept: true, feedback: `💧 ${lab} ${cur === "fire" ? "fire put out" : "is now water"}. ${state.water[team]} water left for ${teamName(team)}.` };
+    const what = caught ? "caught fire just before your paint: put out" : cur === "fire" ? "fire put out" : "is now water";
+    return { accept: true, feedback: `💧 ${lab} ${what}. ${state.water[team]} water left for ${teamName(team)}.` };
   }
 
   if (color === "fire") {
@@ -974,6 +1010,7 @@ export function decidePaint(state: GameState, rules: RuleSet, cells: Map<string,
     if (cur !== "forest") return reject(state, ev.userId, "square", `❌ ${lab} undone: only green squares can be set on fire.`);
     startBatch();
     ignite(state, rules, lab, team);
+    (state.shownAt ??= {})[lab] = ev.at; // the attacker's own paint shows it
     atk.left--;
     atk.lit++;
     state.stats.lit[team]++;
@@ -1054,6 +1091,28 @@ export const attackText = (to: Team) => `start a fire in ${teamName(to)}'s area`
 /** The question's first line as a boss posts it (without the "?"): "Start a fire in Team 2's area". */
 export const questionLine = (to: Team) => `Start a fire in ${teamName(to)}'s area`;
 
+/** Who may vote on a question and how they voted (rules.teamVote): latest "<name>: YES/NO" line per voter. */
+export function tallyVotes(state: GameState, s: Pick<StickyView, "team" | "text" | "createdBy">): { voters: string[]; yes: string[]; no: string[] } {
+  const mates = Object.values(state.players).filter((p) => p.team === s.team);
+  const others = mates.filter((p) => p.userId !== s.createdBy);
+  const voters = others.length ? others : mates.filter((p) => p.userId === s.createdBy);
+  const byName = new Map(voters.map((p) => [p.name.trim().toLowerCase(), p.userId]));
+  const vote = new Map<string, "YES" | "NO">();
+  for (const line of stickyLines(s.text).slice(1)) {
+    const named = /^(.+?)\s*:\s*(YES|NO)[.!]*$/i.exec(line);
+    if (named) {
+      const u = byName.get(named[1]!.trim().toLowerCase());
+      if (u) vote.set(u, named[2]!.toUpperCase() as "YES" | "NO");
+      continue;
+    }
+    // A plain YES/NO line counts only for a team of one (the poster's own student answered).
+    const plain = /^(YES|NO)[.!]*$/i.exec(line);
+    if (plain && !others.length && voters[0]) vote.set(voters[0].userId, plain[1]!.toUpperCase() as "YES" | "NO");
+  }
+  const ids = voters.map((p) => p.userId);
+  return { voters: ids, yes: ids.filter((u) => vote.get(u) === "YES"), no: ids.filter((u) => vote.get(u) === "NO") };
+}
+
 /**
  * Judge one "Start a fire in <neighbour>'s area?" sticky (in the asking team's own Orders frame).
  * Approved = it has a YES line and its last editor is on that team and is not its creator; answers are
@@ -1081,6 +1140,7 @@ export function judgeSticky(state: GameState, rules: RuleSet, s: StickyView): No
   if (!near.length) return tellCreator(`❓ No neighbouring team is playing this game: nobody to attack. Keep defending.`);
   if (!to || !near.includes(to)) return tellCreator(`❓ Ask about a neighbour that is playing, like: ${questionLine(near[0]!)}?${near[1] ? ` (or ${teamName(near[1])}'s).` : ""}`);
   if (state.phase === "over") return notes;
+  if (rules.teamVote) return judgeVote(state, rules, s, to, notes, tellCreator, teamOf);
 
   const answers = stickyLines(s.text).slice(1).map((l) => l.toUpperCase().replace(/[.!]+$/, "")).filter((l) => l === "YES" || l === "NO");
   if (!answers.length) return notes;
@@ -1099,12 +1159,42 @@ export function judgeSticky(state: GameState, rules: RuleSet, s: StickyView): No
     return notes;
   }
   if ((state.attacksUsed[team] ?? 0) >= rules.attacksPerTeam) return tellCreator(`✋ Your team has used its ${rules.attacksPerTeam} attacks for this game.`);
+  approve(state, rules, s, to, notes, teamOf, `${editor.name} said YES`);
+  return notes;
+}
+
+/** The attack is on: the asking team may light squares in `to`'s area for attackMinutes; both teams are told. */
+function approve(state: GameState, rules: RuleSet, s: StickyView, to: Team, notes: Note[], teamOf: (t: Team) => string[], why: string) {
+  const team = s.team;
   state.approvals[s.id] = { team, to, creator: s.createdBy, status: "approved", by: s.modifiedBy, at: state.elapsed };
   state.attacksUsed[team] = (state.attacksUsed[team] ?? 0) + 1;
   state.attacks.push({ sticky: s.id, team, to, until: state.elapsed + rules.attackMinutes * 60_000, left: rules.attackSquares, lit: 0 });
   for (const u of teamOf(team))
-    notes.push({ userId: u, line: `✅ ${editor.name} said YES: you may paint ${ORANGE()} on up to ${rules.attackSquares} green squares in ${teamName(to)}'s area (${to}) for ${rules.attackMinutes} min.` });
+    notes.push({ userId: u, line: `✅ ${why}: you may paint ${ORANGE()} on up to ${rules.attackSquares} green squares in ${teamName(to)}'s area (${to}) for ${rules.attackMinutes} min.` });
   for (const u of teamOf(to)) notes.push({ userId: u, line: `🔥 ${teamName(team)} may set fire to your area for ${rules.attackMinutes} min: watch for orange.` });
+}
+
+/** rules.teamVote: count the votes on a question and close it once the result is certain or the time is up. */
+function judgeVote(state: GameState, rules: RuleSet, s: StickyView, to: Team, notes: Note[], tellCreator: (line: string) => Note[], teamOf: (t: Team) => string[]): Note[] {
+  if (state.approvals[s.id]) return notes; // decided
+  const { voters, yes, no } = tallyVotes(state, s);
+  if (!yes.length && !no.length) return notes;
+  const editor = state.players[s.modifiedBy];
+  if (!editor || editor.team !== s.team) return tellCreator(`✋ Only a ${teamName(s.team)} player can vote on your question.`);
+  state.votes ??= {};
+  const first = (state.votes[s.id] ??= { firstAt: state.elapsed });
+  const y = yes.length, n = no.length, v = voters.length;
+  const timeUp = state.elapsed - first.firstAt >= (rules.voteSeconds ?? 60) * 1000;
+  const result = 2 * y > v ? "YES" : 2 * n >= v ? "NO" : timeUp ? (y > n ? "YES" : "NO") : null;
+  if (!result) return notes;
+  const score = `${y}–${n}${y + n < v ? `, ${v - y - n} didn't vote` : ""}`;
+  if (result === "NO") {
+    state.approvals[s.id] = { team: s.team, to, creator: s.createdBy, status: "refused", by: s.modifiedBy, at: state.elapsed };
+    for (const u of teamOf(s.team)) notes.push({ userId: u, line: `🙅 Your team voted NO (${score}): don't ${attackText(to)}.` });
+    return notes;
+  }
+  if ((state.attacksUsed[s.team] ?? 0) >= rules.attacksPerTeam) return tellCreator(`✋ Your team has used its ${rules.attacksPerTeam} attacks for this game.`);
+  approve(state, rules, s, to, notes, teamOf, `Your team voted YES (${score})`);
   return notes;
 }
 
@@ -1123,7 +1213,7 @@ export const questionAnswered = (text: string) => stickyLines(text).slice(1).som
  * own Orders, naming a neighbour, not approved, not answered NO, the team still has an attack left, at most
  * MAX_OPEN_QUESTIONS per player (oldest first), each neighbour listed once per team.
  */
-export function pendingStickies(state: GameState, stickies: StickyView[], rules?: Pick<RuleSet, "attacksPerTeam">): Record<Team, string[]> {
+export function pendingStickies(state: GameState, stickies: StickyView[], rules?: Pick<RuleSet, "attacksPerTeam" | "teamVote">): Record<Team, string[]> {
   const out: Record<Team, string[]> = { ridge: [], pine: [], cedar: [], birch: [] };
   if (state.phase === "over") return out;
   const perCreator = new Map<string, number>();
@@ -1136,12 +1226,16 @@ export function pendingStickies(state: GameState, stickies: StickyView[], rules?
     if (rules && (state.attacksUsed?.[s.team] ?? 0) >= rules.attacksPerTeam) continue;
     const a = state.approvals[s.id];
     // A refused question rewritten without its NO line is asking again.
-    if (a?.status === "approved" || (a && stickyLines(s.text).slice(1).some((l) => l.toUpperCase() === "NO"))) continue;
+    if (a?.status === "approved" || (a && (rules?.teamVote || stickyLines(s.text).slice(1).some((l) => l.toUpperCase() === "NO")))) continue;
     const n = perCreator.get(s.createdBy) ?? 0;
     if (n >= MAX_OPEN_QUESTIONS) continue;
     perCreator.set(s.createdBy, n + 1);
-    const text = attackText(to);
-    if (!out[s.team].includes(text)) out[s.team].push(text);
+    let text = attackText(to);
+    if (rules?.teamVote) {
+      const { voters, yes, no } = tallyVotes(state, s);
+      text += ` · votes ${yes.length} YES ${no.length} NO of ${voters.length}`;
+    }
+    if (!out[s.team].some((t) => t.startsWith(attackText(to)))) out[s.team].push(text);
   }
   return out;
 }

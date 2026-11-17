@@ -147,6 +147,8 @@ export interface RunnerOptions {
   writesPerMin?: number;
   /** Names: Bot01 ... (prefix). */
   prefix?: string;
+  /** rules.teamVote: every teammate who didn't ask votes "<name>: YES/NO" (else one plain YES/NO line). */
+  teamVote?: boolean;
   log?: (s: string) => void;
 }
 
@@ -232,6 +234,9 @@ export class BotRunner {
   /** A lobby or a live game was seen (a GAME OVER before that is the previous game's). */
   private seenGame = false;
   private answers = new Map<string, { at: number; yes: boolean }>();
+  /** rules.teamVote: question id -> voter name -> when it votes, what, and whether it was written. */
+  private votes = new Map<string, Map<string, { at: number; yes: boolean; done: boolean }>>();
+  private teamVote: boolean;
   private log: (s: string) => void;
 
   constructor(
@@ -244,6 +249,7 @@ export class BotRunner {
     this.bucket = new Bucket(o.writesPerMin ?? 400);
     this.readEvery = o.readEveryMs ?? 5000;
     this.cardEvery = o.cardEveryMs ?? 15_000;
+    this.teamVote = !!o.teamVote;
     this.log = o.log ?? (() => {});
     const prefix = o.prefix ?? "Bot";
     const vandals = new Set<number>();
@@ -425,7 +431,8 @@ export class BotRunner {
     this.stats.orders += orderJobs.length;
     // The attack question.
     const row = rowOf(snap.fx.leaderboard, team);
-    const open = stickies.some((x) => /^Start a fire in /i.test(x.text) && !/\n\s*(YES|NO)\s*$/i.test(x.text));
+    // With teamVote the votes are "<name>: YES" lines and only the row tells an undecided question apart.
+    const open = !this.teamVote && stickies.some((x) => /^Start a fire in /i.test(x.text) && !/\n\s*(YES|NO)\s*$/i.test(x.text));
     if (this.p.attacks && now >= s.nextAskAt && !open && !this.attackOf(team) && !/waiting for a YES/i.test(row)) {
       const green = (n: Team) => snap.cells.filter((c) => c.sector === n && c.fill === C.forest).length;
       const playing = (n: Team) => !!rowOf(snap.fx.leaderboard, n) && !/not playing/i.test(rowOf(snap.fx.leaderboard, n).split("\n")[0] ?? "");
@@ -512,6 +519,10 @@ export class BotRunner {
     for (const team of TEAMS) {
       for (const q of this.snap!.orders[team] ?? []) {
         if (!/^Start a fire in /i.test(q.text) || /\n\s*(YES|NO)\s*$/i.test(q.text)) continue;
+        if (this.teamVote) {
+          await this.vote(team, q, now);
+          continue;
+        }
         const a = this.answers.get(q.id);
         if (!a) {
           this.answers.set(q.id, { at: now + Math.round(uni(this.rng, this.p.yesDelaySec) * 1000), yes: this.rng() < this.p.yesRate });
@@ -530,12 +541,40 @@ export class BotRunner {
     }
   }
 
+  /**
+   * rules.teamVote: every worker of the team (the boss asked; a boss alone votes on its own) votes once,
+   * after its own delay, with a "<name>: YES/NO" line. Due votes go in one edit, re-adding our earlier
+   * lines a stale read doesn't show yet so they aren't overwritten.
+   */
+  private async vote(team: Team, q: StickyNote, now: number) {
+    const workers = this.seats.filter((s) => s.team === team && s.role === "worker");
+    const voters = workers.length ? workers : this.seats.filter((s) => s.team === team && s.role === "boss");
+    let plan = this.votes.get(q.id);
+    if (!plan) this.votes.set(q.id, (plan = new Map()));
+    for (const s of voters)
+      if (!plan.has(s.name)) plan.set(s.name, { at: now + Math.round(uni(this.rng, this.p.yesDelaySec) * 1000), yes: this.rng() < this.p.yesRate, done: false });
+    const due = [...plan].filter(([, v]) => !v.done && now >= v.at);
+    if (!due.length) return;
+    const line = ([n, v]: [string, { yes: boolean }]) => `${n}: ${v.yes ? "YES" : "NO"}`;
+    const shown = new Set(q.text.split("\n").map((l) => l.trim()));
+    const add = [...[...plan].filter(([, v]) => v.done).map(line).filter((l) => !shown.has(l)), ...due.map(line)];
+    if (await this.write(1, now, () => this.io.editSticky(q.id, `${q.text}\n${add.join("\n")}`))) {
+      for (const [n, v] of due) {
+        v.done = true;
+        this.stats.answers++;
+        if (v.yes) this.stats.yes++;
+        this.log(`${n} votes ${v.yes ? "YES" : "NO"}: ${q.text.split("\n")[0]}`);
+      }
+    }
+  }
+
   /** Vandal seats: an image on the forest and a stray sticky on the forest, once each, during the game. */
   private async vandalize(now: number) {
     for (const s of this.seats) {
       if (s.vandalAt === null || now - this.liveSince! < s.vandalAt) continue;
       s.vandalAt = null;
-      const x = GRID_BOX.x + 200 + Math.floor(s.rng() * (GRID_BOX.w - 400));
+      // The sticky goes 300 to the right of the image (160 wide): keep it on the forest, off the Orders frames.
+      const x = GRID_BOX.x + 200 + Math.floor(s.rng() * (GRID_BOX.w - 400 - 460));
       const y = GRID_BOX.y + 200 + Math.floor(s.rng() * (GRID_BOX.h - 400));
       await this.write(2, now, async () => {
         await this.io.dropImage(x, y);
