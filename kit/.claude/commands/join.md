@@ -42,7 +42,7 @@ initial, then continue). Keep the name short; it goes on your order sticky (`Ana
    - `you're in`: "You're in! Teams are drawn when the game starts; run /play when your instructor says go."
    - a team: "You are on Team N" (the display name, `board.json` `teams[team].name`, never the id),
      their role, and "Run /play when your instructor says go."
-   Everyone also gets: "I may ask you a YES/NO question during the game (whether to start a fire in a
-   neighbour's area): answer it."
+   Everyone also gets: "During the game I may ask you to vote YES or NO on starting a fire in a
+   neighbour's area; your team's majority decides. Answer it."
    Nothing after 8 peeks: "The referee isn't running yet; run /join again when the instructor says
    go." Don't create a second card.

@@ -25,11 +25,17 @@ student reads (your replies, stickies) say "your team's area", never "sector".
   `stickies` = ids of stickies YOU created, always this shape: `{"order": "<id>", "questions": ["<id>", …]}`
   (`order`: a worker's own order sticky; `questions`: attack question stickies you posted, any role; start as `{}`),
   `fire` (labels you last saw burning), `water0` (your team's water at your first LIVE read),
-  `attackYes` (question sticky id you posted → time you first saw its YES),
+  `attackYes` (question sticky id you posted → time you first saw `✅ Your team voted YES` for it),
   `cellIds` (label → NEW square id, for squares whose `cells` id went stale; see "Square ids"),
   `fixtureIds` (`banner`/`scoreboard`/`rank_1`..`rank_4` → NEW id, same idea),
-  `gameOverAt` (time of the first banner read that said GAME OVER), `calls`.
+  `gameOverAt` (time of the first banner read that said GAME OVER), `lastPlayed` (time played on your
+  latest LIVE banner read), `calls`.
 - `.claude/commands/join.md`, `play.md`: the two routines.
+
+**New game** (`play.md` says when): everything but `name`, `inboxId`, `cellIds` and `fixtureIds` belonged
+to the last game (the reset deletes the Orders stickies and redraws the teams). Rewrite `player.json`
+with only those four, plus `"stickies": {}` and `"calls": 0`. Team, role, order sticky and `water0`
+are found again by `play.md` Setup and the first worker turn.
 
 ## The game
 
@@ -80,7 +86,7 @@ ANOTHER team's color was lit by that team (its own area's color = wild fire).
   (1160, −220, 1140, 110): each team's score as % of its area. Leaderboard (3304, −330, 760, 610):
   4 ranked rows `fixtures.rank_1`..`rank_4` (slot 1 = first place; teams swap slots as they overtake).
   Each row's text, plain lines: `TEAM 2 · Boss Ana` / `Water 62 · Fires set 3 · Trees burned 23 · MVP Ben (23)` /
-  `Crew: Ben, Cy` / optional status: `Waiting for a YES: start a fire in Team 4's area` or
+  `Crew: Ben, Cy` / optional status: `Waiting for a YES: start a fire in Team 4's area · votes 1 YES 0 NO of 3` or
   `ATTACK ON TEAM 4: 1 fire left (1:20)` (`0 fires left` once its square is lit). Lobby: `TEAM 2` / `Waiting for the draw`; a team not
   playing: `TEAM 3 · not playing`. Ignore the score badges (`rank_N_score`) and the icons. Orders frames (760 × 900): Team 1 (2504, 340),
   Team 2 (3304, 340), Team 3 (2504, 1300), Team 4 (3304, 1300). Inbox panel
@@ -98,7 +104,7 @@ The fire spreads every 5 s, so a square you saw 10 s ago may be orange or black 
 |---|---|---|---|
 | Order | the worker creates its own (`Ana: paint`), the boss fills it in | `Ana: paint N9 N10 N11` (name, colon, `paint`, 3–6 labels in paint order) | `yellow` |
 | Question | any player (boss or worker), when no other question is waiting | `Start a fire in Team 2's area?` (a neighbour's team; when reading, also accept `team2`, `T2` or an old name like `Pine Valley`) / optional reason line, e.g. `Our area is under control.` | `red` |
-| Answer | a teammate who did not post the question (their student said so); in a team of one (`Crew: -`), the poster itself after asking its student | a new line `YES` or `NO` on the question | — |
+| Vote | EVERY teammate who did not post the question (their student said so); in a team of one (`Crew: -`), the poster itself after asking its student | a new line `<your name>: YES` or `<your name>: NO` on the question (name as on your inbox card) | — |
 
 - One order sticky per worker: **edit its text, never post a second.** The squares come after `paint`;
   `Ana: paint` with nothing after it means "no order yet".

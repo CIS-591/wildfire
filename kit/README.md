@@ -30,7 +30,8 @@ Then watch the board. Your Claude plays by itself.
 
 ## Your one decision
 
-Your Claude may ask: *"Start a fire in Team 2's area?"*
+Your Claude may ask you to vote: *"Start a fire in Team 2's area?"*
+Everyone on your team (except the player who asked) votes, and the majority wins (a tie is NO).
 YES = one square of their forest catches fire. Fire never crosses a team border, so it can't reach you.
 
 ## If something goes wrong

@@ -90,6 +90,9 @@
   "freeze": false,
   "equalSpread": true,
   "waterNearFire": true,
+  "waterGraceSeconds": 10,
+  "teamVote": true,
+  "voteSeconds": 60,
   "burnAfterShown": true,
   "attackCooldown": false,
   "fireStaysInArea": true

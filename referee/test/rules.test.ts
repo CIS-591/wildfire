@@ -214,6 +214,31 @@ describe("paints", () => {
     expect([s.cells.C3, s.cells.C4]).toEqual(["water", "water"]);
     expect(s.burnLeft.C3).toBeUndefined();
   });
+  it("waterNearFire: blue on fire is undone, unless the fire caught just before the paint (waterGraceSeconds)", () => {
+    const near = { ...base, waterNearFire: true, waterGraceSeconds: 10 };
+    const { s } = live(near);
+    let at = T0 + 60_000;
+    const go = (l: string) => paint(s, "r1", l, C.water, (at += 6000), near);
+    // Shown long ago: the player saw orange, so the paint is undone.
+    set(s, "C3", "fire");
+    s.shownAt = { C3: at - 30_000 };
+    expect(go("C3")).toMatchObject({ accept: false, rule: "square", feedback: expect.stringContaining("water can't go on fire") });
+    // Shown 4 s before the paint: the player read it green a moment earlier, so it counts as a wall.
+    set(s, "C5", "fire");
+    s.shownAt.C5 = at + 6000 - 4000;
+    expect(go("C5")).toMatchObject({ accept: true, feedback: expect.stringContaining("C5 caught fire just before your paint") });
+    expect(s.cells.C5).toBe("water");
+    // Lit by the referee but not on the board yet: the player could only have seen green.
+    set(s, "C7", "fire");
+    s.unshown = ["C7"];
+    expect(go("C7").accept).toBe(true);
+    expect(s.unshown).toEqual([]);
+    // No grace configured: the old rule (always undone).
+    const strict = { ...near, waterGraceSeconds: 0 };
+    set(s, "C9", "fire");
+    s.shownAt.C9 = at + 6000 - 1000;
+    expect(paint(s, "r1", "C9", C.water, (at += 6000), strict).rule).toBe("square");
+  });
   it("refuses other colors, blue on blue or black, and paints outside the team's area", () => {
     const { s } = live();
     let at = T0 + 60_000;
@@ -496,3 +521,78 @@ describe("scaleRules (auto-scale)", () => {
   });
 });
 const TEAMS4: Team[] = ["ridge", "pine", "cedar", "birch"];
+
+describe("attack questions as a team vote (rules.teamVote)", () => {
+  const vote: RuleSet = { ...base, teamVote: true, voteSeconds: 60 };
+  /** Team 1 has 4 players (Rita posts, so 3 voters); Team 2 has 1; Team 3 has 1 (solo). */
+  function voteGame() {
+    const s = createState(list, vote, mulberry32(1));
+    for (const [u, name, team] of [["r1", "Rita", "ridge"], ["r2", "Rob", "ridge"], ["r3", "Ria", "ridge"], ["r4", "Rex", "ridge"], ["p1", "Pat", "pine"], ["c1", "Cy", "cedar"]] as const)
+      applyJoin(s, { userId: u, name, at: T0 }, team);
+    startGame(s, vote, T0);
+    return s;
+  }
+  const Q = "Start a fire in Team 2's area?\nOur area is under control.";
+  const ask = (s: GameState, text: string, by: string) => sticky(s, "q1", "ridge", text, "r1", by, vote);
+
+  it("one YES of 3 voters waits; a second YES is a majority: approved, everyone on the team is told", () => {
+    const s = voteGame();
+    expect(ask(s, `${Q}\nRob: YES`, "r2")).toEqual([]);
+    expect(s.attacks).toEqual([]);
+    expect(pendingStickies(s, [{ id: "q1", team: "ridge", text: `${Q}\nRob: YES`, createdBy: "r1", modifiedBy: "r2" }], vote).ridge).toEqual([
+      "start a fire in Team 2's area · votes 1 YES 0 NO of 3",
+    ]);
+    const notes = ask(s, `${Q}\nRob: YES\nRia: yes`, "r3");
+    expect(s.attacks).toHaveLength(1);
+    expect(s.approvals.q1?.status).toBe("approved");
+    const mine = notes.filter((n) => ["r1", "r2", "r3", "r4"].includes(n.userId));
+    expect(mine).toHaveLength(4);
+    expect(mine[0]!.line).toContain("Your team voted YES (2–0, 1 didn't vote): you may paint orange");
+    expect(notes.some((n) => n.userId === "p1" && n.line.includes("may set fire to your area"))).toBe(true);
+  });
+  it("two NO of 3 decide NO at once; a decided question stays decided", () => {
+    const s = voteGame();
+    ask(s, `${Q}\nRob: NO`, "r2");
+    const notes = ask(s, `${Q}\nRob: NO\nRex: NO`, "r4");
+    expect(s.approvals.q1?.status).toBe("refused");
+    expect(notes.find((n) => n.userId === "r1")?.line).toContain("Your team voted NO (0–2, 1 didn't vote)");
+    expect(ask(s, `${Q}\nRob: NO\nRex: NO\nRia: YES\nRob: YES`, "r2")).toEqual([]);
+    expect(s.attacks).toEqual([]);
+  });
+  it("time is up 60 s after the first vote: the votes so far decide, a tie is NO", () => {
+    const s = voteGame();
+    ask(s, `${Q}\nRob: YES\nRia: NO`, "r3");
+    expect(s.approvals.q1).toBeUndefined();
+    s.elapsed += 59_000;
+    expect(ask(s, `${Q}\nRob: YES\nRia: NO`, "r3")).toEqual([]);
+    s.elapsed += 2_000;
+    ask(s, `${Q}\nRob: YES\nRia: NO`, "r3");
+    expect(s.approvals.q1?.status).toBe("refused");
+
+    const g = voteGame();
+    sticky(g, "q2", "ridge", `${Q}\nRex: YES`, "r1", "r4", vote);
+    g.elapsed += 61_000;
+    sticky(g, "q2", "ridge", `${Q}\nRex: YES`, "r1", "r4", vote);
+    expect(g.approvals.q2?.status).toBe("approved");
+  });
+  it("only teammates who didn't post it vote; each voter's latest line counts", () => {
+    const s = voteGame();
+    // The poster's own vote, a plain YES and another team's player don't count.
+    expect(ask(s, `${Q}\nRita: YES\nYES\nPat: YES`, "r1")).toEqual([]);
+    expect(s.approvals.q1).toBeUndefined();
+    // Rob changes his mind: his NO replaces his YES.
+    ask(s, `${Q}\nRob: YES\nRia: NO\nRob: NO`, "r2");
+    expect(s.approvals.q1?.status).toBe("refused");
+  });
+  it("a team of one votes alone (its own student), with a plain YES too", () => {
+    const s = voteGame();
+    const notes = sticky(s, "c", "cedar", "Start a fire in Team 1's area?\nYES", "c1", "c1", vote);
+    expect(s.approvals.c?.status).toBe("approved");
+    expect(notes.find((n) => n.userId === "c1")?.line).toContain("Your team voted YES (1–0)");
+  });
+  it("a vote edited in by another team's player is not taken", () => {
+    const s = voteGame();
+    expect(ask(s, `${Q}\nRob: YES\nRia: YES`, "p1")[0]?.line).toContain("Only a Team 1 player can vote");
+    expect(s.approvals.q1).toBeUndefined();
+  });
+});

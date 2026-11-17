@@ -1014,7 +1014,7 @@ export class Referee {
         judged.add(lab);
         if (bf === this.fillOf(lab) || this.isSelf(it.modifiedBy)) continue; // already right, or our own write echoed back
         const staleAt = this.stale.get(id);
-        paints.push({ label: lab, fill: bf, userId: it.modifiedBy, at: this.when(it.modifiedAt, now), batchId: this.tickNo, stale: staleAt !== undefined && staleAt === it.modifiedAt });
+        paints.push({ label: lab, fill: bf, userId: it.modifiedBy, at: this.when(it.modifiedAt, now), batchId: this.tickNo, before: preFill.get(lab), stale: staleAt !== undefined && staleAt === it.modifiedAt });
         continue;
       }
       const fxKey = fixtureKeyOf(id);
@@ -1839,7 +1839,8 @@ export class Referee {
         remove(s, `🗑️ Removed your question: ask about a neighbour that is playing, like: ${questionText(near[0]!)}?${near[1] ? ` (or ${teamName(near[1])}'s).` : ""}`);
         continue;
       }
-      if (questionAnswered(s.text)) continue;
+      // Decided (a YES/NO line, or a team vote the referee has closed): no longer open.
+      if (questionAnswered(s.text) || this.state.approvals[s.id]) continue;
       open.set(s.createdBy, [...(open.get(s.createdBy) ?? []), s]);
     }
     for (const list of open.values()) {
@@ -1942,6 +1943,7 @@ export class Referee {
           if (s) s.fill = want;
           this.borderWritten.set(lab, bkey);
           if (st === "fire" && this.state.unshown?.length) this.state.unshown = this.state.unshown.filter((l) => l !== lab);
+          if (st === "fire" && fillOff) (this.state.shownAt ??= {})[lab] ??= this.now();
         },
         fail: (_e, n) => {
           if (n < STUCK_AFTER || this.cellId.get(lab) !== id) return;
@@ -2215,9 +2217,15 @@ export class Referee {
   private welcome(name: string, team: Team, role: "boss" | "worker"): string {
     const t = TEAM_INFO[team];
     const frame = ordersTitle(team);
+    const solo = Object.values(this.state.players).filter((p) => p.team === team).length === 1;
+    const who = this.rules.teamVote
+      ? solo
+        ? "you are alone on your team, so ask your own student and write their vote yourself"
+        : "your teammates vote, the majority decides"
+      : `a teammate must say YES${solo ? ": you are alone on your team, so ask your own student and write their YES or NO yourself" : ""}`;
     const job =
       role === "boss"
-        ? `You are the BOSS: in ${frame}, fill in each worker's "Name: paint" sticky (like "Ana: paint N9 N10"), and paint too. When your area is under control you may ask "Start a fire in Team N's area?" (a neighbour; a teammate must say YES${Object.values(this.state.players).filter((p) => p.team === team).length === 1 ? ": you are alone on your team, so ask your own student and write their YES or NO yourself" : ""}).`
+        ? `You are the BOSS: in ${frame}, fill in each worker's "Name: paint" sticky (like "Ana: paint N9 N10"), and paint too. When your area is under control you may ask "Start a fire in Team N's area?" (a neighbour; ${who}).`
         : `You are a WORKER: paint the squares on your sticky in ${frame} (your name: paint ...).`;
     return `👋 ${esc(name)}: you are on ${t.name} (${team}). Your area: ${sectorText(team)} (edge ${t.color}). Paint blue ${STATE_COLOR.water} only on green squares next to a fire there (never on orange). ${job}`;
   }

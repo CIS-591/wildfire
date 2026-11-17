@@ -146,7 +146,7 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
   const ref = new Referee(fake, emptyGame(), rules, { now, log: opts.log ?? (() => {}), rng: mulberry32(seed * 7919) });
   await ref.discover();
   const pb = new FakePlayerBoard(fake, ref, () => Math.floor(rng() * 1000));
-  const bots = Array.from({ length: n }, (_, i) => new Bot(`u${i + 1}`, `Bot ${i + 1}`, mulberry32(seed * 1000 + i), { mistakeRate: opts.mistakeRate ?? 0.05, waterPerTeam: rules.waterPerTeam }));
+  const bots = Array.from({ length: n }, (_, i) => new Bot(`u${i + 1}`, `Bot ${i + 1}`, mulberry32(seed * 1000 + i), { mistakeRate: opts.mistakeRate ?? 0.05, waterPerTeam: rules.waterPerTeam, waterNearFire: !!rules.waterNearFire }));
   for (const b of bots) {
     pb.current = b.userId;
     await pb.join(b.userId, b.name);
@@ -155,6 +155,7 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
   await ref.tick();
   for (const b of bots) await b.readInbox(pb, t);
   const answerAt = new Map<string, { at: number; by: string; yes: boolean }>(); // sticky id -> the human's answer
+  const voteAt = new Map<string, { at: number; by: string; name: string; yes: boolean }[]>(); // rules.teamVote: sticky id -> each teammate's vote
   const step = async () => {
     // Bots whose turn has come: read the (stale) board, write orders, paint a batch.
     for (const b of [...bots].sort(() => rng() - 0.5)) {
@@ -165,10 +166,25 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
       await b.act(pb, t);
       b.nextTurnAt = t + turnMs(b);
     }
-    // Humans: a teammate who didn't post it answers each attack question after 20-60 s (15% NO).
+    // Humans: a teammate who didn't post it answers each attack question after 20-60 s (15% NO);
+    // with rules.teamVote every teammate votes, each after 20-60 s (some never do).
     for (const team of TEAMS) {
       for (const s of await pb.stickies(team)) {
         if (stickyKind(s.text) !== "QUESTION") continue;
+        if (rules.teamVote) {
+          let votes = voteAt.get(s.id);
+          if (!votes) {
+            const mates = bots.filter((b) => b.team === team && b.userId !== s.createdBy && rng() > 0.1);
+            votes = mates.map((b) => ({ at: t + 20_000 + Math.floor(rng() * 40_000), by: b.userId, name: b.name, yes: rng() > 0.25 }));
+            voteAt.set(s.id, votes);
+          }
+          for (const v of votes.filter((x) => t >= x.at)) {
+            const cur = (await pb.stickies(team)).find((x) => x.id === s.id)?.text ?? s.text;
+            fake.playerEditSticky(v.by, s.id, `${cur}\n${v.name}: ${v.yes ? "YES" : "NO"}`);
+          }
+          voteAt.set(s.id, votes.filter((x) => t < x.at));
+          continue;
+        }
         if (/\n(YES|NO)$/i.test(s.text)) continue;
         const a = answerAt.get(s.id);
         if (!a) {

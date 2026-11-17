@@ -4,6 +4,7 @@ import { FakeBoard } from "../src/fake-board.js";
 import { FIXTURES, PANELS, STATE_COLOR, RANK_SLOTS, rankKey, center, inboxSlot, inside } from "../src/layout.js";
 import { Referee, emptyGame, type GameFile } from "../src/referee.js";
 import { mulberry32, type RuleSet } from "../src/rules.js";
+import { CALM, setup as harness } from "./harness.js";
 
 const rules: RuleSet = {
   spreadSeconds: 20, pSide: 0.3, pDiag: 0.08, burnTicks: 3, lightningAt: [5], lightningMinDistance: 6, startFires: [], paintBatch: 1,
@@ -206,5 +207,65 @@ describe("the game", () => {
     fake.playerEdit("r1", sb.id, { x: x + 300 });
     for (let i = 0; i < 12; i++) await tick();
     expect(fake.items.get(sb.id)!.x).toBe(x);
+  });
+});
+
+describe("water on a square that just caught fire (rules.waterNearFire + waterGraceSeconds)", () => {
+  const near: RuleSet = { ...CALM, waterNearFire: true, waterGraceSeconds: 10 };
+  it("a paint landing before the board showed the fire counts as a wall", async () => {
+    const g = await harness({ rules: near, live: true, fast: true });
+    g.ref.state.cells.D24 = "fire"; // the engine just set D24 on fire; the board still shows green
+    g.ref.state.burnLeft.D24 = 3;
+    g.fake.afterGridRead = () => g.fake.playerPaint("c1", "D24", C.water); // lands after the read, before the write
+    await g.tick();
+    await g.tick(6000);
+    expect(g.ref.state.cells.D24).toBe("water");
+    expect(g.fill("D24")).toBe(C.water);
+    expect(g.card("c1")).toContain("D24 caught fire just before your paint");
+  });
+  it("within the grace after the board showed orange: accepted; after it: undone", async () => {
+    const g = await harness({ rules: near, live: true, fast: true });
+    for (const l of ["D24", "F24"]) {
+      g.ref.state.cells[l] = "fire";
+      g.ref.state.burnLeft[l] = 9;
+    }
+    g.ref.state.cells.E24 = "fire"; // keeps both squares near a fire
+    g.ref.state.burnLeft.E24 = 9;
+    await g.tick(); // the referee writes the three fires
+    expect(g.fill("D24")).toBe(C.fire);
+    expect(g.ref.state.shownAt?.D24).toBeDefined();
+    g.advance(4000);
+    g.fake.playerPaint("c1", "D24", C.water); // 4 s after the board showed it
+    await g.tick();
+    expect(g.ref.state.cells.D24).toBe("water");
+    g.advance(15_000);
+    g.fake.playerPaint("c1", "F24", C.water); // ~20 s after: the player saw orange
+    await g.tick();
+    expect(g.ref.state.cells.F24).toBe("fire");
+    expect(g.card("c1")).toContain("F24 undone: water can't go on fire");
+    expect(g.fill("F24")).toBe(C.fire);
+  });
+});
+
+describe("attack questions as a team vote, on the board (rules.teamVote)", () => {
+  it("the leaderboard shows the votes; the result reaches every teammate's card", async () => {
+    const players: [string, string][] = [["r1", "Rita"], ["p1", "Pat"], ["c1", "Cy"], ["b1", "Bea"], ["r2", "Rob"], ["r3", "Ria"], ["r4", "Rex"]];
+    const g = await harness({ rules: { ...CALM, teamVote: true, voteSeconds: 60 }, live: true, players, ref: { presets: { rita: "ridge", rob: "ridge", ria: "ridge", rex: "ridge" } } });
+    const team1 = ["r1", "r2", "r3", "r4"].filter((u) => g.ref.state.players[u]?.team === "ridge");
+    const [poster, ...voters] = team1;
+    expect(voters).toHaveLength(3);
+    const q = g.fake.playerSticky(poster!, "ridge", "Start a fire in Team 2's area?");
+    await g.tick();
+    const name = (u: string) => g.ref.state.players[u]!.name;
+    g.fake.playerEditSticky(voters[0]!, q.id, `Start a fire in Team 2's area?\n${name(voters[0]!)}: YES`);
+    await g.tick();
+    expect(g.fx("leaderboard")).toContain(`Waiting for a YES: start a fire in Team 2's area · votes 1 YES 0 NO of ${voters.length}`);
+    expect(g.ref.state.attacks).toEqual([]);
+    const lines = voters.map((u) => `${name(u)}: YES`).join("\n");
+    g.fake.playerEditSticky(voters.at(-1)!, q.id, `Start a fire in Team 2's area?\n${lines}`);
+    await g.tick();
+    expect(g.ref.state.attacks.map((a) => a.to)).toEqual(["pine"]);
+    for (const u of team1) expect(g.card(u)).toContain("Your team voted YES");
+    expect(g.fx("leaderboard")).toContain("ATTACK ON TEAM 2");
   });
 });

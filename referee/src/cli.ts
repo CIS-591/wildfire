@@ -450,7 +450,7 @@ async function bots() {
   console.log(`the referees must run with: npm run referee supervise -- --bots-token ${token}${token === 1 ? "   (MIRO_ACCESS_TOKEN_2 blank: one referee)" : ""}`);
   const io = new MiroBotIO(rest);
   await io.init();
-  const runner = new BotRunner(io, { players, seed, profile, readEveryMs: readEvery * 1000, writesPerMin, log: (s) => console.log(`\n${s}`) });
+  const runner = new BotRunner(io, { players, seed, profile, teamVote: !!loadRules(rulesFile()).teamVote, readEveryMs: readEvery * 1000, writesPerMin, log: (s) => console.log(`\n${s}`) });
   let stopping = false;
   process.on("SIGINT", () => {
     stopping = true;

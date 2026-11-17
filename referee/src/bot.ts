@@ -45,6 +45,8 @@ export interface BotOptions {
   offFront?: number;
   /** Share of a boss's turns spent only on orders and questions (no paint). */
   bossOrderTurns?: number;
+  /** rules.waterNearFire: blue only on green squares (walls), never on the fire itself. */
+  waterNearFire?: boolean;
 }
 
 const C = STATE_COLOR;
@@ -84,7 +86,7 @@ export class Bot {
     for (const line of text.split("\n")) {
       if (this.seenLines.has(line)) continue;
       this.seenLines.add(line);
-      const yes = /said YES: you may paint orange .*\((ridge|pine|cedar|birch)\) for (\d+) min/.exec(line);
+      const yes = /YES[^:]*: you may paint orange .*\((ridge|pine|cedar|birch)\) for (\d+) min/.exec(line);
       if (yes) this.attack = { to: yes[1] as Team, until: now + Number(yes[2]) * 60_000 };
       if (/^⌛ Your attack on /.test(line)) this.attack = null;
     }
@@ -180,7 +182,7 @@ export class Bot {
     const stickies = await board.stickies(team);
 
     // One order per worker, updated in place.
-    const own = targetsFor(cells, team, this.rng);
+    const own = targetsFor(cells, team, this.rng, team, this.opts.waterNearFire);
     for (let i = 0; i < crew.length; i++) {
       const mine = own.filter((_, k) => k % crew.length === i).slice(0, 5);
       const text = mine.length ? `${crew[i]}: paint ${mine.map((c) => c.label).join(" ")}` : `${crew[i]}: paint nothing yet, watch the fire`;
@@ -247,7 +249,7 @@ export class Bot {
       const list = parseOrder(order.text);
       while (this.orderDone < list.length && picks.length < k) {
         const c = byLabel.get(list[this.orderDone++]!);
-        if (c && live(c)) picks.push(c); // re-check the exact square
+        if (c && (this.opts.waterNearFire ? c.fill === C.forest : live(c))) picks.push(c); // re-check the exact square
       }
     }
     if (picks.length < k) {
@@ -255,7 +257,7 @@ export class Bot {
       // trees; each agent picks its own among the most urgent, so teammates rarely paint the same square.
       // Squares on a teammate's order are theirs.
       const ordered = new Set(stickies.filter((s) => s !== order).flatMap((s) => parseOrder(s.text)));
-      const more = targetsFor(cells, this.team!, this.rng).filter((c) => !picks.includes(c) && !ordered.has(c.label));
+      const more = targetsFor(cells, this.team!, this.rng, this.team!, this.opts.waterNearFire).filter((c) => !picks.includes(c) && !ordered.has(c.label));
       const pool = more.slice(0, Math.max(3 * k, 10)).sort(() => this.rng() - 0.5);
       picks.push(...this.sloppy(cells, pool, Math.min(k - picks.length, Math.ceil(k / 2))));
     }
@@ -265,9 +267,10 @@ export class Bot {
 
 /**
  * Squares a team wants blue in `sector`, most urgent first: burning squares next to the most green trees
- * (close to `protect`'s area first), then green squares right next to the fire.
+ * (close to `protect`'s area first), then green squares right next to the fire. `wallsOnly`
+ * (rules.waterNearFire): only those green squares, the ones with the most green behind them first.
  */
-export function targetsFor(cells: CellView[], sector: Team, rng: Rng, protect: Team = sector): CellView[] {
+export function targetsFor(cells: CellView[], sector: Team, rng: Rng, protect: Team = sector, wallsOnly = false): CellView[] {
   const byPos = new Map(cells.map((c) => [`${c.col},${c.row}`, c]));
   const home = cells.filter((c) => c.sector === protect && c.fill === C.forest);
   const near = (c: CellView) => {
@@ -284,6 +287,7 @@ export function targetsFor(cells: CellView[], sector: Team, rng: Rng, protect: T
     .sort((a, b) => b.v - a.v)
     .map((x) => x.c);
   const front = mine.filter((c) => c.fill === C.forest && NEIGHBOURS.some((w) => !(w.dc && w.dr) && byPos.get(`${c.col + w.dc},${c.row + w.dr}`)?.fill === C.fire));
+  if (wallsOnly) return front.map((c) => ({ c, v: greenAround(c) - 2 * near(c) + rng() })).sort((a, b) => b.v - a.v).map((x) => x.c);
   return [...fires, ...front];
 }
 
