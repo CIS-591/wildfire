@@ -496,3 +496,45 @@ describe("scaleRules (auto-scale)", () => {
   });
 });
 const TEAMS4: Team[] = ["ridge", "pine", "cedar", "birch"];
+
+describe("fixes from the 30-agent video audit", () => {
+  const noCentre = (s: GameState) => { for (const l of ["R17", "S17", "R18", "S18"]) set(s, l, "burnt"); };
+  it("fire never slips diagonally between two blue squares that touch at the corner", () => {
+    const rules = { ...base, pSide: 0, pDiag: 1 };
+    const { s, rng } = live(rules);
+    noCentre(s);
+    set(s, "C3", "fire");
+    set(s, "D3", "water"); // right of the fire
+    set(s, "C4", "water"); // below the fire
+    spread(s, rules, list, byPos, rng);
+    expect(s.cells.D4).toBe("forest"); // walled corner: blocked
+    expect(s.cells.B2).toBe("fire"); // open corner: spreads
+  });
+  it("equal spread: a lone new fire is kept (the average never rounds it down to 0)", () => {
+    const rules = { ...base, pSide: 1, pDiag: 0, equalSpread: true };
+    const { s, rng } = live(rules);
+    noCentre(s);
+    set(s, "A1", "fire");
+    set(s, "B1", "water");
+    set(s, "B2", "water");
+    spread(s, rules, list, byPos, rng);
+    expect(s.cells.A2).toBe("fire");
+  });
+  it("blue on a fire the board doesn't show yet counts (the player saw green)", () => {
+    const rules = { ...base, waterNearFire: true };
+    const { s } = live(rules);
+    set(s, "D5", "fire");
+    s.unshown = ["D5"];
+    expect(paint(s, "r1", "D5", C.water, T0 + 60_000, rules).accept).toBe(true);
+    expect(s.cells.D5).toBe("water");
+    expect(s.unshown).toEqual([]);
+    set(s, "D7", "fire"); // shown: still refused
+    expect(paint(s, "r2", "D7", C.water, T0 + 60_000, rules).accept).toBe(false);
+  });
+  it("a new fire skips squares the board shows in another color", () => {
+    const { s, rng } = live(base);
+    const ridge = list.filter((c) => c.sector === "ridge" && s.cells[c.label] === "forest").map((c) => c.label);
+    s.boardOff = ridge.filter((l) => l !== "A1");
+    expect(strike(s, base, list, rng, "ridge", false)).toBe("A1");
+  });
+});

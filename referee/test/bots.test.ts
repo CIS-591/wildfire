@@ -11,7 +11,9 @@ import { STATE_COLOR } from "../src/layout.js";
 
 describe("bot runner", () => {
   it("6 bots + game + guard finish a game: paints accepted, an attack approved, no bot write ignored as self, no referee undoing the other", async () => {
-    const rules = { ...loadRules(), gameMinutes: 6, lightningAt: [2, 4] };
+    // A slower fire than class (spread every 20 s): the referee now draws its oldest fires first, so at the
+    // class pace a 6-bot game is over before the vandal acts.
+    const rules = { ...loadRules(), gameMinutes: 6, lightningAt: [2, 4], spreadSeconds: 20 };
     const r = await runBotsDryRun(rules, { players: 6, seed: 3, profile: { ...CLASS_PROFILE, joinSpreadSec: 30, vandals: 1, askGapSec: [30, 60] }, botsToken: 2 });
     expect(r.players).toBe(6);
     expect(r.over).toBe(true); // the bots saw GAME OVER and stopped

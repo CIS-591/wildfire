@@ -138,7 +138,7 @@ const CARD_PROBES_PER_TICK = 2;
 const JUNK_TYPES = ["image", "embed", "document", "app_card", "card", "code", "mindmap_node", "diagram"]; // Miro's type filter rejects unknown types (it has no "preview")
 /** Junk deletions per tick at most (newest first); the rest go next tick. */
 const JUNK_DELETES_PER_TICK = 20;
-/** Fire/burnt fill writes re-read by id right before writing, per tick (the rest wait a tick). */
+/** Fire/burnt fill writes re-read by id right before writing, per tick (the rest wait a tick; oldest go first). */
 const RECHECK_MAX = 60;
 /** Fixtures are rewritten every this many ticks even when they look right (a missed or stale read never leaves a fake banner up). */
 const FIXTURE_REFRESH_TICKS = 5;
@@ -289,6 +289,10 @@ export class Referee {
   /** Extra by-id reads this tick (fixtures, card probes, fire-write rechecks), for the status line and the sim. */
   readsThisTick = 0;
   lastReads = 0;
+  /** Square label -> tick its board fill first differed from the engine (oldest written first). */
+  private offSince = new Map<string, number>();
+  /** Fire/burnt writes over RECHECK_MAX this tick (counted as deferred). */
+  private recheckDropped = 0;
   /** Square label -> border we last wrote ("color/width"); the REST listing doesn't return borders. */
   private borderWritten = new Map<string, string>();
   /** Items read by id this tick (fixtures, probed cards): as fresh as the squares. */
@@ -877,6 +881,7 @@ export class Referee {
     this.tickNo++;
     this.writesThisTick = 0;
     this.readsThisTick = 0;
+    this.recheckDropped = 0;
     this.placing.clear();
     try {
       return await (this.role === "guard" ? this.guardTickInner() : this.tickInner());
@@ -1140,6 +1145,8 @@ export class Referee {
     this.outage = false;
     this.lastAdvanceAt = now;
     const outBefore = state.outTeams?.length ?? 0;
+    // Green in the engine but another color on the board (a refused paint not put back yet): new fires skip them.
+    state.boardOff = this.cellList.filter((c) => state.cells[c.label] === "forest" && readFill.has(c.label) && readFill.get(c.label) !== this.fillOf(c.label)).map((c) => c.label);
     const adv = advance(state, this.rules, this.cellList, this.byPos, this.rng, dt, now);
     for (const e of adv.events) this.log(`\n${e}`);
     // Last team standing: tell each player of a team that just went out (once) to stop.
@@ -1156,6 +1163,7 @@ export class Referee {
     const writable = (lab: string) => readFill.has(lab) && (judged.has(lab) || readFill.get(lab) === preFill.get(lab));
     ops.push(...this.guardFireWrites(this.cellOps(new Set(adv.changed), writable), readFill), ...this.rebuildOps(), ...this.fixtureOps(), ...this.cardOps(), ...this.retiredPartOps());
     let { deferred } = await this.execute(ops);
+    deferred += this.recheckDropped;
     // Miro said 404 (deleted) for something: rebuild it now, not on a later tick.
     if (this.goneThisTick) deferred += (await this.execute([...this.rebuildOps(), ...this.fixtureOps(), ...this.cardOps()])).deferred;
     this.prevReadAt = now;
@@ -1922,6 +1930,8 @@ export class Referee {
       const bkey = `${stroke.color}/${stroke.width}`;
       const fillOff = (sh.fill ?? "").toLowerCase() !== want;
       const borderOff = this.borderWritten.get(lab) !== bkey;
+      if (!fillOff) this.offSince.delete(lab);
+      else if (!this.offSince.has(lab)) this.offSince.set(lab, this.tickNo);
       if (!fillOff && !borderOff) continue;
       // A fill write could overwrite a player's newer paint: only on a square this read showed as expected.
       // A border-only write leaves the fill alone (the REST listing doesn't return borders: we track what we wrote).
@@ -1972,8 +1982,12 @@ export class Referee {
    */
   private guardFireWrites(ops: Op[], readFill: Map<string, string>): Op[] {
     if (!this.board.getItem) return ops;
-    const todo = ops.filter((o) => o.recheck).sort((a, b) => a.prio - b.prio);
+    // Oldest first: a square the board has been behind on longest goes before this tick's new fires, so a
+    // big fire never starves an old one (players would paint blue on a fire they still see as green).
+    const age = (o: Op) => this.offSince.get(o.recheck!) ?? this.tickNo;
+    const todo = ops.filter((o) => o.recheck).sort((a, b) => age(a) - age(b) || a.prio - b.prio);
     const drop = new Set<Op>(todo.slice(RECHECK_MAX));
+    this.recheckDropped = drop.size;
     for (const op of todo.slice(0, RECHECK_MAX)) {
       op.guard = async () => {
         this.readsThisTick++;

@@ -245,7 +245,7 @@ async function serveGuard(pollMs: number) {
     const t0 = Date.now();
     try {
       const r = await ref.tick();
-      process.stdout.write(`\r[guard] ${ref.state.phase.toUpperCase()} · tampers ${r.tampers} joins ${r.joins} · writes ${r.writes} reads ${r.reads ?? 0} · tick ${((Date.now() - t0) / 1000).toFixed(1)}s   `);
+      process.stdout.write(`\r[guard] ${ref.state.phase.toUpperCase()} · tampers ${r.tampers} joins ${r.joins} · writes ${r.writes} reads ${r.reads ?? 0} deferred ${r.deferred ?? 0} · tick ${((Date.now() - t0) / 1000).toFixed(1)}s   `);
     } catch (e) {
       console.error(`\nguard tick failed: ${(e as Error).message}`);
     }
@@ -280,7 +280,7 @@ async function loop(ref: Referee, game: ReturnType<typeof loadGame>, done: () =>
       const players = Object.keys(ref.state.players).length;
       const mm = `${Math.floor(ref.state.elapsed / 60_000)}:${String(Math.floor((ref.state.elapsed % 60_000) / 1000)).padStart(2, "0")}`;
       process.stdout.write(
-        `\r${ref.state.phase.toUpperCase()} ${mm} · ${players} players · ${TEAMS.map((t) => `${t} ${sc[t].pct}%`).join(" ")} · 🔥${r.fire} 💧${TEAMS.map((t) => ref.state.water[t]).join("/")} · paints ${r.paints} tampers ${r.tampers} joins ${r.joins} · writes ${r.writes} reads ${r.reads ?? 0} · tick ${((Date.now() - t0) / 1000).toFixed(1)}s   `,
+        `\r${ref.state.phase.toUpperCase()} ${mm} · ${players} players · ${TEAMS.map((t) => `${t} ${sc[t].pct}%`).join(" ")} · 🔥${r.fire} 💧${TEAMS.map((t) => ref.state.water[t]).join("/")} · paints ${r.paints} tampers ${r.tampers} joins ${r.joins} · writes ${r.writes} reads ${r.reads ?? 0} deferred ${r.deferred ?? 0} · tick ${((Date.now() - t0) / 1000).toFixed(1)}s   `,
       );
     } catch (e) {
       console.error(`\ntick failed: ${(e as Error).message}`);
