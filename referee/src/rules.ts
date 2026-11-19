@@ -29,7 +29,9 @@ export interface RuleSet {
   startFiresAt?: number;
   paintBatch: number; // squares one player may change in one batch (one poll); then cooldownSeconds
   lightningMinDistance: number;
-  waterPerTeam: number; // each team's own bucket of blue paints
+  waterPerTeam: number; // each team's own bucket of blue paints (ignored with unlimitedWater)
+  /** No buckets: blue is limited only by paintBatch and cooldownSeconds (each player's paint rate). */
+  unlimitedWater?: boolean;
   cooldownSeconds: number;
   timeoutSeconds: number;
   attackMinutes: number; // an approved attack lasts this long
@@ -991,20 +993,20 @@ export function decidePaint(state: GameState, rules: RuleSet, cells: Map<string,
   if (color === "water") {
     // A fire the board doesn't show yet looked green to the player: their water counts (it puts that fire out).
     if (cur === "fire" && state.unshown?.includes(lab)) {
-      if ((state.water[team] ?? 0) > 0 && !away) state.unshown = state.unshown.filter((l) => l !== lab);
+      if ((rules.unlimitedWater || (state.water[team] ?? 0) > 0) && !away) state.unshown = state.unshown.filter((l) => l !== lab);
     } else if (rules.waterNearFire && cur === "fire") return reject(state, ev.userId, "square", `❌ ${lab} undone: water can't go on fire. Paint the green squares around the fire.`);
     if (cur !== "forest" && cur !== "fire") return reject(state, ev.userId, "square", `❌ ${lab} undone: it is already ${cur === "water" ? "water" : "burnt"}. Paint green squares around the fire.`);
     if (rules.waterNearFire && !nearFire(state, cells, cell)) return reject(state, ev.userId, "square", `❌ ${lab} undone: no fire within 2 squares. Paint only green squares around a fire.`);
     if (away) return reject(state, ev.userId, "area", `🧭 ${lab} undone: it is ${teamName(cell.sector)}'s area. Paint ${BLUE()} only in your team's area (${sectorText(team)}).`);
-    if ((state.water[team] ?? 0) <= 0) return reject(state, ev.userId, "water", `🚱 ${lab} undone: ${teamName(team)}'s water is empty.`);
+    if (!rules.unlimitedWater && (state.water[team] ?? 0) <= 0) return reject(state, ev.userId, "water", `🚱 ${lab} undone: ${teamName(team)}'s water is empty.`);
     startBatch();
     state.stats.accepted++;
-    state.water[team]--;
+    if (!rules.unlimitedWater) state.water[team]--;
     delete state.burnLeft[lab];
     delete state.origin[lab];
     state.cells[lab] = "water";
     ps.water++;
-    return { accept: true, feedback: `💧 ${lab} ${cur === "fire" ? "fire put out" : "is now water"}. ${state.water[team]} water left for ${teamName(team)}.` };
+    return { accept: true, feedback: `💧 ${lab} ${cur === "fire" ? "fire put out" : "is now water"}.${rules.unlimitedWater ? "" : ` ${state.water[team]} water left for ${teamName(team)}.`}` };
   }
 
   if (color === "fire") {

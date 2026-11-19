@@ -24,7 +24,7 @@ student reads (your replies, stickies) say "your team's area", never "sector".
   at random then; the card always wins over a saved team), `ordersId`,
   `stickies` = ids of stickies YOU created, always this shape: `{"order": "<id>", "questions": ["<id>", …]}`
   (`order`: a worker's own order sticky; `questions`: attack question stickies you posted, any role; start as `{}`),
-  `fire` (labels you last saw burning), `water0` (your team's water at your first LIVE read),
+  `fire` (labels you last saw burning),
   `attackYes` (question sticky id you posted → time you first saw its YES),
   `cellIds` (label → NEW square id, for squares whose `cells` id went stale; see "Square ids"),
   `fixtureIds` (`banner`/`scoreboard`/`rank_1`..`rank_4` → NEW id, same idea),
@@ -75,8 +75,8 @@ ANOTHER team's color was lit by that team (its own area's color = wild fire).
   | ⬛ black | `#2a2420` | burnt, gone | referee (fire burns out) |
 
 - **Panels**: Banner (0, −220, 1100, 110): phase, time played, `TEAMS LEFT 3/4`, the next new fires,
-  next spread, each team's water (`WATER T1 62 · T2 40 · T3 71 · T4 55`: yours is `T` + your team
-  number; a team that is out shows `T2 OUT`). Scoreboard
+  next spread, and the teams still in (`WATER T1 ∞ · T2 ∞ · T3 ∞ · T4 ∞`: water is unlimited; yours is
+  `T` + your team number; a team that is out shows `T2 OUT`). Scoreboard
   (1160, −220, 1140, 110): each team's score as % of its area. Leaderboard (3304, −330, 760, 610):
   4 ranked rows `fixtures.rank_1`..`rank_4` (slot 1 = first place; teams swap slots as they overtake).
   Each row's text, plain lines: `TEAM 2 · Boss Ana` / `Water 62 · Fires set 3 · Trees burned 23 · MVP Ben (23)` /
@@ -126,11 +126,10 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
   `startScan` box first, then 6 × 6 boxes around squares you already know are burning. A scan box
   around square `L` at top-left (X, Y) (formula above): x = X − 128, y = Y − 128, w = h = 384, clipped
   to your team's area box (the table above; the whole grid is 0, 0, 2368, 2240).
-- **Paint** = a batch of up to **5 squares in ONE `canvas_update_from_svg`**, one `rect` per square,
+- **Paint** = **ONE square in ONE `canvas_update_from_svg`**, one `rect`,
   only the id and the fill (`#3aa7ff`; an attack square: `#ff5a1f`):
-  `<svg xmlns="http://www.w3.org/2000/svg"><rect data-miro-id="ID1" fill="#3aa7ff"/><rect data-miro-id="ID2" fill="#3aa7ff"/></svg>`
-  All squares of one batch go in this ONE call, never one call per square. More than 5 in one batch:
-  the extras are reverted. **The update result's count is unreliable** ("Applied diff: 0 updated" or a
+  `<svg xmlns="http://www.w3.org/2000/svg"><rect data-miro-id="ID1" fill="#3aa7ff"/></svg>`
+  One square per paint: a second square in the same paint (or within the wait) is reverted. **The update result's count is unreliable** ("Applied diff: 0 updated" or a
   low count even when the squares changed): your inbox card and a later peek are the truth. Never
   repaint just because the count looks low.
   Never change the label text, never send x/y/width/height for a square.
@@ -176,8 +175,8 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
 ## Pace and waiting
 
 - **One turn ≈ 15 s with a few small calls** (`play.md` gives each role's exact turn). Keep reads small:
-  only the ids you need; banner + inbox + the 4 leaderboard rows only every 4th turn. At most **one paint (batch
-  of ≤ 5 squares) per turn**.
+  only the ids you need; banner + inbox + the 4 leaderboard rows only every 4th turn. At most **one paint (one
+  square) per turn**.
 - **Paint cooldown: leave at least 8 s between the starts of two blue paints** (the one orange attack paint needs no wait). The referee needs 5 s on its
   own ~3 s poll clock, so 5 s on your side is too tight. Reads in between count toward the 8 s; if less
   has passed, wait the rest.

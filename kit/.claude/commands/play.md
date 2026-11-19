@@ -13,7 +13,7 @@ texts and the only Miro call patterns you may use.
 **Lean turns: one turn ≈ 15 s.** Worker turn = 2 Miro calls (one read, one paint; while your own
 question is open, the read also covers it). Boss front turn = 3 calls (scan, orders write, paint),
 plus 1 question peek first while its own question is open; a solo boss skips the orders write. A paint
-is a batch of up to 5 squares in ONE call; leave at least 8 s between the starts of two blue paints
+is ONE square in ONE call; leave at least 8 s between the starts of two blue paints
 (the orange attack paint needs no wait; CLAUDE.md "Pace and waiting"). One Miro call at a time, never two writes in the same message. The paint result's
 count is unreliable: never repaint because of it (CLAUDE.md "Paint"). PAUSED: no paints until LIVE.
 
@@ -35,8 +35,7 @@ count is unreliable: never repaint because of it (CLAUDE.md "Paint"). PAUSED: no
    - GAME OVER: CLAUDE.md "Reading the banner"; once confirmed, "When the game ends".
    - Your team shows `OUT` (`T<your team number> OUT` after `WATER`, or your card says your team is
      out): "When your team is out".
-   - LIVE: go to step 3; once you know your team, save **your team's water** (`T<your team number>`
-     after `WATER`) as `water0` in `player.json` if it isn't saved yet.
+   - LIVE: go to step 3.
 3. **Team and role from the inbox card** (in the same read): the `🎲 The draw: … you are on Team N
    (id). … You are the BOSS/a WORKER` line, or the header `Ana · TEAM 1 · 👑 BOSS` / `· WORKER ·`.
    Parse them as `join.md` step 4 says and save `team` and `role` to `player.json`. **The card wins**:
@@ -118,8 +117,7 @@ in one line. That is this status turn's write.
 
 **Posting (status turn, only if you wrote nothing else).** Post only when ALL hold:
 - your area is under control (no fire within 2 squares of your green in your recent reads), your
-  team has used fewer than 20 attacks (your row's `Fires set`), and your water isn't low (at least
-  20% of `water0`);
+  team has used fewer than 20 attacks (your row's `Fires set`);
 - in this read's Orders frame there is NO question sticky of your team without a `YES`/`NO` line, and
   none with a `YES` from the last 2 minutes; your row has no `Waiting for a YES` or `ATTACK ON` line;
   you have no open or approved question yourself.
@@ -168,7 +166,7 @@ workers: skip front-turn step 2 (no orders to fill); it answers its own question
    Different workers get different stretches. Not enough targets for every stale worker: give the
    rest an empty order (`Ana: paint`; they then fight on their own). Never put an orange (attack)
    square on an order. Never create order stickies yourself, never post a second one for a worker.
-3. **Paint** a batch (one call, ≤ 5 squares) from this scan: the best targets not on any order.
+3. **Paint** one square (one call) from this scan: the best target not on any order.
 
 **Every 4th turn: status read**, then at most one write ("Attacks (both roles)": answer a
 worker's question, or post your own).
@@ -201,15 +199,15 @@ x, y), never blindly:
    "First turn only" next turn. **While your own question is open or approved**, add its id and 3
    attack targets to this same read ("Attacks", "Lighting"); on a YES, this turn's paint is the one
    orange square instead of blue.
-2. **Paint** right away, ONE call, max 5 squares, all blue:
-   - **Known or small fire in this read** (orange squares in your area): paint the green squares
-     touching it first.
-   - Otherwise every label on the order that is in your area and green **now**, in order.
+2. **Paint** right away, ONE call, ONE square, blue:
+   - **Known or small fire in this read** (orange squares in your area): paint the green square
+     touching the most orange.
+   - Otherwise the first label on the order that is in your area and green **now**.
      Skip orange, blue, black, and any label outside your area.
    - **Order empty, or no label green now (stale)**: no paint from it. Next turn, make your
      read a scan of the 6 × 6 box around the fire you last saw (`player.json` `fire`; none yet →
      `T.startScan`, or from minute 1 your area's start fire), save the burning labels to `fire`, and
-     paint the best up to 5 squares within 2 squares of fire in your area ("What to paint"). None:
+     paint the best square within 2 squares of fire in your area ("What to paint"). None:
      don't paint; the turn after, scan the next 6 × 6 box along the fire you last saw, toward your
      area's inner corner (`T.startScan`). Peek your order again the turn after a scan.
 

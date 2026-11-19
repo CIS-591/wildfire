@@ -316,7 +316,7 @@ const rulesHtml = (r: RuleSet) => [
     "Fire spreads every 20 s. Blue stops it. Black is burnt.",
     r.lastTeamStanding ? "Last team with green trees left wins. No time limit." : `Most green trees left after ${r.gameMinutes} minutes wins.`,
     "Attack: a teammate says <b>YES</b>, 1 square next door burns.",
-    `Each team has ${r.attacksPerTeam} attacks and one water bucket.`,
+    `${r.attacksPerTeam} attacks per team. Unlimited water, 1 square per paint.`,
     "Write only in your own team's Orders.",
     "Don't move, edit or delete anything. No images or text.",
   ].map((l, i) => `<b>${i + 1}.</b> ${l}`),

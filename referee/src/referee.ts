@@ -2006,7 +2006,13 @@ export class Referee {
     const keep: Op[] = [];
     // Each token re-reads its own squares, up to RECHECK_MAX each (the painter has its own budget).
     for (const lane of [false, true]) {
-      const todo = ops.filter((o) => o.recheck && !!o.painter === lane).sort((a, b) => age(a) - age(b) || a.prio - b.prio);
+      // Ties (same age, same priority): a different order every tick, so no team's squares always wait last.
+    const tie = (o: Op) => {
+      let h = this.tickNo * 2654435761;
+      for (const ch of o.recheck!) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+      return h >>> 0;
+    };
+    const todo = ops.filter((o) => o.recheck && !!o.painter === lane).sort((a, b) => age(a) - age(b) || a.prio - b.prio || tie(a) - tie(b));
       todo.slice(RECHECK_MAX).forEach((o) => drop.add(o));
       keep.push(...todo.slice(0, RECHECK_MAX));
     }
@@ -2426,7 +2432,8 @@ export class Referee {
     const r = this.rules;
     const p = (a: string, b: string) => `<p><b>${a}</b></p><p>${b}</p>`;
     const inGame = TEAMS.filter((t) => !this.sitsOut(t));
-    const water = `WATER ${inGame.map((t) => `T${TEAM_INFO[t].num} ${isOut(s, t) ? "OUT" : s.water[t]}`).join(" · ")}`;
+    // Unlimited water: the list still shows who is in ("∞") and who is out.
+    const water = `WATER ${inGame.map((t) => `T${TEAM_INFO[t].num} ${isOut(s, t) ? "OUT" : r.unlimitedWater ? "∞" : s.water[t]}`).join(" · ")}`;
     const out = TEAMS.filter((t) => this.sitsOut(t));
     const who = out.length ? `PLAYING: ${inGame.map((t) => TEAM_INFO[t].name.toUpperCase()).join(", ")} · NOT PLAYING: ${out.map((t) => TEAM_INFO[t].name.toUpperCase()).join(", ")}` : "";
     const w = windOn(r) ? WIND[s.wind]! : null;
@@ -2470,7 +2477,7 @@ export class Referee {
     else if (nextBolt <= 60_000) line2 = lts ? `NEW FIRES in ${mmss(nextBolt)}: one more fire starts in every team's area` : `NEW FIRE in ${mmss(nextBolt)}: one more fire starts in a team's area`;
     else if (close) line2 = close;
     else {
-      const low = TEAMS.filter((t) => !isOut(s, t) && s.water[t] <= r.waterPerTeam / 5).map((t) => `T${TEAM_INFO[t].num}`);
+      const low = r.unlimitedWater ? [] : TEAMS.filter((t) => !isOut(s, t) && s.water[t] <= r.waterPerTeam / 5).map((t) => `T${TEAM_INFO[t].num}`);
       line2 = `${burning} squares on fire${low.length ? ` · LOW WATER: ${low.join(" ")}` : ""}`;
     }
     return p(line1, line2);
@@ -2581,7 +2588,7 @@ export class Referee {
     const t = this.rankOrder()[n - 1]!;
     if (this.sitsOut(t)) return "<p>-</p>";
     const pad = "&nbsp;".repeat(7);
-    if (which === "water") return `<p>${pad}<b>${s.water[t]}</b> / ${this.rules.waterPerTeam}</p>`;
+    if (which === "water") return this.rules.unlimitedWater ? `<p>${pad}<b>∞</b></p>` : `<p>${pad}<b>${s.water[t]}</b> / ${this.rules.waterPerTeam}</p>`;
     const left = Math.max(0, this.rules.attacksPerTeam - (s.attacksUsed?.[t] ?? 0));
     return `<p>${pad}<b>${left}</b> left</p>`;
   }
@@ -2643,7 +2650,7 @@ export class Referee {
       ...(lts && s.phase === "over" ? [ltsHead(), `went out: ${outOrder} · game lasted ${mmss(s.elapsed)}`] : []),
       ...(lts && s.phase === "over" ? [] : [s.phase === "over" ? `🏆 ${TEAM_INFO[s.winner!].name.toUpperCase()} WINS (${s.endReason === "out" ? "the fire went out" : s.endReason === "time" ? "time is up" : "stopped"})` : `phase: ${s.phase}`]),
       `forest saved: ${TEAMS.map((t) => `${TEAM_INFO[t].name} ${sc[t].pct}%`).join(" · ")} · ${mins} min of fire`,
-      `paints ${s.stats.accepted} · water left ${TEAMS.map((t) => `${t} ${s.water[t]}`).join(" ")} (of ${this.rules.waterPerTeam} each) · ignitions ${s.stats.ignitions} · burnt out ${s.stats.burntOut} · lightning ${s.stats.strikes.join(" ") || "-"}`,
+      `paints ${s.stats.accepted} · ${this.rules.unlimitedWater ? "water unlimited" : `water left ${TEAMS.map((t) => `${t} ${s.water[t]}`).join(" ")} (of ${this.rules.waterPerTeam} each)`} · ignitions ${s.stats.ignitions} · burnt out ${s.stats.burntOut} · lightning ${s.stats.strikes.join(" ") || "-"}`,
       `attacks approved: ${approved.map((a) => `${a.team}→${a.to}`).join(" ") || "none"} · lit ${TEAMS.map((t) => `${t} ${s.stats.lit[t]}`).join(" ")} · burned others' trees ${TEAMS.map((t) => `${t} ${s.stats.burnedOthers[t]}`).join(" ")} · blowback ${TEAMS.map((t) => `${t} ${s.stats.blowback[t]}`).join(" ")} · refused by a human: ${Object.values(s.approvals).filter((a) => a.status === "refused").length}`,
       `paints undone: ${Object.entries(s.stats.illegal).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(" · ") || "none"}`,
       "",

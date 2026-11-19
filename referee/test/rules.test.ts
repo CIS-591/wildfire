@@ -538,3 +538,15 @@ describe("fixes from the 30-agent video audit", () => {
     expect(strike(s, base, list, rng, "ridge", false)).toBe("A1");
   });
 });
+
+describe("unlimited water", () => {
+  it("blue is never refused for water and the bucket never goes down; only the paint rate limits it", () => {
+    const rules = { ...base, unlimitedWater: true };
+    const { s } = live(rules);
+    s.water.ridge = 0;
+    set(s, "D4", "fire");
+    expect(paint(s, "r1", "D5", C.water, T0 + 60_000, rules).accept).toBe(true);
+    expect(s.water.ridge).toBe(0);
+    expect(paint(s, "r1", "C4", C.water, T0 + 61_000, rules).accept).toBe(false); // the cooldown still applies
+  });
+});

@@ -1,7 +1,7 @@
 {
   "spreadSeconds": 5,
-  "pSide": 0.35,
-  "pDiag": 0.05,
+  "pSide": 0.23,
+  "pDiag": 0.035,
   "burnTicks": 4,
   "wind": {
     "enabled": false,
@@ -27,8 +27,9 @@
     "AE29"
   ],
   "startFiresAt": 1,
-  "paintBatch": 5,
+  "paintBatch": 1,
   "waterPerTeam": 180,
+  "unlimitedWater": true,
   "cooldownSeconds": 5,
   "timeoutSeconds": 5,
   "attackMinutes": 2,
@@ -44,44 +45,44 @@
     "points": [
       {
         "perTeam": 1,
-        "pSide": 0.35,
-        "pDiag": 0.052,
+        "pSide": 0.23,
+        "pDiag": 0.035,
         "water": 45
       },
       {
         "perTeam": 2,
-        "pSide": 0.35,
-        "pDiag": 0.052,
+        "pSide": 0.23,
+        "pDiag": 0.035,
         "water": 55
       },
       {
         "perTeam": 3,
-        "pSide": 0.35,
-        "pDiag": 0.052,
+        "pSide": 0.23,
+        "pDiag": 0.035,
         "water": 65
       },
       {
         "perTeam": 4,
-        "pSide": 0.35,
-        "pDiag": 0.052,
+        "pSide": 0.23,
+        "pDiag": 0.035,
         "water": 70
       },
       {
         "perTeam": 5,
-        "pSide": 0.35,
-        "pDiag": 0.052,
+        "pSide": 0.23,
+        "pDiag": 0.035,
         "water": 75
       },
       {
         "perTeam": 7.5,
-        "pSide": 0.35,
-        "pDiag": 0.052,
+        "pSide": 0.23,
+        "pDiag": 0.035,
         "water": 75
       },
       {
         "perTeam": 10,
-        "pSide": 0.35,
-        "pDiag": 0.052,
+        "pSide": 0.23,
+        "pDiag": 0.035,
         "water": 85
       }
     ]
