@@ -64,7 +64,7 @@ ANOTHER team's color was lit by that team (its own area's color = wild fire).
   banner's `WATER` list (its leaderboard row says `not playing`): never ask to start a fire in its area.
 
   When fires start: `AGENTS.md` "The fire". `board.json` `teams[team].startScan` is the 6 × 6 box at
-  your inner corner (around the centre fire); `teams[team].startFires` lists your area's minute-1 fire.
+  your inner corner (around the centre fire); `teams[team].startFires` lists your area's other start fire (lit at 0:00).
 - **Square fills: only four** (lowercase hex; compare case-insensitively when reading):
 
   | | Fill | Means | Who paints it |
@@ -129,7 +129,7 @@ Every call counts against a per-user rate limit and a daily limit. Use only thes
 - **Paint** = **ONE square in ONE `canvas_update_from_svg`**, one `rect`,
   only the id and the fill (`#3aa7ff`; an attack square: `#ff5a1f`):
   `<svg xmlns="http://www.w3.org/2000/svg"><rect data-miro-id="ID1" fill="#3aa7ff"/></svg>`
-  One square per paint: a second square in the same paint (or within the wait) is reverted. **The update result's count is unreliable** ("Applied diff: 0 updated" or a
+  Up to two squares per paint, in one call: a third square in the same paint (or any square within the wait) is reverted. **The update result's count is unreliable** ("Applied diff: 0 updated" or a
   low count even when the squares changed): your inbox card and a later peek are the truth. Never
   repaint just because the count looks low.
   Never change the label text, never send x/y/width/height for a square.

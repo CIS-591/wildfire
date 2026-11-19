@@ -13,7 +13,7 @@ texts and the only Miro call patterns you may use.
 **Lean turns: one turn ≈ 15 s.** Worker turn = 2 Miro calls (one read, one paint; while your own
 question is open, the read also covers it). Boss front turn = 3 calls (scan, orders write, paint),
 plus 1 question peek first while its own question is open; a solo boss skips the orders write. A paint
-is ONE square in ONE call; leave at least 8 s between the starts of two blue paints
+is up to TWO squares in ONE call; leave at least 8 s between the starts of two blue paints
 (the orange attack paint needs no wait; CLAUDE.md "Pace and waiting"). One Miro call at a time, never two writes in the same message. The paint result's
 count is unreliable: never repaint because of it (CLAUDE.md "Paint"). PAUSED: no paints until LIVE.
 
@@ -53,7 +53,7 @@ count is unreliable: never repaint because of it (CLAUDE.md "Paint"). PAUSED: no
 
 Follow `AGENTS.md` "Smart play" (it decides known/small fire vs order vs your own scan). How:
 - **Known fires**: at 0:00 your area's centre square (`R17` Team 1, `S17` Team 2, `R18` Team 3, `S18`
-  Team 4); at minute 1 (banner `1:00 played`) your area's two `T.startFires` squares. Their ids are in
+  Team 4) and your area's two `T.startFires` squares, all burning from 0:00. Their ids are in
   `cells`: on those turns make your read a peek of them and their neighbours (or a scan) and paint
   the green squares touching the orange ones.
 - **Small fire** (≤ 5 orange squares of it inside your area): surround it: paint the green squares
@@ -68,7 +68,7 @@ Follow `AGENTS.md` "Smart play" (it decides known/small fire vs order vs your ow
 
 - Never scan more than 6 × 6 squares (384 × 384). A whole-area scan breaks the MCP output limit.
 - First looks: `T.startScan` (the box at your inner corner, where the centre fire starts). The fires
-  inside each area start at minute 1 (banner `1:00 played` or more): only from then, also scan your
+  inside each area also start at 0:00: also scan your
   area's own start fire (the 6 × 6 box around `T.startFires` if board.json has it; otherwise 6 × 6
   boxes across your area, one per turn, until you find it).
 - After that: keep `player.json` `fire` = the burning labels you saw last. Scan a 6 × 6 box around the
@@ -166,7 +166,7 @@ workers: skip front-turn step 2 (no orders to fill); it answers its own question
    Different workers get different stretches. Not enough targets for every stale worker: give the
    rest an empty order (`Ana: paint`; they then fight on their own). Never put an orange (attack)
    square on an order. Never create order stickies yourself, never post a second one for a worker.
-3. **Paint** one square (one call) from this scan: the best target not on any order.
+3. **Paint** up to two squares (one call) from this scan: the best targets not on any order.
 
 **Every 4th turn: status read**, then at most one write ("Attacks (both roles)": answer a
 worker's question, or post your own).
@@ -206,7 +206,7 @@ x, y), never blindly:
      Skip orange, blue, black, and any label outside your area.
    - **Order empty, or no label green now (stale)**: no paint from it. Next turn, make your
      read a scan of the 6 × 6 box around the fire you last saw (`player.json` `fire`; none yet →
-     `T.startScan`, or from minute 1 your area's start fire), save the burning labels to `fire`, and
+     `T.startScan`, or your area's start fire), save the burning labels to `fire`, and
      paint the best square within 2 squares of fire in your area ("What to paint"). None:
      don't paint; the turn after, scan the next 6 × 6 box along the fire you last saw, toward your
      area's inner corner (`T.startScan`). Peek your order again the turn after a scan.
