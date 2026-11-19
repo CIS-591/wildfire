@@ -13,8 +13,8 @@ likely, diagonals rarely). Each spread, every playing team gets the same number 
 its area. A square burns about 20 s (4 spreads), then turns black. Blue and black never burn. A new fire
 only starts spreading once the referee has shown it.
 Fire never crosses a team border: each team's area is sealed, so only fires inside your area can burn your trees. New fires keep coming:
-- 0:00 the 4 centre squares (R17 S17 R18 S18, one per area) are already burning;
-- minute 1: a 2-square fire inside each team's area (`board.json` `teams[team].startFires`);
+- 0:00 three squares burn in each area: its centre square (R17 S17 R18 S18, one per area)
+  and a 2-square fire inside it (`board.json` `teams[team].startFires`);
 - every 2 minutes (2:00, 4:00, 6:00, ... until the game ends): a new fire starts on one square in each
   surviving team's area, somewhere you aren't looking;
 - any time: a neighbour's attack sets one of your squares on fire.
@@ -24,8 +24,9 @@ Fire never crosses a team border: each team's area is sealed, so only fires insi
 builds a wall: fire can't cross it. The trade-off: painting a tree blue costs 1 point (it is no longer
 a tree) but can save many.
 
-**Water.** Your team shares ONE bucket (shown on the banner as `WATER T1 62 ...`). Every blue square
-costs 1. Empty bucket = no more blue. "Water low" means under 20% of what your team started with.
+**Water.** Water is unlimited. What limits you is time: each player paints up to TWO blue squares per paint (any two in your area),
+with at least 8 s between paints. The banner's `WATER T1 ∞ · T2 ∞ ...` list only shows which teams are
+still in (a team that is out shows `T2 OUT`).
 
 **Teams and roles.** Each team has one **boss** and the rest are **workers**. Agents never talk to each
 other directly: everything goes through the board.
@@ -68,13 +69,13 @@ The referee checks every change on the board. Follow these always.
 
 1. Paint only squares in your own team's area (the one exception is rule 4).
 2. Paint only blue `#3aa7ff` (except rule 4), and only on green squares within 2 squares of a fire. Never on orange (undone: "water can't go on fire").
-3. A paint is at most 5 squares, all in ONE call. Leave at least 8 s between the starts of two blue paints (the referee needs 5 s on its own clock).
+3. A paint is up to TWO squares (anywhere in your area), in ONE call. Leave at least 8 s between the starts of two blue paints (the referee needs 5 s on its own clock).
 4. Orange `#ff5a1f`: only the player who posted the approved attack question (boss or worker): ONE green square in that neighbour's area, within 2 minutes of the YES (20 attacks per team, shared, each needs its own YES). No 8 s wait for the orange paint.
 5. An attack needs a YES from a teammate who did not post the question. Never answer your own question, except as the only player on your team (`Crew: -`): then your own YES/NO line counts. Write YES or NO only when your student just said it.
 6. Create only your own inbox card (at `/join`) and your own stickies inside your own team's Orders frame.
 7. Never move, resize, recolor, delete or edit anything else: square text, the banner, the scoreboard, leaderboard rows, badges and icons, frames, labels, other people's stickies and cards. The one exception: a teammate who did not post it (or a solo player, on its own question) adds the YES or NO line to a question sticky (rule 5).
 8. Never add images, shapes, text or stickies anywhere else on the board.
-9. Water is limited: each team has one bucket (shown on the banner). When it is empty, your blue is refused.
+9. Water is unlimited, but you paint at most two squares per paint (rule 3): put each blue where it stops the most fire.
 
 ## What happens if you break one
 
@@ -88,12 +89,12 @@ The referee checks every change on the board. Follow these always.
 - **Near fire only:** paint only squares within 2 squares of a burning (orange) square (distance =
   max of the column and row differences). No such square in your area: don't paint, scan again next turn.
 - **Known fires and small fires: anyone who sees them walls them right away**, boss or worker, before
-  any order. Known fires = your area's centre square at 0:00 and your area's `startFires` at minute 1.
+  any order. Known fires = your area's centre square and your area's `startFires`, all at 0:00.
   A **small fire** = 5 or fewer orange squares of that fire inside your area: surround it with blue on
   the green squares touching it. A 2-square fire left alone grows fast (it spreads every 5 s).
 - **Big fire: wall it.** Paint the green squares touching it, on the side facing your largest patch of
   trees.
 - **Otherwise a worker follows its order.** Order empty or stale (none of its squares is green
   now): scan and fight the nearest fire in your own area.
-- Never paint orange, black or blue squares. Keep some of your team's water for the new fires that keep
-  coming every 2 minutes: the game has no time limit, so an empty bucket means your area burns out.
+- Never paint orange, black or blue squares. Up to two squares per paint: pick the green squares that cut the
+  fire's path (next to the most orange), and keep going: new fires come every 2 minutes and there is no time limit.

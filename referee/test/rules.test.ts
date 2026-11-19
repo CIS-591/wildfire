@@ -496,3 +496,81 @@ describe("scaleRules (auto-scale)", () => {
   });
 });
 const TEAMS4: Team[] = ["ridge", "pine", "cedar", "birch"];
+
+describe("fixes from the 30-agent video audit", () => {
+  const noCentre = (s: GameState) => { for (const l of ["R17", "S17", "R18", "S18"]) set(s, l, "burnt"); };
+  it("fire never slips diagonally between two blue squares that touch at the corner", () => {
+    const rules = { ...base, pSide: 0, pDiag: 1 };
+    const { s, rng } = live(rules);
+    noCentre(s);
+    set(s, "C3", "fire");
+    set(s, "D3", "water"); // right of the fire
+    set(s, "C4", "water"); // below the fire
+    spread(s, rules, list, byPos, rng);
+    expect(s.cells.D4).toBe("forest"); // walled corner: blocked
+    expect(s.cells.B2).toBe("fire"); // open corner: spreads
+  });
+  it("equal spread: a lone new fire is kept (the average never rounds it down to 0)", () => {
+    const rules = { ...base, pSide: 1, pDiag: 0, equalSpread: true };
+    const { s, rng } = live(rules);
+    noCentre(s);
+    set(s, "A1", "fire");
+    set(s, "B1", "water");
+    set(s, "B2", "water");
+    spread(s, rules, list, byPos, rng);
+    expect(s.cells.A2).toBe("fire");
+  });
+  it("blue on a fire the board doesn't show yet counts (the player saw green)", () => {
+    const rules = { ...base, waterNearFire: true };
+    const { s } = live(rules);
+    set(s, "D5", "fire");
+    s.unshown = ["D5"];
+    expect(paint(s, "r1", "D5", C.water, T0 + 60_000, rules).accept).toBe(true);
+    expect(s.cells.D5).toBe("water");
+    expect(s.unshown).toEqual([]);
+    set(s, "D7", "fire"); // shown: still refused
+    expect(paint(s, "r2", "D7", C.water, T0 + 60_000, rules).accept).toBe(false);
+  });
+  it("blue on a fire the board drew only just before the paint still counts (run 6: B20)", () => {
+    const rules = { ...base, waterNearFire: true };
+    const { s } = live(rules);
+    set(s, "D5", "fire");
+    s.shownAt = { D5: T0 + 57_000 };
+    expect(paint(s, "r1", "D5", C.water, T0 + 60_000, rules).accept).toBe(true);
+    expect(s.cells.D5).toBe("water");
+    set(s, "D7", "fire");
+    s.shownAt.D7 = T0 + 50_000; // drawn 10 s before the paint: the player saw it orange
+    expect(paint(s, "r2", "D7", C.water, T0 + 60_000, rules).accept).toBe(false);
+  });
+  it("a new fire waits until the board shows it before it burns down (run 6: new fires went green to black)", () => {
+    const rules = { ...calm, burnTicks: 1, burnAfterShown: true, lastTeamStanding: true, newFireEveryMinutes: 1, lightningAt: [] };
+    const { s, rng } = live(rules);
+    const r = advance(s, rules, list, byPos, rng, 60_000);
+    const hits = r.changed.filter((l) => !["R17", "S17", "R18", "S18"].includes(l));
+    expect(hits.length).toBe(4);
+    expect(s.unshown!.sort()).toEqual([...hits].sort());
+    advance(s, rules, list, byPos, rng, 30_000); // never drawn: still burning
+    for (const h of hits) expect(s.cells[h]).toBe("fire");
+    s.unshown = []; // the board drew them
+    advance(s, rules, list, byPos, rng, 30_000);
+    for (const h of hits) expect(s.cells[h]).toBe("burnt");
+  });
+  it("a new fire skips squares the board shows in another color", () => {
+    const { s, rng } = live(base);
+    const ridge = list.filter((c) => c.sector === "ridge" && s.cells[c.label] === "forest").map((c) => c.label);
+    s.boardOff = ridge.filter((l) => l !== "A1");
+    expect(strike(s, base, list, rng, "ridge", false)).toBe("A1");
+  });
+});
+
+describe("unlimited water", () => {
+  it("blue is never refused for water and the bucket never goes down; only the paint rate limits it", () => {
+    const rules = { ...base, unlimitedWater: true };
+    const { s } = live(rules);
+    s.water.ridge = 0;
+    set(s, "D4", "fire");
+    expect(paint(s, "r1", "D5", C.water, T0 + 60_000, rules).accept).toBe(true);
+    expect(s.water.ridge).toBe(0);
+    expect(paint(s, "r1", "C4", C.water, T0 + 61_000, rules).accept).toBe(false); // the cooldown still applies
+  });
+});

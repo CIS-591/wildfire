@@ -324,8 +324,8 @@ export function parseOrder(text: string): string[] {
 export function waterOf(banner: string, team: Team): number {
   const at = banner.search(/\bWATER\b/i);
   if (at < 0) return 0;
-  const m = new RegExp(`\\bT${TEAM_INFO[team].num} (\\d+)`).exec(banner.slice(at));
-  return m ? Number(m[1]) : 0;
+  const m = new RegExp(`\\bT${TEAM_INFO[team].num} (\\d+|∞)`).exec(banner.slice(at));
+  return m ? (m[1] === "∞" ? Infinity : Number(m[1])) : 0;
 }
 
 export function percents(scoreboard: string): Partial<Record<Team, number>> {

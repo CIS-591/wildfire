@@ -6,7 +6,7 @@ import { pool } from "./board.js";
 import { GAME_FILE, LIVE_IDS_FILE, ROOT, loadEnv, loadGame, loadLayoutIds, loadRules, loadTeams, saveGame, saveLiveIds } from "./config.js";
 import {
   BACKDROP, CELL_FONT, COLORS, FIXTURES, GRID, ORDERS, PANELS, STATE_COLOR, TEAMS, TEAM_INFO, buildCells, cellStroke, center, colName, colX, frameBoxes, frameOfRow, ordersTitle,
-  rowY, sectorText, startFill, startState, textColorFor, type Box, type CellState,
+  rowY, sectorText, startFill, startState, textColorFor, type Box, type CellState, type Team,
 } from "./layout.js";
 import { acquireLock, lockOwner as lockPid, releaseLock } from "./lock.js";
 import { MiroRest } from "./miro-rest.js";
@@ -53,7 +53,7 @@ function miro(guard = false): MiroRest {
 }
 
 /** Both tokens' Miro user ids (a split referee never judges or undoes either one's writes). */
-async function tokenUsers(guard: boolean): Promise<{ self?: string; other?: string }> {
+async function tokenUsers(guard: boolean): Promise<{ self?: string; other?: string; painter?: string }> {
   loadEnv();
   const boardId = process.env.MIRO_BOARD_ID ?? "";
   const ctx = async (token: string | undefined) => {
@@ -68,8 +68,9 @@ async function tokenUsers(guard: boolean): Promise<{ self?: string; other?: stri
     }
     return undefined;
   };
-  const [a, b] = await Promise.all([ctx(process.env.MIRO_ACCESS_TOKEN), ctx(process.env.MIRO_ACCESS_TOKEN_2)]);
-  return guard ? { self: b, other: a } : { self: a, other: b };
+  const [a, b, c] = await Promise.all([ctx(process.env.MIRO_ACCESS_TOKEN), ctx(process.env.MIRO_ACCESS_TOKEN_2), ctx(process.env.MIRO_ACCESS_TOKEN_3)]);
+  // The painter's user (token 3) is the referee's too: its square writes are never judged or undone.
+  return guard ? { self: b, other: a, painter: c } : { self: a, other: b, painter: c };
 }
 
 const TOKEN_ENV = (n: number) => (n === 1 ? "MIRO_ACCESS_TOKEN" : `MIRO_ACCESS_TOKEN_${n}`);
@@ -174,13 +175,17 @@ async function makeReferee(board: MiroRest, role: RefereeRole = "solo") {
   // The token's own user id: the referee's own writes echoed back are never judged as a player's move. With a
   // second token (MIRO_ACCESS_TOKEN_2), both users are the referee's. Plain rehearsal: none (the referee's own
   // account plays too). Bot rehearsal: both referee users except the bots' token user.
-  const users = !rehearsal ? await tokenUsers(role === "guard") : botsToken ? await botRehearsalUsers(role, botsToken) : {};
+  const users: { self?: string; other?: string; painter?: string } = !rehearsal ? await tokenUsers(role === "guard") : botsToken ? await botRehearsalUsers(role, botsToken) : {};
   const selfId = users.self;
   const link = role === "game" ? gameFileLink(STATE_DIR, game) : role === "guard" ? guardFileLink(STATE_DIR, () => loadGame(GAME_FILE, () => {})) : undefined;
   if (role !== "solo") console.log(`two referees: this one is the ${role.toUpperCase()} (${role === "game" ? "squares, fire, fixtures, cards" : "junk, statics, foreign stickies, joins"})`);
+  // A third token: the painter draws Teams 3-4's squares on its own rate-limit budget (--no-painter: off).
+  const painterToken = role !== "guard" && !args.includes("--no-painter") ? process.env.MIRO_ACCESS_TOKEN_3 : undefined;
+  const painter = painterToken ? { board: new MiroRest(painterToken, process.env.MIRO_BOARD_ID ?? "", (s) => console.log(`[miro painter] ${s}`)), teams: ["cedar", "birch"] as Team[] } : undefined;
+  if (painter) console.log("painter: MIRO_ACCESS_TOKEN_3 draws the squares of Team 3 and Team 4 (own rate-limit budget)");
   const ref = new Referee(board, game, rules, {
     staticIds: new Set(layout?.static), presets, frameIds: frames, ordersIds: layout?.orders, rng: seed ? mulberry32(Number(seed)) : undefined, rehearsal, selfId,
-    selfIds: users.other ? [users.other] : [], role, link,
+    selfIds: [users.other, users.painter].filter((u): u is string => !!u), role, link, painter,
     fixtureReadEvery: role === "guard" ? 1 : 3, // fixture writes don't wait for these reads
   });
   return { ref, game };
@@ -245,7 +250,7 @@ async function serveGuard(pollMs: number) {
     const t0 = Date.now();
     try {
       const r = await ref.tick();
-      process.stdout.write(`\r[guard] ${ref.state.phase.toUpperCase()} · tampers ${r.tampers} joins ${r.joins} · writes ${r.writes} reads ${r.reads ?? 0} · tick ${((Date.now() - t0) / 1000).toFixed(1)}s   `);
+      process.stdout.write(`\r[guard] ${ref.state.phase.toUpperCase()} · tampers ${r.tampers} joins ${r.joins} · writes ${r.writes} reads ${r.reads ?? 0} deferred ${r.deferred ?? 0} · tick ${((Date.now() - t0) / 1000).toFixed(1)}s   `);
     } catch (e) {
       console.error(`\nguard tick failed: ${(e as Error).message}`);
     }
@@ -280,7 +285,7 @@ async function loop(ref: Referee, game: ReturnType<typeof loadGame>, done: () =>
       const players = Object.keys(ref.state.players).length;
       const mm = `${Math.floor(ref.state.elapsed / 60_000)}:${String(Math.floor((ref.state.elapsed % 60_000) / 1000)).padStart(2, "0")}`;
       process.stdout.write(
-        `\r${ref.state.phase.toUpperCase()} ${mm} · ${players} players · ${TEAMS.map((t) => `${t} ${sc[t].pct}%`).join(" ")} · 🔥${r.fire} 💧${TEAMS.map((t) => ref.state.water[t]).join("/")} · paints ${r.paints} tampers ${r.tampers} joins ${r.joins} · writes ${r.writes} reads ${r.reads ?? 0} · tick ${((Date.now() - t0) / 1000).toFixed(1)}s   `,
+        `\r${ref.state.phase.toUpperCase()} ${mm} · ${players} players · ${TEAMS.map((t) => `${t} ${sc[t].pct}%`).join(" ")} · 🔥${r.fire} 💧${TEAMS.map((t) => ref.state.water[t]).join("/")} · paints ${r.paints} tampers ${r.tampers} joins ${r.joins} · writes ${r.writes} reads ${r.reads ?? 0} ${r.painted !== undefined && ref.state.phase !== "over" ? `painter ${r.painted} ` : ""}deferred ${r.deferred ?? 0} · tick ${((Date.now() - t0) / 1000).toFixed(1)}s   `,
       );
     } catch (e) {
       console.error(`\ntick failed: ${(e as Error).message}`);
@@ -311,7 +316,7 @@ const rulesHtml = (r: RuleSet) => [
     "Fire spreads every 20 s. Blue stops it. Black is burnt.",
     r.lastTeamStanding ? "Last team with green trees left wins. No time limit." : `Most green trees left after ${r.gameMinutes} minutes wins.`,
     "Attack: a teammate says <b>YES</b>, 1 square next door burns.",
-    `Each team has ${r.attacksPerTeam} attacks and one water bucket.`,
+    `${r.attacksPerTeam} attacks per team. Unlimited water, 1 square per paint.`,
     "Write only in your own team's Orders.",
     "Don't move, edit or delete anything. No images or text.",
   ].map((l, i) => `<b>${i + 1}.</b> ${l}`),

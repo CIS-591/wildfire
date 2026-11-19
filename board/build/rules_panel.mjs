@@ -67,7 +67,7 @@ const RULES = [
   ["Fire spreads every 5 s. Blue walls stop it. Black is burnt.", 1],
   ["Last team with green trees left wins. No time limit.", 1],
   [`Attack: a teammate says <b>YES</b>, 1 square next door burns.`, 1],
-  [`Each team has ${r.attacksPerTeam} attacks and one water bucket.`, 1],
+  [`${r.attacksPerTeam} attacks per team. Unlimited water, 1 square per paint.`, 1],
   ["Write only in your own team's Orders.", 1],
   ["Don't move, edit or delete anything. No images or text.", 1],
 ];

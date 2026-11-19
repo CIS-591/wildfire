@@ -93,6 +93,8 @@ interface Op {
   fail?: (e: Error, lockedTimes: number) => void;
   /** A fire/burnt fill write to this square label: re-read the square by id right before writing. */
   recheck?: string;
+  /** Runs on the painter's token (its own write budget and pool), not the referee's. */
+  painter?: boolean;
   /** Runs right before the write (in the same pooled task): false = skip the write this tick. */
   guard?: () => Promise<boolean>;
   /** The item this op writes: a 404 on it means it was deleted (never "locked"). */
@@ -111,6 +113,8 @@ export interface TickResult {
   writes: number;
   /** Extra by-id reads this tick (fixtures, card probes, fire-write rechecks). */
   reads?: number;
+  /** Square writes made with the painter's token (MIRO_ACCESS_TOKEN_3) this tick. */
+  painted?: number;
   deferred: number;
   /** The board could not be read: nothing was judged and game time did not move. */
   skipped?: boolean;
@@ -138,7 +142,7 @@ const CARD_PROBES_PER_TICK = 2;
 const JUNK_TYPES = ["image", "embed", "document", "app_card", "card", "code", "mindmap_node", "diagram"]; // Miro's type filter rejects unknown types (it has no "preview")
 /** Junk deletions per tick at most (newest first); the rest go next tick. */
 const JUNK_DELETES_PER_TICK = 20;
-/** Fire/burnt fill writes re-read by id right before writing, per tick (the rest wait a tick). */
+/** Fire/burnt fill writes re-read by id right before writing, per tick (the rest wait a tick; oldest go first). */
 const RECHECK_MAX = 60;
 /** Fixtures are rewritten every this many ticks even when they look right (a missed or stale read never leaves a fake banner up). */
 const FIXTURE_REFRESH_TICKS = 5;
@@ -214,6 +218,11 @@ export interface RefereeOptions {
   link?: GuardLink;
   /** Fixtures are read by id every this many ticks (default 1: every tick). Their writes don't wait. */
   fixtureReadEvery?: number;
+  /**
+   * A third Miro token (MIRO_ACCESS_TOKEN_3): the painter draws (and re-reads) the squares of these teams'
+   * areas with its own rate-limit budget. The game referee still decides everything; only the drawing is split.
+   */
+  painter?: { board: BoardAdapter; teams: Team[] };
 }
 
 export class Referee {
@@ -239,6 +248,7 @@ export class Referee {
   lastWrites = 0;
   maxWritesPerTick: number;
   private concurrency: number;
+  private painter?: { board: BoardAdapter; teams: Set<Team> };
   private presets: Record<string, Team>;
   private memberNames: Record<string, string> | null = null;
   private written: Partial<Record<FixtureKey, string>> = {};
@@ -289,6 +299,12 @@ export class Referee {
   /** Extra by-id reads this tick (fixtures, card probes, fire-write rechecks), for the status line and the sim. */
   readsThisTick = 0;
   lastReads = 0;
+  /** Square label -> tick its board fill first differed from the engine (oldest written first). */
+  private offSince = new Map<string, number>();
+  /** Fire/burnt writes over RECHECK_MAX this tick (counted as deferred). */
+  private recheckDropped = 0;
+  /** Writes made with the painter's token this tick (its own budget). */
+  painterWrites = 0;
   /** Square label -> border we last wrote ("color/width"); the REST listing doesn't return borders. */
   private borderWritten = new Map<string, string>();
   /** Items read by id this tick (fixtures, probed cards): as fresh as the squares. */
@@ -326,6 +342,7 @@ export class Referee {
     // content); with bots on another token (`--bots-token`) it passes the referee's own user, never the bots'.
     this.selfId = opts.selfId;
     this.maxWritesPerTick = opts.maxWritesPerTick ?? 120;
+    if (opts.painter) this.painter = { board: opts.painter.board, teams: new Set(opts.painter.teams) };
     this.onPaint = opts.onPaint;
     this.role = opts.role ?? "solo";
     this.otherSelf = new Set((opts.selfIds ?? []).filter(Boolean));
@@ -877,6 +894,8 @@ export class Referee {
     this.tickNo++;
     this.writesThisTick = 0;
     this.readsThisTick = 0;
+    this.recheckDropped = 0;
+    this.painterWrites = 0;
     this.placing.clear();
     try {
       return await (this.role === "guard" ? this.guardTickInner() : this.tickInner());
@@ -1140,6 +1159,8 @@ export class Referee {
     this.outage = false;
     this.lastAdvanceAt = now;
     const outBefore = state.outTeams?.length ?? 0;
+    // Green in the engine but another color on the board (a refused paint not put back yet): new fires skip them.
+    state.boardOff = this.cellList.filter((c) => state.cells[c.label] === "forest" && readFill.has(c.label) && readFill.get(c.label) !== this.fillOf(c.label)).map((c) => c.label);
     const adv = advance(state, this.rules, this.cellList, this.byPos, this.rng, dt, now);
     for (const e of adv.events) this.log(`\n${e}`);
     // Last team standing: tell each player of a team that just went out (once) to stop.
@@ -1156,10 +1177,11 @@ export class Referee {
     const writable = (lab: string) => readFill.has(lab) && (judged.has(lab) || readFill.get(lab) === preFill.get(lab));
     ops.push(...this.guardFireWrites(this.cellOps(new Set(adv.changed), writable), readFill), ...this.rebuildOps(), ...this.fixtureOps(), ...this.cardOps(), ...this.retiredPartOps());
     let { deferred } = await this.execute(ops);
+    deferred += this.recheckDropped;
     // Miro said 404 (deleted) for something: rebuild it now, not on a later tick.
     if (this.goneThisTick) deferred += (await this.execute([...this.rebuildOps(), ...this.fixtureOps(), ...this.cardOps()])).deferred;
     this.prevReadAt = now;
-    return { paints: paints.length, tampers: tampers.length, joins, fire: this.burning(), changed: adv.changed.length, writes: this.writesThisTick, reads: this.readsThisTick, deferred };
+    return { paints: paints.length, tampers: tampers.length, joins, fire: this.burning(), changed: adv.changed.length, writes: this.writesThisTick, reads: this.readsThisTick, painted: this.painterWrites, deferred };
   }
 
   // ---------- two referees: the game's side of the link ----------
@@ -1922,18 +1944,23 @@ export class Referee {
       const bkey = `${stroke.color}/${stroke.width}`;
       const fillOff = (sh.fill ?? "").toLowerCase() !== want;
       const borderOff = this.borderWritten.get(lab) !== bkey;
+      if (!fillOff) this.offSince.delete(lab);
+      else if (!this.offSince.has(lab)) this.offSince.set(lab, this.tickNo);
       if (!fillOff && !borderOff) continue;
       // A fill write could overwrite a player's newer paint: only on a square this read showed as expected.
       // A border-only write leaves the fill alone (the REST listing doesn't return borders: we track what we wrote).
       if (fillOff && writable && !writable(lab)) continue; // looked at again next tick
       const st = this.state.cells[lab]!;
+      const painted = !!this.painter?.teams.has(this.cells.get(lab)!.sector);
+      const board = painted ? this.painter!.board : this.board;
       ops.push({
         key: `cell:${lab}`,
         id,
         prio: fireChanged.has(lab) ? 0 : 1,
         recheck: fillOff && (st === "fire" || st === "burnt") ? lab : undefined,
+        painter: painted || undefined,
         run: () =>
-          this.board.updateShape(id, {
+          board.updateShape(id, {
             ...(fillOff ? { fill: want, textColor: textColorFor(st) } : {}),
             ...(borderOff ? { borderColor: stroke.color, borderWidth: stroke.width } : {}),
           }),
@@ -1941,7 +1968,10 @@ export class Referee {
           const s = this.shadow.get(id);
           if (s) s.fill = want;
           this.borderWritten.set(lab, bkey);
-          if (st === "fire" && this.state.unshown?.length) this.state.unshown = this.state.unshown.filter((l) => l !== lab);
+          if (st === "fire") {
+            if (this.state.unshown?.length) this.state.unshown = this.state.unshown.filter((l) => l !== lab);
+            (this.state.shownAt ??= {})[lab] = this.now();
+          }
         },
         fail: (_e, n) => {
           if (n < STUCK_AFTER || this.cellId.get(lab) !== id) return;
@@ -1972,14 +2002,33 @@ export class Referee {
    */
   private guardFireWrites(ops: Op[], readFill: Map<string, string>): Op[] {
     if (!this.board.getItem) return ops;
-    const todo = ops.filter((o) => o.recheck).sort((a, b) => a.prio - b.prio);
-    const drop = new Set<Op>(todo.slice(RECHECK_MAX));
-    for (const op of todo.slice(0, RECHECK_MAX)) {
+    // First a refused blue paint (the board shows water on a fire), then fires (frozen until drawn), then
+    // burnt squares. Within each, oldest first: a square the board has been behind on longest goes first, so
+    // a big fire never starves an old one (players would paint blue on a fire they still see as green).
+    const rank = (o: Op) => (readFill.get(o.recheck!) === STATE_COLOR.water ? 0 : this.state.cells[o.recheck!] === "fire" ? 1 : 2);
+    const age = (o: Op) => this.offSince.get(o.recheck!) ?? this.tickNo;
+    const drop = new Set<Op>();
+    const keep: Op[] = [];
+    // Each token re-reads its own squares, up to RECHECK_MAX each (the painter has its own budget).
+    for (const lane of [false, true]) {
+      // Ties (same age, same priority): a different order every tick, so no team's squares always wait last.
+    const tie = (o: Op) => {
+      let h = this.tickNo * 2654435761;
+      for (const ch of o.recheck!) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+      return h >>> 0;
+    };
+    const todo = ops.filter((o) => o.recheck && !!o.painter === lane).sort((a, b) => rank(a) - rank(b) || age(a) - age(b) || a.prio - b.prio || tie(a) - tie(b));
+      todo.slice(RECHECK_MAX).forEach((o) => drop.add(o));
+      keep.push(...todo.slice(0, RECHECK_MAX));
+    }
+    this.recheckDropped = drop.size;
+    for (const op of keep) {
+      const board = op.painter ? this.painter!.board : this.board;
       op.guard = async () => {
         this.readsThisTick++;
         let it: BoardItem | null;
         try {
-          it = await this.board.getItem!(op.id!);
+          it = await board.getItem!(op.id!);
         } catch {
           return false; // unknown: don't risk overwriting a paint; next tick
         }
@@ -2150,11 +2199,20 @@ export class Referee {
     let deferred = 0;
     for (const op of ready) {
       const c = op.calls ?? 1;
-      if (this.writesThisTick + c > budget) {
-        deferred++;
-        continue;
+      if (op.painter) {
+        // the painter's token: its own write budget per tick
+        if (this.painterWrites + c > budget) {
+          deferred++;
+          continue;
+        }
+        this.painterWrites += c;
+      } else {
+        if (this.writesThisTick + c > budget) {
+          deferred++;
+          continue;
+        }
+        this.writesThisTick += c;
       }
-      this.writesThisTick += c;
       run.push(op);
     }
     // Writes to the same item run one after another: Miro answers two parallel PATCHes of one item with a
@@ -2167,7 +2225,8 @@ export class Referee {
     const runOne = async (op: Op) => {
         try {
           if (op.guard && !(await op.guard())) {
-            this.writesThisTick -= op.calls ?? 1; // held: no write made
+            if (op.painter) this.painterWrites -= op.calls ?? 1;
+            else this.writesThisTick -= op.calls ?? 1; // held: no write made
             return;
           }
           await op.run();
@@ -2207,7 +2266,7 @@ export class Referee {
       [...groups.values()].map((g) => async () => {
         for (const op of g) await runOne(op);
       }),
-      this.concurrency,
+      this.painter ? this.concurrency * 2 : this.concurrency, // two tokens: two pools' worth in flight
     );
     return { deferred };
   }
@@ -2378,7 +2437,8 @@ export class Referee {
     const r = this.rules;
     const p = (a: string, b: string) => `<p><b>${a}</b></p><p>${b}</p>`;
     const inGame = TEAMS.filter((t) => !this.sitsOut(t));
-    const water = `WATER ${inGame.map((t) => `T${TEAM_INFO[t].num} ${isOut(s, t) ? "OUT" : s.water[t]}`).join(" · ")}`;
+    // Unlimited water: the list still shows who is in ("∞") and who is out.
+    const water = `WATER ${inGame.map((t) => `T${TEAM_INFO[t].num} ${isOut(s, t) ? "OUT" : r.unlimitedWater ? "∞" : s.water[t]}`).join(" · ")}`;
     const out = TEAMS.filter((t) => this.sitsOut(t));
     const who = out.length ? `PLAYING: ${inGame.map((t) => TEAM_INFO[t].name.toUpperCase()).join(", ")} · NOT PLAYING: ${out.map((t) => TEAM_INFO[t].name.toUpperCase()).join(", ")}` : "";
     const w = windOn(r) ? WIND[s.wind]! : null;
@@ -2422,7 +2482,7 @@ export class Referee {
     else if (nextBolt <= 60_000) line2 = lts ? `NEW FIRES in ${mmss(nextBolt)}: one more fire starts in every team's area` : `NEW FIRE in ${mmss(nextBolt)}: one more fire starts in a team's area`;
     else if (close) line2 = close;
     else {
-      const low = TEAMS.filter((t) => !isOut(s, t) && s.water[t] <= r.waterPerTeam / 5).map((t) => `T${TEAM_INFO[t].num}`);
+      const low = r.unlimitedWater ? [] : TEAMS.filter((t) => !isOut(s, t) && s.water[t] <= r.waterPerTeam / 5).map((t) => `T${TEAM_INFO[t].num}`);
       line2 = `${burning} squares on fire${low.length ? ` · LOW WATER: ${low.join(" ")}` : ""}`;
     }
     return p(line1, line2);
@@ -2533,7 +2593,7 @@ export class Referee {
     const t = this.rankOrder()[n - 1]!;
     if (this.sitsOut(t)) return "<p>-</p>";
     const pad = "&nbsp;".repeat(7);
-    if (which === "water") return `<p>${pad}<b>${s.water[t]}</b> / ${this.rules.waterPerTeam}</p>`;
+    if (which === "water") return this.rules.unlimitedWater ? `<p>${pad}<b>∞</b></p>` : `<p>${pad}<b>${s.water[t]}</b> / ${this.rules.waterPerTeam}</p>`;
     const left = Math.max(0, this.rules.attacksPerTeam - (s.attacksUsed?.[t] ?? 0));
     return `<p>${pad}<b>${left}</b> left</p>`;
   }
@@ -2595,7 +2655,7 @@ export class Referee {
       ...(lts && s.phase === "over" ? [ltsHead(), `went out: ${outOrder} · game lasted ${mmss(s.elapsed)}`] : []),
       ...(lts && s.phase === "over" ? [] : [s.phase === "over" ? `🏆 ${TEAM_INFO[s.winner!].name.toUpperCase()} WINS (${s.endReason === "out" ? "the fire went out" : s.endReason === "time" ? "time is up" : "stopped"})` : `phase: ${s.phase}`]),
       `forest saved: ${TEAMS.map((t) => `${TEAM_INFO[t].name} ${sc[t].pct}%`).join(" · ")} · ${mins} min of fire`,
-      `paints ${s.stats.accepted} · water left ${TEAMS.map((t) => `${t} ${s.water[t]}`).join(" ")} (of ${this.rules.waterPerTeam} each) · ignitions ${s.stats.ignitions} · burnt out ${s.stats.burntOut} · lightning ${s.stats.strikes.join(" ") || "-"}`,
+      `paints ${s.stats.accepted} · ${this.rules.unlimitedWater ? "water unlimited" : `water left ${TEAMS.map((t) => `${t} ${s.water[t]}`).join(" ")} (of ${this.rules.waterPerTeam} each)`} · ignitions ${s.stats.ignitions} · burnt out ${s.stats.burntOut} · lightning ${s.stats.strikes.join(" ") || "-"}`,
       `attacks approved: ${approved.map((a) => `${a.team}→${a.to}`).join(" ") || "none"} · lit ${TEAMS.map((t) => `${t} ${s.stats.lit[t]}`).join(" ")} · burned others' trees ${TEAMS.map((t) => `${t} ${s.stats.burnedOthers[t]}`).join(" ")} · blowback ${TEAMS.map((t) => `${t} ${s.stats.blowback[t]}`).join(" ")} · refused by a human: ${Object.values(s.approvals).filter((a) => a.status === "refused").length}`,
       `paints undone: ${Object.entries(s.stats.illegal).filter(([, v]) => v).map(([k, v]) => `${k} ${v}`).join(" · ") || "none"}`,
       "",
