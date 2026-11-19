@@ -1968,7 +1968,10 @@ export class Referee {
           const s = this.shadow.get(id);
           if (s) s.fill = want;
           this.borderWritten.set(lab, bkey);
-          if (st === "fire" && this.state.unshown?.length) this.state.unshown = this.state.unshown.filter((l) => l !== lab);
+          if (st === "fire") {
+            if (this.state.unshown?.length) this.state.unshown = this.state.unshown.filter((l) => l !== lab);
+            (this.state.shownAt ??= {})[lab] = this.now();
+          }
         },
         fail: (_e, n) => {
           if (n < STUCK_AFTER || this.cellId.get(lab) !== id) return;
@@ -1999,8 +2002,10 @@ export class Referee {
    */
   private guardFireWrites(ops: Op[], readFill: Map<string, string>): Op[] {
     if (!this.board.getItem) return ops;
-    // Oldest first: a square the board has been behind on longest goes before this tick's new fires, so a
-    // big fire never starves an old one (players would paint blue on a fire they still see as green).
+    // First a refused blue paint (the board shows water on a fire), then fires (frozen until drawn), then
+    // burnt squares. Within each, oldest first: a square the board has been behind on longest goes first, so
+    // a big fire never starves an old one (players would paint blue on a fire they still see as green).
+    const rank = (o: Op) => (readFill.get(o.recheck!) === STATE_COLOR.water ? 0 : this.state.cells[o.recheck!] === "fire" ? 1 : 2);
     const age = (o: Op) => this.offSince.get(o.recheck!) ?? this.tickNo;
     const drop = new Set<Op>();
     const keep: Op[] = [];
@@ -2012,7 +2017,7 @@ export class Referee {
       for (const ch of o.recheck!) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
       return h >>> 0;
     };
-    const todo = ops.filter((o) => o.recheck && !!o.painter === lane).sort((a, b) => age(a) - age(b) || a.prio - b.prio || tie(a) - tie(b));
+    const todo = ops.filter((o) => o.recheck && !!o.painter === lane).sort((a, b) => rank(a) - rank(b) || age(a) - age(b) || a.prio - b.prio || tie(a) - tie(b));
       todo.slice(RECHECK_MAX).forEach((o) => drop.add(o));
       keep.push(...todo.slice(0, RECHECK_MAX));
     }

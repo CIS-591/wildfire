@@ -214,6 +214,8 @@ export interface GameState {
   scaled?: ScaledRules;
   /** Fires lit that the board doesn't show yet (rules.burnAfterShown). */
   unshown?: string[];
+  /** Fire squares the board drew, and when (real ms): water painted within SHOWN_GRACE_MS of the draw still counts. */
+  shownAt?: Record<string, number>;
   /** Green squares (in the engine) that the board shows in another color right now; new fires avoid them. Set by the referee each tick. */
   boardOff?: string[];
   events: GameEvent[];
@@ -244,6 +246,9 @@ export interface PaintEvent {
 
 /** Squares by one player within this long of their batch's first square are the same batch. */
 export const BATCH_WINDOW_MS = 3000;
+
+/** Water on a fire the board drew this recently still puts it out: the player's read showed it green. */
+export const SHOWN_GRACE_MS = 5000;
 
 export interface TamperEvent {
   userId: string;
@@ -861,7 +866,10 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
     }
     if (next === startAt) {
       const lit = lightStartFires(state, rules);
-      for (const l of lit) changed.add(l);
+      for (const l of lit) {
+        changed.add(l);
+        fresh.add(l); // the board doesn't show it yet: its timer waits like a spread fire's
+      }
       if (lit.length) {
         pushEvent(state, "NEW FIRES IN EVERY TEAM'S AREA!");
         events.push(`🔥 start fires ${lit.join(" ")}`);
@@ -875,7 +883,10 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
           const hit = strike(state, rules, cells, rng, t, false);
           if (hit) hits.push(hit);
         }
-        for (const h of hits) changed.add(h);
+        for (const h of hits) {
+          changed.add(h);
+          fresh.add(h);
+        }
         if (hits.length) {
           pushEvent(state, `NEW FIRE IN EVERY TEAM'S AREA! (${hits.join(" ")})`);
           events.push(`new fires at ${hits.join(" ")}`);
@@ -884,6 +895,7 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
         const hit = strike(state, rules, cells, rng);
         if (hit) {
           changed.add(hit);
+          fresh.add(hit);
           events.push(`new fire at ${hit}`);
         }
       }
@@ -911,6 +923,7 @@ export function advance(state: GameState, rules: RuleSet, cells: CellDef[], byPo
 
 function finishAdvance(state: GameState, rules: RuleSet, fresh: Set<string>, changed: Set<string>, events: string[]): AdvanceResult {
   if (rules.burnAfterShown) state.unshown = [...fresh];
+  if (state.shownAt) for (const l of Object.keys(state.shownAt)) if (state.cells[l] !== "fire") delete state.shownAt[l];
   const ended = state.attacks.filter((g) => g.until <= state.elapsed || state.phase !== "live");
   state.attacks = state.attacks.filter((g) => !ended.includes(g));
   return { changed: [...changed], events, ended };
@@ -991,9 +1004,11 @@ export function decidePaint(state: GameState, rules: RuleSet, cells: Map<string,
   const ps = state.stats.byPlayer[ev.userId]!;
 
   if (color === "water") {
-    // A fire the board doesn't show yet looked green to the player: their water counts (it puts that fire out).
-    if (cur === "fire" && state.unshown?.includes(lab)) {
-      if ((rules.unlimitedWater || (state.water[team] ?? 0) > 0) && !away) state.unshown = state.unshown.filter((l) => l !== lab);
+    // A fire the board doesn't show yet (or drew only just before the paint) looked green to the player:
+    // their water counts (it puts that fire out).
+    const justShown = (state.shownAt?.[lab] ?? -Infinity) >= ev.at - SHOWN_GRACE_MS;
+    if (cur === "fire" && (state.unshown?.includes(lab) || justShown)) {
+      if ((rules.unlimitedWater || (state.water[team] ?? 0) > 0) && !away && state.unshown) state.unshown = state.unshown.filter((l) => l !== lab);
     } else if (rules.waterNearFire && cur === "fire") return reject(state, ev.userId, "square", `❌ ${lab} undone: water can't go on fire. Paint the green squares around the fire.`);
     if (cur !== "forest" && cur !== "fire") return reject(state, ev.userId, "square", `❌ ${lab} undone: it is already ${cur === "water" ? "water" : "burnt"}. Paint green squares around the fire.`);
     if (rules.waterNearFire && !nearFire(state, cells, cell)) return reject(state, ev.userId, "square", `❌ ${lab} undone: no fire within 2 squares. Paint only green squares around a fire.`);

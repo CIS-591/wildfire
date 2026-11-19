@@ -31,6 +31,8 @@ export interface SimResult {
   minutes: number;
   pct: Record<Team, number>;
   burningAt8: number;
+  /** Most squares burning at once (any tick). */
+  peakFire: number;
   waterUsedPct: number;
   waterUsedByTeam: Record<Team, number>;
   /** What auto-scale chose (null: off). */
@@ -205,10 +207,12 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
   for (const b of bots) b.nextTurnAt = t + (opts.lateSec ?? 0) * 1000 + Math.round(turnMs(b) * (0.5 + rng()));
   const timeline: SimResult["timeline"] = [];
   let burningAt8 = -1;
+  let peakFire = 0;
   let firstPaintAt: number | null = null;
   while (ref.state.phase === "live") {
     await step();
     if (firstPaintAt === null && ref.state.stats.accepted > 0) firstPaintAt = ref.state.elapsed;
+    peakFire = Math.max(peakFire, Object.values(ref.state.cells).filter((c) => c === "fire").length);
     const el = ref.state.elapsed;
     if (el >= timeline.length * 60_000 && ref.state.phase === "live") {
       const sc = scores(ref.state, ref.cellList);
@@ -236,6 +240,7 @@ export async function runSimulation(rules: RuleSet, opts: SimOptions = {}): Prom
     minutes: Math.round(s.elapsed / 6000) / 10,
     pct: Object.fromEntries(TEAMS.map((x) => [x, sc[x].pct])) as Record<Team, number>,
     burningAt8: burningAt8 < 0 ? 0 : burningAt8,
+    peakFire,
     attempts,
     waterUsedPct: Math.round((100 * (inPlay.length * W - inPlay.reduce((a, x) => a + s.water[x], 0))) / (inPlay.length * W)),
     waterLeft: TEAMS.reduce((a, x) => a + s.water[x], 0),
